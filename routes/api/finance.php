@@ -1,5 +1,6 @@
 <?php
 
+use App\Domain\Finance\AgingReport\Controllers\AgingReportController;
 use App\Domain\Finance\Dashboard\Controllers\DashboardController;
 use App\Domain\Finance\Invoice\Controllers\InvoiceController;
 use App\Domain\Finance\KlienAr\Controllers\KlienArController;
@@ -24,6 +25,8 @@ Route::prefix('klien-ar')->group(function () {
 Route::prefix('invoices')->group(function () {
     Route::get('/', [InvoiceController::class, 'index']);
     Route::get('/summary', [InvoiceController::class, 'summary']);
+    Route::get('/rekap-klien', [InvoiceController::class, 'rekapKlien']);
+    Route::get('/export', [InvoiceController::class, 'export']);
     Route::get('/carryover', [InvoiceController::class, 'carryover']);
     Route::get('/preview-no', [InvoiceController::class, 'previewNo']);
     Route::post('/', [InvoiceController::class, 'store']);
@@ -36,8 +39,12 @@ Route::prefix('invoices')->group(function () {
     Route::post('/{invoice}/pembayaran', [PembayaranArController::class, 'store']);
 });
 
-// ─── Pembayaran (standalone delete) ──────────────────────────────
+// ─── Pembayaran ───────────────────────────────────────────────────
+Route::get('/pembayaran', [PembayaranArController::class, 'index']);
 Route::delete('/pembayaran/{pembayaran}', [PembayaranArController::class, 'destroy']);
+
+// ─── Aging Report ────────────────────────────────────────────────
+Route::get('/aging-report', [AgingReportController::class, 'index']);
 
 // ─── Opening Balance ──────────────────────────────────────────────
 Route::prefix('opening-balance')->group(function () {

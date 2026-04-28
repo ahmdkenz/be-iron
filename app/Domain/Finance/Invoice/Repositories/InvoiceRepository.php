@@ -89,6 +89,42 @@ class InvoiceRepository
         ];
     }
 
+    public function getRekapKlien(array $filters = []): array
+    {
+        $rows = $this->applyFilters(Invoice::query()->with('klienAr.perusahaan'), $filters)
+            ->selectRaw('
+                klien_ar_id,
+                COUNT(*) as total_invoice,
+                COALESCE(SUM(total_tagihan), 0) as total_tagihan,
+                COALESCE(SUM(total_pembayaran), 0) as total_pembayaran,
+                COALESCE(SUM(sisa_tagihan), 0) as sisa_tagihan,
+                SUM(CASE WHEN status = "DRAFT"    THEN 1 ELSE 0 END) as draft,
+                SUM(CASE WHEN status = "TERKIRIM" THEN 1 ELSE 0 END) as terkirim,
+                SUM(CASE WHEN status = "SEBAGIAN" THEN 1 ELSE 0 END) as sebagian,
+                SUM(CASE WHEN status = "LUNAS"    THEN 1 ELSE 0 END) as lunas
+            ')
+            ->groupBy('klien_ar_id')
+            ->get();
+
+        return $rows->map(function ($row) {
+            $klien = $row->klienAr;
+            return [
+                'klien_id'        => $klien?->id,
+                'kode_klien'      => $klien?->kode_klien,
+                'nama_klien'      => $klien?->nama_klien,
+                'perusahaan'      => $klien?->perusahaan?->nama_singkatan_perusahaan,
+                'total_invoice'   => (int) $row->total_invoice,
+                'total_tagihan'   => (float) $row->total_tagihan,
+                'total_pembayaran'=> (float) $row->total_pembayaran,
+                'sisa_tagihan'    => (float) $row->sisa_tagihan,
+                'draft'           => (int) $row->draft,
+                'terkirim'        => (int) $row->terkirim,
+                'sebagian'        => (int) $row->sebagian,
+                'lunas'           => (int) $row->lunas,
+            ];
+        })->values()->all();
+    }
+
     private function applyFilters(Builder $query, array $filters): Builder
     {
         return $query

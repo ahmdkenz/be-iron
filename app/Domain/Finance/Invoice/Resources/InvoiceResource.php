@@ -15,6 +15,7 @@ class InvoiceResource extends JsonResource
             'id'                         => $this->id,
             'no_invoice'                 => $this->no_invoice,
             'tanggal_invoice'            => $this->tanggal_invoice?->format('Y-m-d'),
+            'tanggal_jatuh_tempo'        => $this->tanggal_jatuh_tempo?->format('Y-m-d'),
             'periode_awal'               => $this->periode_awal?->format('Y-m-d'),
             'periode_akhir'              => $this->periode_akhir?->format('Y-m-d'),
             'klien_ar_id'                => $this->klien_ar_id,

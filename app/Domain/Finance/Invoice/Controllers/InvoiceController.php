@@ -16,6 +16,7 @@ use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class InvoiceController extends Controller
 {
@@ -80,6 +81,18 @@ class InvoiceController extends Controller
         ]);
     }
 
+    public function rekapKlien(Request $request): JsonResponse
+    {
+        $user    = auth()->user()->load('karyawan');
+        $filters = $request->only(['klien_ar_id', 'periode_bulan', 'periode_tahun']);
+
+        if ($user->karyawan && !RoleHelper::hasGlobalFinanceAccess($user)) {
+            $filters['perusahaan_id'] = $user->karyawan->perusahaan_id;
+        }
+
+        return $this->successResponse($this->service->getRekapKlien($filters));
+    }
+
     public function store(StoreInvoiceRequest $request): JsonResponse
     {
         $invoice = $this->service->create(InvoiceDTO::fromRequest($request->validated()));
@@ -112,6 +125,55 @@ class InvoiceController extends Controller
         $invoice = $this->service->findOrFail($id);
         $this->service->delete($invoice);
         return $this->successResponse(null, 'Invoice berhasil dihapus');
+    }
+
+    public function export(Request $request): StreamedResponse
+    {
+        $user    = auth()->user()->load('karyawan');
+        $filters = $request->only([
+            'search', 'status', 'klien_ar_id', 'karyawan_id',
+            'periode_bulan', 'periode_tahun',
+        ]);
+        $filters['is_opening_balance'] = false;
+
+        if ($user->karyawan && !RoleHelper::hasGlobalFinanceAccess($user)) {
+            $filters['perusahaan_id'] = $user->karyawan->perusahaan_id;
+        }
+
+        $invoices = $this->service->paginate(array_merge($filters, ['per_page' => 9999]))->items();
+
+        $headers = [
+            'No Invoice', 'Klien', 'Perusahaan', 'Tanggal Invoice', 'Jatuh Tempo',
+            'Periode Awal', 'Periode Akhir', 'Subtotal', 'Tagihan Sebelumnya',
+            'Total Tagihan', 'Total Pembayaran', 'Sisa Tagihan', 'Status',
+        ];
+
+        return response()->streamDownload(function () use ($invoices, $headers) {
+            $handle = fopen('php://output', 'w');
+            fprintf($handle, chr(0xEF) . chr(0xBB) . chr(0xBF)); // UTF-8 BOM
+            fputcsv($handle, $headers);
+
+            foreach ($invoices as $inv) {
+                fputcsv($handle, [
+                    $inv->no_invoice,
+                    $inv->klienAr?->nama_klien,
+                    $inv->perusahaan?->nama_singkatan_perusahaan,
+                    $inv->tanggal_invoice?->format('Y-m-d'),
+                    $inv->tanggal_jatuh_tempo?->format('Y-m-d'),
+                    $inv->periode_awal?->format('Y-m-d'),
+                    $inv->periode_akhir?->format('Y-m-d'),
+                    $inv->subtotal,
+                    $inv->tagihan_periode_sebelumnya,
+                    $inv->total_tagihan,
+                    $inv->total_pembayaran,
+                    $inv->sisa_tagihan,
+                    $inv->status,
+                ]);
+            }
+            fclose($handle);
+        }, 'invoice-ar-' . now()->format('Ymd-His') . '.csv', [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+        ]);
     }
 
     public function print(Request $request, int $id): Response|string
