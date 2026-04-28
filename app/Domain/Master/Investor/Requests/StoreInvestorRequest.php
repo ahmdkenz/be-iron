@@ -1,0 +1,25 @@
+<?php
+
+namespace App\Domain\Master\Investor\Requests;
+
+use Illuminate\Foundation\Http\FormRequest;
+
+class StoreInvestorRequest extends FormRequest
+{
+    public function authorize(): bool { return true; }
+
+    public function rules(): array
+    {
+        return [
+            'nama_investor'   => ['required', 'string', 'max:150'],
+            'ktp'             => ['nullable', 'string', 'max:20', 'unique:tb_investor,ktp'],
+            'npwp'            => ['nullable', 'string', 'max:20', 'unique:tb_investor,npwp'],
+            'no_hp'           => ['nullable', 'string', 'max:20'],
+            'pengelola'       => ['nullable', 'string', 'max:150'],
+            'no_hp_pengelola' => ['nullable', 'string', 'max:20'],
+            'alamat'          => ['nullable', 'string'],
+            'keterangan'      => ['nullable', 'string'],
+            'status'          => ['nullable', 'boolean'],
+        ];
+    }
+}
