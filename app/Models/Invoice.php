@@ -20,6 +20,7 @@ class Invoice extends Model
         'klien_ar_id',
         'perusahaan_id',
         'karyawan_id',
+        'tanggal_jatuh_tempo',
         'no_surat_jalan',
         'subtotal',
         'tagihan_periode_sebelumnya',
@@ -42,6 +43,7 @@ class Invoice extends Model
 
     protected $casts = [
         'tanggal_invoice'            => 'date',
+        'tanggal_jatuh_tempo'        => 'date',
         'periode_awal'               => 'date',
         'periode_akhir'              => 'date',
         'submitted_at'               => 'datetime',

@@ -12,6 +12,9 @@ class PembayaranArResource extends JsonResource
         return [
             'id'                 => $this->id,
             'invoice_id'         => $this->invoice_id,
+            'no_invoice'         => $this->whenLoaded('invoice', fn() => $this->invoice?->no_invoice),
+            'klien'              => $this->whenLoaded('invoice', fn() => $this->invoice?->klienAr?->nama_klien),
+            'perusahaan'         => $this->whenLoaded('invoice', fn() => $this->invoice?->perusahaan?->nama_singkatan_perusahaan),
             'tanggal_pembayaran' => $this->tanggal_pembayaran?->format('Y-m-d'),
             'jumlah_pembayaran'  => (float) $this->jumlah_pembayaran,
             'metode_pembayaran'  => $this->metode_pembayaran,
