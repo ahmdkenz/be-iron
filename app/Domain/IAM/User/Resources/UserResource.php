@@ -20,6 +20,10 @@ class UserResource extends JsonResource
                 'id'            => $this->karyawan->id,
                 'nik'           => $this->karyawan->nik,
                 'nama_karyawan' => $this->karyawan->nama_karyawan,
+                'perusahaan_id' => $this->karyawan->perusahaan_id,
+                'perusahaan'    => $this->karyawan->relationLoaded('perusahaan')
+                    ? ['id' => $this->karyawan->perusahaan?->id, 'nama_perusahaan' => $this->karyawan->perusahaan?->nama_perusahaan]
+                    : null,
             ]),
             'roles'            => $this->getRoleNames(),
             'role'             => $this->roles->first()?->only(['id', 'name', 'nama_role']),
