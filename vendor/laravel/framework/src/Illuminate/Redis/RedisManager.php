@@ -9,10 +9,7 @@ use Illuminate\Redis\Connectors\PhpRedisConnector;
 use Illuminate\Redis\Connectors\PredisConnector;
 use Illuminate\Support\Arr;
 use Illuminate\Support\ConfigurationUrlParser;
-use Illuminate\Support\RebindsCallbacksToSelf;
 use InvalidArgumentException;
-use ReflectionException;
-use RuntimeException;
 
 use function Illuminate\Support\enum_value;
 
@@ -21,8 +18,6 @@ use function Illuminate\Support\enum_value;
  */
 class RedisManager implements Factory
 {
-    use RebindsCallbacksToSelf;
-
     /**
      * The application instance.
      *
@@ -89,7 +84,11 @@ class RedisManager implements Factory
     {
         $name = enum_value($name) ?: 'default';
 
-        return $this->connections[$name] ?? $this->connections[$name] = $this->configure(
+        if (isset($this->connections[$name])) {
+            return $this->connections[$name];
+        }
+
+        return $this->connections[$name] = $this->configure(
             $this->resolve($name), $name
         );
     }
@@ -242,12 +241,12 @@ class RedisManager implements Factory
     /**
      * Disconnect the given connection and remove from local cache.
      *
-     * @param  \UnitEnum|string|null  $name
+     * @param  string|null  $name
      * @return void
      */
     public function purge($name = null)
     {
-        $name = enum_value($name) ?: 'default';
+        $name = $name ?: 'default';
 
         unset($this->connections[$name]);
     }
@@ -264,13 +263,7 @@ class RedisManager implements Factory
      */
     public function extend($driver, Closure $callback)
     {
-        try {
-            $callback = $this->bindCallbackToSelf($callback) ?? throw new RuntimeException('Unable to bind custom driver callback');
-        } catch (ReflectionException $e) {
-            throw new RuntimeException('Unable to bind custom driver callback', previous: $e);
-        }
-
-        $this->customCreators[$driver] = $callback;
+        $this->customCreators[$driver] = $callback->bindTo($this, $this);
 
         return $this;
     }

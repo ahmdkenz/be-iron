@@ -5,10 +5,9 @@ namespace Illuminate\Http\Resources\JsonApi;
 use Illuminate\Container\Container;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Http\Resources\Json\AnonymousResourceCollection as BaseAnonymousResourceCollection;
 use Illuminate\Support\Arr;
 
-class AnonymousResourceCollection extends BaseAnonymousResourceCollection
+class AnonymousResourceCollection extends \Illuminate\Http\Resources\Json\AnonymousResourceCollection
 {
     use Concerns\ResolvesJsonApiRequest;
 
@@ -77,7 +76,7 @@ class AnonymousResourceCollection extends BaseAnonymousResourceCollection
     /**
      * Resolve the HTTP request instance from container.
      *
-     * @return \Illuminate\Http\Resources\JsonApi\JsonApiRequest
+     * @return \Illuminate\Http\Resources\JsonApi\SparseRequest
      */
     #[\Override]
     protected function resolveRequestFromContainer()

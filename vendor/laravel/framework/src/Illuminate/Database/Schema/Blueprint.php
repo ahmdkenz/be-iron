@@ -1060,7 +1060,9 @@ class Blueprint
                 ->referencesModelColumn($model->getKeyName());
         }
 
-        if (isset(class_uses_recursive($model)[HasUlids::class])) {
+        $modelTraits = class_uses_recursive($model);
+
+        if (in_array(HasUlids::class, $modelTraits, true)) {
             return $this->foreignUlid($column, 26)
                 ->table($model->getTable())
                 ->referencesModelColumn($model->getKeyName());
@@ -1362,7 +1364,7 @@ class Blueprint
      */
     public function softDeletesDatetime($column = 'deleted_at', $precision = null)
     {
-        return $this->dateTime($column, $precision)->nullable();
+        return $this->datetime($column, $precision)->nullable();
     }
 
     /**

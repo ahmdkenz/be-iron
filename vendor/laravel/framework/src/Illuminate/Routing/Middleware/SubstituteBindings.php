@@ -31,8 +31,6 @@ class SubstituteBindings
      * @param  \Illuminate\Http\Request  $request
      * @param  \Closure  $next
      * @return mixed
-     *
-     * @throws \Illuminate\Database\Eloquent\ModelNotFoundException
      */
     public function handle($request, Closure $next)
     {

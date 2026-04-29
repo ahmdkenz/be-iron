@@ -2,11 +2,6 @@
 
 namespace Illuminate\Database\Eloquent\Concerns;
 
-use Illuminate\Database\Eloquent\Attributes\Fillable;
-use Illuminate\Database\Eloquent\Attributes\Guarded;
-use Illuminate\Database\Eloquent\Attributes\Initialize;
-use Illuminate\Database\Eloquent\Attributes\Unguarded;
-
 trait GuardsAttributes
 {
     /**
@@ -36,25 +31,6 @@ trait GuardsAttributes
      * @var array<class-string,list<string>>
      */
     protected static $guardableColumns = [];
-
-    /**
-     * Initialize the GuardsAttributes trait.
-     *
-     * @return void
-     */
-    #[Initialize]
-    public function initializeGuardsAttributes()
-    {
-        $this->mergeFillable(static::resolveClassAttribute(Fillable::class, 'columns') ?? []);
-
-        if ($this->guarded === ['*']) {
-            if (static::resolveClassAttribute(Unguarded::class) !== null) {
-                $this->guarded = [];
-            } else {
-                $this->guarded = static::resolveClassAttribute(Guarded::class, 'columns') ?? ['*'];
-            }
-        }
-    }
 
     /**
      * Get the fillable attributes for the model.

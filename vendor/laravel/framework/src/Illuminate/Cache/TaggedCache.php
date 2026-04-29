@@ -6,8 +6,6 @@ use Illuminate\Cache\Events\CacheFlushed;
 use Illuminate\Cache\Events\CacheFlushing;
 use Illuminate\Contracts\Cache\Store;
 
-use function Illuminate\Support\enum_value;
-
 class TaggedCache extends Repository
 {
     use RetrievesMultipleKeys {
@@ -53,25 +51,25 @@ class TaggedCache extends Repository
     /**
      * Increment the value of an item in the cache.
      *
-     * @param  \UnitEnum|string  $key
+     * @param  string  $key
      * @param  mixed  $value
      * @return int|bool
      */
     public function increment($key, $value = 1)
     {
-        return $this->store->increment($this->itemKey(enum_value($key)), $value);
+        return $this->store->increment($this->itemKey($key), $value);
     }
 
     /**
      * Decrement the value of an item in the cache.
      *
-     * @param  \UnitEnum|string  $key
+     * @param  string  $key
      * @param  mixed  $value
      * @return int|bool
      */
     public function decrement($key, $value = 1)
     {
-        return $this->store->decrement($this->itemKey(enum_value($key)), $value);
+        return $this->store->decrement($this->itemKey($key), $value);
     }
 
     /**

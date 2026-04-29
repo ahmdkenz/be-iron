@@ -15,25 +15,11 @@ class RouteCollection extends AbstractRouteCollection
     protected $routes = [];
 
     /**
-     * Domain routes keyed by method, used to maintain domain-first ordering.
-     *
-     * @var array
-     */
-    protected $domainRoutes = [];
-
-    /**
      * A flattened array of all of the routes.
      *
      * @var \Illuminate\Routing\Route[]
      */
     protected $allRoutes = [];
-
-    /**
-     * Domain routes in the flattened array, used to maintain domain-first ordering.
-     *
-     * @var \Illuminate\Routing\Route[]
-     */
-    protected $allDomainRoutes = [];
 
     /**
      * A look-up table of routes by their names.
@@ -74,21 +60,12 @@ class RouteCollection extends AbstractRouteCollection
     {
         $methods = $route->methods();
         $domainAndUri = $route->getDomain().$route->uri();
-        $allRoutesKey = implode('|', $methods).$domainAndUri;
 
-        if ($route->getDomain()) {
-            foreach ($methods as $method) {
-                $this->domainRoutes[$method][$domainAndUri] = $route;
-            }
-
-            $this->allDomainRoutes[$allRoutesKey] = $route;
-        } else {
-            foreach ($methods as $method) {
-                $this->routes[$method][$domainAndUri] = $route;
-            }
-
-            $this->allRoutes[$allRoutesKey] = $route;
+        foreach ($methods as $method) {
+            $this->routes[$method][$domainAndUri] = $route;
         }
+
+        $this->allRoutes[implode('|', $methods).$domainAndUri] = $route;
     }
 
     /**
@@ -161,7 +138,7 @@ class RouteCollection extends AbstractRouteCollection
     {
         $this->nameList = [];
 
-        foreach ($this->allDomainRoutes + $this->allRoutes as $route) {
+        foreach ($this->allRoutes as $route) {
             if (($name = $route->getName()) && ! $this->inNameLookup($name)) {
                 $this->nameList[$name] = $route;
             }
@@ -179,7 +156,7 @@ class RouteCollection extends AbstractRouteCollection
     {
         $this->actionList = [];
 
-        foreach ($this->allDomainRoutes + $this->allRoutes as $route) {
+        foreach ($this->allRoutes as $route) {
             if (($controller = $route->getAction()['controller'] ?? null) && ! $this->inActionLookup($controller)) {
                 $this->addToActionList($route->getAction(), $route);
             }
@@ -215,9 +192,7 @@ class RouteCollection extends AbstractRouteCollection
      */
     public function get($method = null)
     {
-        return is_null($method)
-            ? $this->getRoutes()
-            : ($this->domainRoutes[$method] ?? []) + ($this->routes[$method] ?? []);
+        return is_null($method) ? $this->getRoutes() : ($this->routes[$method] ?? []);
     }
 
     /**
@@ -260,7 +235,7 @@ class RouteCollection extends AbstractRouteCollection
      */
     public function getRoutes()
     {
-        return array_values($this->allDomainRoutes + $this->allRoutes);
+        return array_values($this->allRoutes);
     }
 
     /**
@@ -270,13 +245,7 @@ class RouteCollection extends AbstractRouteCollection
      */
     public function getRoutesByMethod()
     {
-        $result = $this->domainRoutes;
-
-        foreach ($this->routes as $method => $routes) {
-            $result[$method] = ($result[$method] ?? []) + $routes;
-        }
-
-        return $result;
+        return $this->routes;
     }
 
     /**

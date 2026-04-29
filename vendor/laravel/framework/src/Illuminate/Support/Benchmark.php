@@ -12,9 +12,9 @@ class Benchmark
     /**
      * Measure a callable or array of callables over the given number of iterations.
      *
-     * @param  \Closure|array<callable>  $benchmarkables
+     * @param  \Closure|array  $benchmarkables
      * @param  int  $iterations
-     * @return array<float|int|null>|float
+     * @return array|float
      */
     public static function measure(Closure|array $benchmarkables, int $iterations = 1): array|float
     {
@@ -57,7 +57,7 @@ class Benchmark
     /**
      * Measure a callable or array of callables over the given number of iterations, then dump and die.
      *
-     * @param  \Closure|array<callable>  $benchmarkables
+     * @param  \Closure|array  $benchmarkables
      * @param  int  $iterations
      * @return never
      */

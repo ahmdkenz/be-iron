@@ -15,7 +15,7 @@ interface MigrationRepositoryInterface
      * Get the list of migrations.
      *
      * @param  int  $steps
-     * @return object{id: int, migration: string, batch: int}[]
+     * @return array{id: int, migration: string, batch: int}[]
      */
     public function getMigrations($steps);
 
@@ -23,21 +23,21 @@ interface MigrationRepositoryInterface
      * Get the list of the migrations by batch.
      *
      * @param  int  $batch
-     * @return object{id: int, migration: string, batch: int}[]
+     * @return array{id: int, migration: string, batch: int}[]
      */
     public function getMigrationsByBatch($batch);
 
     /**
      * Get the last migration batch.
      *
-     * @return object{id: int, migration: string, batch: int}[]
+     * @return array{id: int, migration: string, batch: int}[]
      */
     public function getLast();
 
     /**
      * Get the completed migrations with their batch numbers.
      *
-     * @return array<string, int>
+     * @return array<int, string>[]
      */
     public function getMigrationBatches();
 
@@ -53,7 +53,7 @@ interface MigrationRepositoryInterface
     /**
      * Remove a migration from the log.
      *
-     * @param  object{id?: int, migration: string, batch?: int}  $migration
+     * @param  objectt{id?: int, migration: string, batch?: int}  $migration
      * @return void
      */
     public function delete($migration);

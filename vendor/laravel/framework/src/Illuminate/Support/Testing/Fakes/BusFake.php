@@ -201,11 +201,9 @@ class BusFake implements Fake, QueueingDispatcher
      */
     public function assertNothingDispatched()
     {
-        $dispatchedCommands = $this->commands + $this->commandsSync + $this->commandsAfterResponse;
+        $commandNames = implode("\n- ", array_keys($this->commands));
 
-        $commandNames = implode("\n- ", array_keys($dispatchedCommands));
-
-        PHPUnit::assertEmpty($dispatchedCommands, "The following jobs were dispatched unexpectedly:\n\n- $commandNames\n");
+        PHPUnit::assertEmpty($this->commands, "The following jobs were dispatched unexpectedly:\n\n- $commandNames\n");
     }
 
     /**
@@ -440,8 +438,6 @@ class BusFake implements Fake, QueueingDispatcher
      * @param  array  $expectedChain
      * @param  callable|null  $callback
      * @return void
-     *
-     * @throws \RuntimeException
      */
     protected function assertDispatchedWithChainOfObjects($command, $expectedChain, $callback)
     {
@@ -721,18 +717,17 @@ class BusFake implements Fake, QueueingDispatcher
     }
 
     /**
-     * Dispatch a command to its appropriate handler after the current process.
+     * Dispatch a command to its appropriate handler.
      *
      * @param  mixed  $command
-     * @param  mixed  $handler
-     * @return void
+     * @return mixed
      */
-    public function dispatchAfterResponse($command, $handler = null)
+    public function dispatchAfterResponse($command)
     {
         if ($this->shouldFakeJob($command)) {
             $this->commandsAfterResponse[get_class($command)][] = $this->getCommandRepresentation($command);
         } else {
-            $this->dispatcher->dispatchAfterResponse($command, $handler);
+            return $this->dispatcher->dispatch($command);
         }
     }
 

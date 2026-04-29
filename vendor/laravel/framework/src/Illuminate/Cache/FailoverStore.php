@@ -3,13 +3,12 @@
 namespace Illuminate\Cache;
 
 use Illuminate\Cache\Events\CacheFailedOver;
-use Illuminate\Contracts\Cache\CanFlushLocks;
 use Illuminate\Contracts\Cache\LockProvider;
 use Illuminate\Contracts\Events\Dispatcher;
 use RuntimeException;
 use Throwable;
 
-class FailoverStore extends TaggableStore implements CanFlushLocks, LockProvider
+class FailoverStore extends TaggableStore implements LockProvider
 {
     /**
      * The caches which failed on the last action.
@@ -152,18 +151,6 @@ class FailoverStore extends TaggableStore implements CanFlushLocks, LockProvider
     }
 
     /**
-     * Adjust the expiration time of a cached item.
-     *
-     * @param  string  $key
-     * @param  int  $seconds
-     * @return bool
-     */
-    public function touch($key, $seconds)
-    {
-        return $this->attemptOnAllStores(__FUNCTION__, func_get_args());
-    }
-
-    /**
      * Remove an item from the cache.
      *
      * @param  string  $key
@@ -198,38 +185,6 @@ class FailoverStore extends TaggableStore implements CanFlushLocks, LockProvider
                 break;
             }
         }
-    }
-
-    /**
-     * Flush all of the stale locks from every backing store.
-     *
-     * @return bool
-     */
-    public function flushLocks(): bool
-    {
-        $result = true;
-
-        foreach ($this->stores as $store) {
-            $underlyingStore = $this->store($store)->getStore();
-
-            if ($underlyingStore instanceof CanFlushLocks) {
-                if (! $underlyingStore->flushLocks()) {
-                    $result = false;
-                }
-            }
-        }
-
-        return $result;
-    }
-
-    /**
-     * Determine if the lock store is separate from the cache store.
-     *
-     * @return bool
-     */
-    public function hasSeparateLockStore(): bool
-    {
-        return true;
     }
 
     /**

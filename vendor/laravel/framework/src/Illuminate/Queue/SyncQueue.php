@@ -2,7 +2,6 @@
 
 namespace Illuminate\Queue;
 
-use Illuminate\Bus\DebounceLock;
 use Illuminate\Bus\UniqueLock;
 use Illuminate\Contracts\Cache\Repository as Cache;
 use Illuminate\Contracts\Queue\Job;
@@ -13,7 +12,6 @@ use Illuminate\Queue\Events\JobExceptionOccurred;
 use Illuminate\Queue\Events\JobProcessed;
 use Illuminate\Queue\Events\JobProcessing;
 use Illuminate\Queue\Jobs\SyncJob;
-use Illuminate\Support\Collection;
 use Throwable;
 
 class SyncQueue extends Queue implements QueueContract
@@ -73,39 +71,6 @@ class SyncQueue extends Queue implements QueueContract
     }
 
     /**
-     * Get the pending jobs for the given queue.
-     *
-     * @param  string|null  $queue
-     * @return \Illuminate\Support\Collection
-     */
-    public function pendingJobs($queue = null): Collection
-    {
-        return new Collection;
-    }
-
-    /**
-     * Get the delayed jobs for the given queue.
-     *
-     * @param  string|null  $queue
-     * @return \Illuminate\Support\Collection
-     */
-    public function delayedJobs($queue = null): Collection
-    {
-        return new Collection;
-    }
-
-    /**
-     * Get the reserved jobs for the given queue.
-     *
-     * @param  string|null  $queue
-     * @return \Illuminate\Support\Collection
-     */
-    public function reservedJobs($queue = null): Collection
-    {
-        return new Collection;
-    }
-
-    /**
      * Get the creation timestamp of the oldest pending job, excluding delayed jobs.
      *
      * @param  string|null  $queue
@@ -134,14 +99,6 @@ class SyncQueue extends Queue implements QueueContract
                 $this->container->make('db.transactions')->addCallbackForRollback(
                     function () use ($job) {
                         (new UniqueLock($this->container->make(Cache::class)))->release($job);
-                    }
-                );
-            }
-
-            if (! empty($job->debounceOwner ?? '')) {
-                $this->container->make('db.transactions')->addCallbackForRollback(
-                    function () use ($job) {
-                        (new DebounceLock($this->container->make(Cache::class)))->release($job, $job->debounceOwner ?? '');
                     }
                 );
             }
@@ -175,11 +132,11 @@ class SyncQueue extends Queue implements QueueContract
 
             $this->raiseAfterJobEvent($queueJob);
         } catch (Throwable $e) {
-            $exceptionOccurred = $e;
+            $exceptionOccurred = true;
 
             $this->handleException($queueJob, $e);
         } finally {
-            $this->raiseJobAttemptedEvent($queueJob, $exceptionOccurred ?? null);
+            $this->raiseJobAttemptedEvent($queueJob, $exceptionOccurred ?? false);
         }
 
         return 0;
@@ -227,10 +184,10 @@ class SyncQueue extends Queue implements QueueContract
      * Raise the job attempted event.
      *
      * @param  \Illuminate\Contracts\Queue\Job  $job
-     * @param  \Throwable|null  $exception
+     * @param  bool  $exceptionOccurred
      * @return void
      */
-    protected function raiseJobAttemptedEvent(Job $job, ?Throwable $exceptionOccurred = null)
+    protected function raiseJobAttemptedEvent(Job $job, bool $exceptionOccurred = false)
     {
         if ($this->container->bound('events')) {
             $this->container['events']->dispatch(new JobAttempted($this->connectionName, $job, $exceptionOccurred));

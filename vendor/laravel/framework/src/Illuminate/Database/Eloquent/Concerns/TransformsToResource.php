@@ -29,8 +29,6 @@ trait TransformsToResource
      * Guess the resource class for the model.
      *
      * @return \Illuminate\Http\Resources\Json\JsonResource
-     *
-     * @throws \LogicException
      */
     protected function guessResource(): JsonResource
     {
@@ -71,7 +69,7 @@ trait TransformsToResource
         $potentialResource = sprintf(
             '%s\\Http\\Resources\\%s%s',
             Str::before($modelClass, '\\Models'),
-            (string) $relativeNamespace !== '' ? $relativeNamespace.'\\' : '',
+            strlen($relativeNamespace) > 0 ? $relativeNamespace.'\\' : '',
             class_basename($modelClass)
         );
 

@@ -23,9 +23,9 @@ abstract class MorphOneOrMany extends HasOneOrMany
     protected $morphType;
 
     /**
-     * The morph class of the parent model.
+     * The class name of the parent model.
      *
-     * @var class-string<TDeclaringModel>|string
+     * @var class-string<TRelatedModel>
      */
     protected $morphClass;
 
@@ -156,9 +156,9 @@ abstract class MorphOneOrMany extends HasOneOrMany
     }
 
     /**
-     * Get the morph class of the parent model.
+     * Get the class name of the parent model.
      *
-     * @return class-string<TDeclaringModel>|string
+     * @return class-string<TRelatedModel>
      */
     public function getMorphClass()
     {

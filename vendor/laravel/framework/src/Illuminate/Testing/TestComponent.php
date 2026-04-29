@@ -5,7 +5,6 @@ namespace Illuminate\Testing;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Traits\Macroable;
 use Illuminate\Testing\Assert as PHPUnit;
-use Illuminate\Testing\Constraints\SeeInHtml;
 use Illuminate\Testing\Constraints\SeeInOrder;
 use Stringable;
 
@@ -113,7 +112,11 @@ class TestComponent implements Stringable
 
         $values = $escape ? array_map(e(...), $value) : $value;
 
-        PHPUnit::assertThat($values, new SeeInHtml($this->rendered));
+        $rendered = strip_tags($this->rendered);
+
+        foreach ($values as $value) {
+            PHPUnit::assertStringContainsString((string) $value, $rendered);
+        }
 
         return $this;
     }
@@ -129,7 +132,7 @@ class TestComponent implements Stringable
     {
         $values = $escape ? array_map(e(...), $values) : $values;
 
-        PHPUnit::assertThat($values, new SeeInHtml($this->rendered, true));
+        PHPUnit::assertThat($values, new SeeInOrder(strip_tags($this->rendered)));
 
         return $this;
     }

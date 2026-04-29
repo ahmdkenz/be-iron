@@ -4,7 +4,6 @@ namespace Illuminate\Console\Scheduling;
 
 use DateTimeZone;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Collection;
 
 class CronExpressionTimezoneConverter
 {
@@ -146,7 +145,7 @@ class CronExpressionTimezoneConverter
             $groups[$carry][] = $new;
         }
 
-        return (new Collection($groups))->map(function ($values) {
+        return collect($groups)->map(function ($values) {
             sort($values);
 
             return implode(',', $values);
@@ -168,7 +167,7 @@ class CronExpressionTimezoneConverter
             return $field;
         }
 
-        $shifted = (new Collection(explode(',', $field)))
+        $shifted = collect(explode(',', $field))
             ->map(fn ($v) => (((int) $v + $offset - $min) % $mod + $mod) % $mod + $min)
             ->sort();
 

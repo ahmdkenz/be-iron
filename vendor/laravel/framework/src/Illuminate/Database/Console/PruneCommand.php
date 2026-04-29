@@ -112,8 +112,6 @@ class PruneCommand extends Command
      * Determine the models that should be pruned.
      *
      * @return \Illuminate\Support\Collection
-     *
-     * @throws \InvalidArgumentException
      */
     protected function models()
     {

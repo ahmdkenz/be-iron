@@ -99,7 +99,7 @@ class Response implements ArrayAccess, Stringable
      */
     public function json($key = null, $default = null, $flags = null)
     {
-        $flags ??= self::$defaultJsonDecodingFlags;
+        $flags = $flags ?? self::$defaultJsonDecodingFlags;
 
         if (! $this->decoded || (isset($this->decodingFlags) && $this->decodingFlags !== $flags)) {
             $this->decoded = json_decode(
@@ -336,13 +336,14 @@ class Response implements ArrayAccess, Stringable
     /**
      * Throw an exception if a server or client error occurred.
      *
-     * @param  null|(\Closure(\Illuminate\Http\Client\Response, \Illuminate\Http\Client\RequestException): mixed)  $callback
      * @return $this
      *
      * @throws \Illuminate\Http\Client\RequestException
      */
-    public function throw($callback = null)
+    public function throw()
     {
+        $callback = func_get_args()[0] ?? null;
+
         if ($this->failed()) {
             throw tap($this->toException(), function ($exception) use ($callback) {
                 if ($callback && is_callable($callback)) {
@@ -358,14 +359,13 @@ class Response implements ArrayAccess, Stringable
      * Throw an exception if a server or client error occurred and the given condition evaluates to true.
      *
      * @param  \Closure|bool  $condition
-     * @param  null|(\Closure(\Illuminate\Http\Client\Response, \Illuminate\Http\Client\RequestException): mixed)  $callback
      * @return $this
      *
      * @throws \Illuminate\Http\Client\RequestException
      */
-    public function throwIf($condition, $callback = null)
+    public function throwIf($condition)
     {
-        return value($condition, $this) ? $this->throw($callback) : $this;
+        return value($condition, $this) ? $this->throw(func_get_args()[1] ?? null) : $this;
     }
 
     /**

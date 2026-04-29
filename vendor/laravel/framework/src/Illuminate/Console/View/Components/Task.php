@@ -20,8 +20,6 @@ class Task extends Component
      * @param  (callable(): bool)|null  $task
      * @param  int  $verbosity
      * @return void
-     *
-     * @throws \Throwable
      */
     public function render($description, $task = null, $verbosity = OutputInterface::VERBOSITY_NORMAL)
     {

@@ -34,7 +34,7 @@ class ReceiveFile
             Storage::disk($this->disk)->put($path, $request->getContent());
 
             return response()->noContent();
-        } catch (PathTraversalDetected) {
+        } catch (PathTraversalDetected $e) {
             abort(404);
         }
     }

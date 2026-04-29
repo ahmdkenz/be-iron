@@ -83,12 +83,12 @@ class FakeJob extends Job implements JobContract
     /**
      * Delete the job, call the "failed" method, and raise the failed job event.
      *
-     * @param  \Throwable|null  $e
+     * @param  \Throwable|null  $exception
      * @return void
      */
-    public function fail($e = null)
+    public function fail($exception = null)
     {
         $this->failed = true;
-        $this->failedWith = $e;
+        $this->failedWith = $exception;
     }
 }

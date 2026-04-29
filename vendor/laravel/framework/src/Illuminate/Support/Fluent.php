@@ -131,7 +131,7 @@ class Fluent implements Arrayable, ArrayAccess, IteratorAggregate, Jsonable, Jso
      * Get all of the attributes from the fluent instance.
      *
      * @param  mixed  $keys
-     * @return array<TKey, TValue>
+     * @return array
      */
     public function all($keys = null)
     {

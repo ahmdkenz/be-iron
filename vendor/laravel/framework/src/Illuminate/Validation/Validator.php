@@ -622,10 +622,8 @@ class Validator implements ValidatorContract
     /**
      * Get a validated input container for the validated input.
      *
-     * @param  array<int, string>|null  $keys
-     * @return ($keys is array ? array<string, mixed> : \Illuminate\Support\ValidatedInput)
-     *
-     * @throws \Illuminate\Validation\ValidationException
+     * @param  array|null  $keys
+     * @return \Illuminate\Support\ValidatedInput|array
      */
     public function safe(?array $keys = null)
     {

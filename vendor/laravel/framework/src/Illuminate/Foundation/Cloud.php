@@ -106,7 +106,7 @@ class Cloud
         }
 
         Migrator::resolveConnectionsUsing(function ($resolver, $connection) use ($app) {
-            $connection ??= $app['config']->get('database.default');
+            $connection = $connection ?? $app['config']->get('database.default');
 
             return $resolver->connection(
                 $connection === 'pgsql' ? 'pgsql-unpooled' : $connection
@@ -121,7 +121,6 @@ class Cloud
     {
         if ((int) ($_SERVER['LARAVEL_CLOUD_MANAGED_QUEUES'] ?? 0) === 1) {
             Worker::$restartable = false;
-            Worker::$pausable = false;
 
             $app['config']->set(
                 'queue.connections.sqs.credentials',

@@ -8,14 +8,9 @@ use Illuminate\Contracts\Cache\Factory as FactoryContract;
 use Illuminate\Contracts\Cache\Store;
 use Illuminate\Contracts\Events\Dispatcher as DispatcherContract;
 use Illuminate\Support\Arr;
-use Illuminate\Support\RebindsCallbacksToSelf;
 use InvalidArgumentException;
 use Mockery;
 use Mockery\LegacyMockInterface;
-use ReflectionException;
-use RuntimeException;
-
-use function Illuminate\Support\enum_value;
 
 /**
  * @mixin \Illuminate\Cache\Repository
@@ -23,8 +18,6 @@ use function Illuminate\Support\enum_value;
  */
 class CacheManager implements FactoryContract
 {
-    use RebindsCallbacksToSelf;
-
     /**
      * The application instance.
      *
@@ -59,12 +52,12 @@ class CacheManager implements FactoryContract
     /**
      * Get a cache store instance by name, wrapped in a repository.
      *
-     * @param  \UnitEnum|string|null  $name
+     * @param  string|null  $name
      * @return \Illuminate\Contracts\Cache\Repository
      */
     public function store($name = null)
     {
-        $name = enum_value($name) ?? $this->getDefaultDriver();
+        $name = $name ?? $this->getDefaultDriver();
 
         return $this->stores[$name] ??= $this->resolve($name);
     }
@@ -72,7 +65,7 @@ class CacheManager implements FactoryContract
     /**
      * Get a cache driver instance.
      *
-     * @param  \UnitEnum|string|null  $driver
+     * @param  string|null  $driver
      * @return \Illuminate\Contracts\Cache\Repository
      */
     public function driver($driver = null)
@@ -83,12 +76,12 @@ class CacheManager implements FactoryContract
     /**
      * Get a memoized cache driver instance.
      *
-     * @param  \UnitEnum|string|null  $driver
+     * @param  string|null  $driver
      * @return \Illuminate\Contracts\Cache\Repository
      */
     public function memo($driver = null)
     {
-        $driver = enum_value($driver) ?? $this->getDefaultDriver();
+        $driver = $driver ?? $this->getDefaultDriver();
 
         $bindingKey = "cache.__memoized:{$driver}";
 
@@ -483,18 +476,18 @@ class CacheManager implements FactoryContract
     /**
      * Set the default cache driver name.
      *
-     * @param  \UnitEnum|string  $name
+     * @param  string  $name
      * @return void
      */
     public function setDefaultDriver($name)
     {
-        $this->app['config']['cache.default'] = enum_value($name);
+        $this->app['config']['cache.default'] = $name;
     }
 
     /**
      * Unset the given driver instances.
      *
-     * @param  array|\UnitEnum|string|null  $name
+     * @param  array|string|null  $name
      * @return $this
      */
     public function forgetDriver($name = null)
@@ -502,8 +495,6 @@ class CacheManager implements FactoryContract
         $name ??= $this->getDefaultDriver();
 
         foreach ((array) $name as $cacheName) {
-            $cacheName = enum_value($cacheName);
-
             if (isset($this->stores[$cacheName])) {
                 unset($this->stores[$cacheName]);
             }
@@ -515,12 +506,12 @@ class CacheManager implements FactoryContract
     /**
      * Disconnect the given driver and remove from local cache.
      *
-     * @param  \UnitEnum|string|null  $name
+     * @param  string|null  $name
      * @return void
      */
     public function purge($name = null)
     {
-        $name = enum_value($name) ?? $this->getDefaultDriver();
+        $name ??= $this->getDefaultDriver();
 
         unset($this->stores[$name]);
     }
@@ -537,13 +528,7 @@ class CacheManager implements FactoryContract
      */
     public function extend($driver, Closure $callback)
     {
-        try {
-            $callback = $this->bindCallbackToSelf($callback) ?? throw new RuntimeException('Unable to bind custom driver callback');
-        } catch (ReflectionException $e) {
-            throw new RuntimeException('Unable to bind custom driver callback', previous: $e);
-        }
-
-        $this->customCreators[$driver] = $callback;
+        $this->customCreators[$driver] = $callback->bindTo($this, $this);
 
         return $this;
     }
@@ -559,17 +544,6 @@ class CacheManager implements FactoryContract
         $this->app = $app;
 
         return $this;
-    }
-
-    /**
-     * Register a callback to be invoked when an unserializable class is encountered.
-     *
-     * @param  callable|null  $callback
-     * @return void
-     */
-    public function handleUnserializableClassUsing(?callable $callback): void
-    {
-        Repository::handleUnserializableClassUsing($callback);
     }
 
     /**

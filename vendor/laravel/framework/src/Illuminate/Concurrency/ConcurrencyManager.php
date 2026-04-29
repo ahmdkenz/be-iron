@@ -7,8 +7,6 @@ use Illuminate\Support\MultipleInstanceManager;
 use RuntimeException;
 use Spatie\Fork\Fork;
 
-use function Illuminate\Support\enum_value;
-
 /**
  * @mixin \Illuminate\Contracts\Concurrency\Driver
  */
@@ -17,12 +15,12 @@ class ConcurrencyManager extends MultipleInstanceManager
     /**
      * Get a driver instance by name.
      *
-     * @param  \UnitEnum|string|null  $name
+     * @param  string|null  $name
      * @return mixed
      */
     public function driver($name = null)
     {
-        return $this->instance(enum_value($name));
+        return $this->instance($name);
     }
 
     /**

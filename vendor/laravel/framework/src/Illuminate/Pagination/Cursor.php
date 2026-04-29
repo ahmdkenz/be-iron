@@ -125,10 +125,6 @@ class Cursor implements Arrayable
             return null;
         }
 
-        if (! is_array($parameters) || ! array_key_exists('_pointsToNextItems', $parameters)) {
-            return null;
-        }
-
         $pointsToNextItems = $parameters['_pointsToNextItems'];
 
         unset($parameters['_pointsToNextItems']);

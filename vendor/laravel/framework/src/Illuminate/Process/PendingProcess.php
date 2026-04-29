@@ -2,7 +2,6 @@
 
 namespace Illuminate\Process;
 
-use Carbon\CarbonInterval;
 use Closure;
 use Illuminate\Process\Exceptions\ProcessTimedOutException;
 use Illuminate\Support\Collection;
@@ -133,12 +132,12 @@ class PendingProcess
     /**
      * Specify the maximum number of seconds the process may run.
      *
-     * @param  CarbonInterval|int  $timeout
+     * @param  int  $timeout
      * @return $this
      */
-    public function timeout(CarbonInterval|int $timeout)
+    public function timeout(int $timeout)
     {
-        $this->timeout = $timeout instanceof CarbonInterval ? (int) $timeout->totalSeconds : $timeout;
+        $this->timeout = $timeout;
 
         return $this;
     }
@@ -146,12 +145,12 @@ class PendingProcess
     /**
      * Specify the maximum number of seconds a process may go without returning output.
      *
-     * @param  CarbonInterval|int  $timeout
+     * @param  int  $timeout
      * @return $this
      */
-    public function idleTimeout(CarbonInterval|int $timeout)
+    public function idleTimeout(int $timeout)
     {
-        $this->idleTimeout = $timeout instanceof CarbonInterval ? (int) $timeout->totalSeconds : $timeout;
+        $this->idleTimeout = $timeout;
 
         return $this;
     }
@@ -297,7 +296,7 @@ class PendingProcess
      */
     protected function toSymfonyProcess(array|string|null $command)
     {
-        $command ??= $this->command;
+        $command = $command ?? $this->command;
 
         $process = is_iterable($command)
             ? new Process($command, null, $this->environment)
@@ -370,9 +369,6 @@ class PendingProcess
      * @param  string  $command
      * @param  \Closure  $fake
      * @return mixed
-     *
-     * @throws \LogicException
-     * @throws \Throwable
      */
     protected function resolveSynchronousFake(string $command, Closure $fake)
     {
