@@ -17,7 +17,7 @@ class AuthController extends Controller
 
     public function login(LoginRequest $request): JsonResponse
     {
-        $user = User::with('roles', 'karyawan')
+        $user = User::with('roles', 'karyawan.perusahaan')
             ->where('username', $request->username)
             ->first();
 
@@ -48,7 +48,7 @@ class AuthController extends Controller
 
     public function me(Request $request): JsonResponse
     {
-        $user = $request->user()->load('roles', 'karyawan');
+        $user = $request->user()->load('roles', 'karyawan.perusahaan');
         return $this->successResponse(new UserResource($user));
     }
 }
