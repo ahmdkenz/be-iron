@@ -9,8 +9,10 @@
  * file that was distributed with this source code.
  */
 
-if (\PHP_VERSION_ID < 80300) {
-    class DateException extends Exception
+if (\PHP_VERSION_ID < 80600 && \PHP_VERSION_ID >= 80100) {
+    enum SortDirection
     {
+        case Ascending;
+        case Descending;
     }
 }
