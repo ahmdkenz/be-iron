@@ -73,7 +73,7 @@ class SeeInOrder extends Constraint
     public function failureDescription($values): string
     {
         return sprintf(
-            '\'%s\' contains "%s" in specified order.',
+            'Failed asserting that \'%s\' contains "%s" in specified order.',
             $this->content,
             $this->failedValue
         );

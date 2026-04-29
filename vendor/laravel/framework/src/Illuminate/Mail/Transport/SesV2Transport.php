@@ -44,8 +44,6 @@ class SesV2Transport extends AbstractTransport implements Stringable
 
     /**
      * {@inheritDoc}
-     *
-     * @throws \Symfony\Component\Mailer\Exception\TransportException
      */
     protected function doSend(SentMessage $message): void
     {

@@ -140,7 +140,7 @@ class Str
      */
     public static function transliterate($string, $unknown = '?', $strict = false)
     {
-        return ASCII::to_transliterate((string) $string, $unknown, $strict);
+        return ASCII::to_transliterate($string, $unknown, $strict);
     }
 
     /**
@@ -225,7 +225,11 @@ class Str
      */
     public static function camel($value)
     {
-        return static::$camelCache[$value] ?? static::$camelCache[$value] = lcfirst(static::studly($value));
+        if (isset(static::$camelCache[$value])) {
+            return static::$camelCache[$value];
+        }
+
+        return static::$camelCache[$value] = lcfirst(static::studly($value));
     }
 
     /**
@@ -787,8 +791,6 @@ class Str
      */
     public static function markdown($string, array $options = [], array $extensions = [])
     {
-        $string = (string) $string;
-
         $converter = new GithubFlavoredMarkdownConverter($options);
 
         $environment = $converter->getEnvironment();
@@ -810,8 +812,6 @@ class Str
      */
     public static function inlineMarkdown($string, array $options = [], array $extensions = [])
     {
-        $string = (string) $string;
-
         $environment = new Environment($options);
 
         $environment->addExtension(new GithubFlavoredMarkdownExtension());
@@ -1202,7 +1202,7 @@ class Str
     public static function replaceArray($search, $replace, $subject)
     {
         if ($replace instanceof Traversable) {
-            $replace = iterator_to_array($replace);
+            $replace = Arr::from($replace);
         }
 
         $segments = explode($search, $subject);
@@ -1227,7 +1227,7 @@ class Str
     {
         try {
             return (string) $value;
-        } catch (Throwable) {
+        } catch (Throwable $e) {
             return $fallback;
         }
     }
@@ -1244,15 +1244,15 @@ class Str
     public static function replace($search, $replace, $subject, $caseSensitive = true)
     {
         if ($search instanceof Traversable) {
-            $search = iterator_to_array($search);
+            $search = Arr::from($search);
         }
 
         if ($replace instanceof Traversable) {
-            $replace = iterator_to_array($replace);
+            $replace = Arr::from($replace);
         }
 
         if ($subject instanceof Traversable) {
-            $subject = iterator_to_array($subject);
+            $subject = Arr::from($subject);
         }
 
         return $caseSensitive
@@ -1385,7 +1385,7 @@ class Str
     public static function remove($search, $subject, $caseSensitive = true)
     {
         if ($search instanceof Traversable) {
-            $search = iterator_to_array($search);
+            $search = Arr::from($search);
         }
 
         return $caseSensitive
@@ -2150,17 +2150,5 @@ class Str
         static::$snakeCache = [];
         static::$camelCache = [];
         static::$studlyCache = [];
-    }
-
-    /**
-     * Return all factory functions to their default state.
-     *
-     * @return void
-     */
-    public static function resetFactoryState()
-    {
-        static::createRandomStringsNormally();
-        static::createUlidsNormally();
-        static::createUuidsNormally();
     }
 }

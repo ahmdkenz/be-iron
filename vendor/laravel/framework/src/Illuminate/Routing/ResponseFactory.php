@@ -131,54 +131,50 @@ class ResponseFactory implements FactoryContract
     public function eventStream(Closure $callback, array $headers = [], StreamedEvent|string|null $endStreamWith = '</stream>')
     {
         return $this->stream(function () use ($callback, $endStreamWith) {
-            try {
-                foreach ($callback() as $message) {
-                    if (connection_aborted()) {
-                        break;
-                    }
-
-                    $event = 'update';
-
-                    if ($message instanceof StreamedEvent) {
-                        $event = $message->event;
-                        $message = $message->data;
-                    }
-
-                    if (! is_string($message) && ! is_numeric($message)) {
-                        $message = Js::encode($message);
-                    }
-
-                    echo "event: $event\n";
-                    echo 'data: '.$message;
-                    echo "\n\n";
-
-                    if (ob_get_level() > 0) {
-                        ob_flush();
-                    }
-
-                    flush();
+            foreach ($callback() as $message) {
+                if (connection_aborted()) {
+                    break;
                 }
 
-                if (filled($endStreamWith)) {
-                    $endEvent = 'update';
+                $event = 'update';
 
-                    if ($endStreamWith instanceof StreamedEvent) {
-                        $endEvent = $endStreamWith->event;
-                        $endStreamWith = $endStreamWith->data;
-                    }
-
-                    echo "event: $endEvent\n";
-                    echo 'data: '.$endStreamWith;
-                    echo "\n\n";
-
-                    if (ob_get_level() > 0) {
-                        ob_flush();
-                    }
-
-                    flush();
+                if ($message instanceof StreamedEvent) {
+                    $event = $message->event;
+                    $message = $message->data;
                 }
-            } catch (Throwable $e) {
-                report($e);
+
+                if (! is_string($message) && ! is_numeric($message)) {
+                    $message = Js::encode($message);
+                }
+
+                echo "event: $event\n";
+                echo 'data: '.$message;
+                echo "\n\n";
+
+                if (ob_get_level() > 0) {
+                    ob_flush();
+                }
+
+                flush();
+            }
+
+            if (filled($endStreamWith)) {
+                $endEvent = 'update';
+
+                if ($endStreamWith instanceof StreamedEvent) {
+                    $endEvent = $endStreamWith->event;
+                    $endStreamWith = $endStreamWith->data;
+                }
+
+                echo "event: $endEvent\n";
+                echo 'data: '.$endStreamWith;
+                echo "\n\n";
+
+                if (ob_get_level() > 0) {
+                    ob_flush();
+                }
+
+                flush();
             }
         }, 200, array_merge($headers, [
             'Content-Type' => 'text/event-stream',

@@ -35,7 +35,7 @@ trait InteractsWithPivotTable
             array_keys($records)
         ));
 
-        if ($detach !== []) {
+        if (count($detach) > 0) {
             $this->detach($detach, false);
 
             $changes['detached'] = $this->castKeys($detach);
@@ -46,7 +46,7 @@ trait InteractsWithPivotTable
         // this change list and get ready to return these results to the callers.
         $attach = array_diff_key($records, array_flip($detach));
 
-        if ($attach !== []) {
+        if (count($attach) > 0) {
             $this->attach($attach, [], false);
 
             $changes['attached'] = array_keys($attach);
@@ -119,7 +119,7 @@ trait InteractsWithPivotTable
         if ($detaching) {
             $detach = array_diff($current, array_keys($records));
 
-            if ($detach !== []) {
+            if (count($detach) > 0) {
                 $this->detach($detach, false);
 
                 $changes['detached'] = $this->castKeys($detach);

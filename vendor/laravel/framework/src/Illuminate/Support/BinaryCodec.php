@@ -25,8 +25,6 @@ class BinaryCodec
 
     /**
      * Encode a value to binary.
-     *
-     * @throws \InvalidArgumentException
      */
     public static function encode(UuidInterface|Ulid|string|null $value, string $format): ?string
     {
@@ -55,8 +53,6 @@ class BinaryCodec
 
     /**
      * Decode a binary value to string.
-     *
-     * @throws \InvalidArgumentException
      */
     public static function decode(?string $value, string $format): ?string
     {
@@ -78,7 +74,7 @@ class BinaryCodec
     /**
      * Get all available format names.
      *
-     * @return array<string>
+     * @return list<string>
      */
     public static function formats(): array
     {

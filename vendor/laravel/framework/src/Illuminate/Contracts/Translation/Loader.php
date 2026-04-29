@@ -34,7 +34,7 @@ interface Loader
     /**
      * Get an array of all the registered namespaces.
      *
-     * @return array<string, string>
+     * @return array
      */
     public function namespaces();
 }

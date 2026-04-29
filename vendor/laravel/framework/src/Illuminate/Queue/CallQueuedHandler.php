@@ -5,7 +5,6 @@ namespace Illuminate\Queue;
 use Exception;
 use Illuminate\Bus\Batchable;
 use Illuminate\Bus\BatchRepository;
-use Illuminate\Bus\DebounceLock;
 use Illuminate\Bus\UniqueLock;
 use Illuminate\Contracts\Bus\Dispatcher;
 use Illuminate\Contracts\Cache\Factory as CacheFactory;
@@ -19,7 +18,8 @@ use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Events\CallQueuedListener;
 use Illuminate\Log\Context\Repository as ContextRepository;
 use Illuminate\Pipeline\Pipeline;
-use Illuminate\Queue\Events\JobDebounced;
+use Illuminate\Queue\Attributes\DeleteWhenMissingModels;
+use ReflectionClass;
 use RuntimeException;
 
 class CallQueuedHandler
@@ -37,13 +37,6 @@ class CallQueuedHandler
      * @var \Illuminate\Contracts\Container\Container
      */
     protected $container;
-
-    /**
-     * The command currently being processed.
-     *
-     * @var mixed
-     */
-    protected $runningCommand;
 
     /**
      * Create a new handler instance.
@@ -74,17 +67,7 @@ class CallQueuedHandler
             return $this->handleModelNotFound($job, $e);
         }
 
-        if ($this->commandShouldBeDebounced($command)) {
-            return $this->deleteDebouncedJob($job, $command);
-        }
-
-        $this->runningCommand = $command;
-
-        try {
-            $this->dispatchThroughMiddleware($job, $command);
-        } finally {
-            $this->runningCommand = null;
-        }
+        $this->dispatchThroughMiddleware($job, $command);
 
         if (! $job->isReleased() && ! $this->commandShouldBeUniqueUntilProcessing($command)) {
             $this->ensureUniqueJobLockIsReleased($command);
@@ -139,12 +122,12 @@ class CallQueuedHandler
         return (new Pipeline($this->container))->send($command)
             ->through(array_merge(method_exists($command, 'middleware') ? $command->middleware() : [], $command->middleware ?? []))
             ->finally(function ($command) use (&$lockReleased) {
-                if (! $lockReleased && $this->commandShouldBeUniqueUntilProcessing($command) && ! $command->job->isReleased() && $command->job->attempts() <= 1) {
+                if (! $lockReleased && $this->commandShouldBeUniqueUntilProcessing($command) && ! $command->job->isReleased()) {
                     $this->ensureUniqueJobLockIsReleased($command);
                 }
             })
             ->then(function ($command) use ($job, &$lockReleased) {
-                if ($this->commandShouldBeUniqueUntilProcessing($command) && $job->attempts() <= 1) {
+                if ($this->commandShouldBeUniqueUntilProcessing($command)) {
                     $this->ensureUniqueJobLockIsReleased($command);
 
                     $lockReleased = true;
@@ -183,7 +166,7 @@ class CallQueuedHandler
      */
     protected function setJobInstanceIfNecessary(Job $job, $instance)
     {
-        if (isset(class_uses_recursive($instance)[InteractsWithQueue::class])) {
+        if (in_array(InteractsWithQueue::class, class_uses_recursive($instance))) {
             $instance->setJob($job);
         }
 
@@ -213,7 +196,8 @@ class CallQueuedHandler
     {
         $uses = class_uses_recursive($command);
 
-        if (! isset($uses[Batchable::class], $uses[InteractsWithQueue::class])) {
+        if (! in_array(Batchable::class, $uses) ||
+            ! in_array(InteractsWithQueue::class, $uses)) {
             return;
         }
 
@@ -233,48 +217,6 @@ class CallQueuedHandler
         if ($this->commandShouldBeUnique($command)) {
             (new UniqueLock($this->container->make(Cache::class)))->release($command);
         }
-    }
-
-    /**
-     * Determine if the debounced command was superseded by a newer dispatch.
-     *
-     * @param  mixed  $command
-     * @return bool
-     */
-    protected function commandShouldBeDebounced($command)
-    {
-        $owner = $command->debounceOwner ?? '';
-
-        if (empty($owner)) {
-            return false;
-        }
-
-        $lock = new DebounceLock($this->container->make(Cache::class));
-
-        // Fail-open: if the lock no longer exists (cache eviction, TTL expiry), let the job execute...
-        if (! $lock->lockExists($command)) {
-            return false;
-        }
-
-        return ! $lock->isCurrentOwner($command, $owner);
-    }
-
-    /**
-     * Handle a debounced (superseded) job by firing an event and deleting it.
-     *
-     * @param  \Illuminate\Contracts\Queue\Job  $job
-     * @param  mixed  $command
-     * @return void
-     */
-    protected function deleteDebouncedJob($job, $command)
-    {
-        if ($this->container->bound('events')) {
-            $this->container->make('events')->dispatch(
-                new JobDebounced($job->getConnectionName(), $job, $command)
-            );
-        }
-
-        $job->delete();
     }
 
     /**
@@ -304,10 +246,21 @@ class CallQueuedHandler
      */
     protected function handleModelNotFound(Job $job, $e)
     {
+        $class = $job->resolveQueuedJobClass();
+
+        try {
+            $reflectionClass = new ReflectionClass($class);
+
+            $shouldDelete = $reflectionClass->getDefaultProperties()['deleteWhenMissingModels']
+                ?? count($reflectionClass->getAttributes(DeleteWhenMissingModels::class)) !== 0;
+        } catch (Exception) {
+            $shouldDelete = false;
+        }
+
         $this->ensureUniqueJobLockIsReleasedViaContext();
 
-        if ($job->payload()['deleteWhenMissingModels'] ?? false) {
-            $this->ensureSuccessfulBatchJobIsRecordedForMissingModel($job, $job->resolveQueuedJobClass());
+        if ($shouldDelete) {
+            $this->ensureSuccessfulBatchJobIsRecordedForMissingModel($job, $class);
 
             return $job->delete();
         }
@@ -353,7 +306,7 @@ class CallQueuedHandler
      */
     protected function ensureSuccessfulBatchJobIsRecordedForMissingModel(Job $job, string $class)
     {
-        if (! isset(class_uses_recursive($class)[Batchable::class])) {
+        if (! in_array(Batchable::class, class_uses_recursive($class), true)) {
             return;
         }
 
@@ -418,7 +371,7 @@ class CallQueuedHandler
      */
     protected function ensureFailedBatchJobIsRecorded(string $uuid, $command, $e)
     {
-        if (! isset(class_uses_recursive($command)[Batchable::class])) {
+        if (! in_array(Batchable::class, class_uses_recursive($command))) {
             return;
         }
 
@@ -440,15 +393,5 @@ class CallQueuedHandler
         if (method_exists($command, 'invokeChainCatchCallbacks')) {
             $command->invokeChainCatchCallbacks($e);
         }
-    }
-
-    /**
-     * Get the command currently being processed.
-     *
-     * @return mixed
-     */
-    public function getRunningCommand()
-    {
-        return $this->runningCommand;
     }
 }

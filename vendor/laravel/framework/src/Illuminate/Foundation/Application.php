@@ -45,7 +45,7 @@ class Application extends Container implements ApplicationContract, CachesConfig
      *
      * @var string
      */
-    const VERSION = '13.7.0';
+    const VERSION = '12.58.0';
 
     /**
      * The base path for the Laravel installation.
@@ -748,7 +748,7 @@ class Application extends Container implements ApplicationContract, CachesConfig
      */
     public function environment(...$environments)
     {
-        if ($environments !== []) {
+        if (count($environments) > 0) {
             $patterns = is_array($environments[0]) ? $environments[0] : $environments;
 
             return Str::is($patterns, $this['env']);

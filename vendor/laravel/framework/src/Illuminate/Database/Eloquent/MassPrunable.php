@@ -42,8 +42,6 @@ trait MassPrunable
      * Get the prunable model query.
      *
      * @return \Illuminate\Database\Eloquent\Builder<static>
-     *
-     * @throws \LogicException
      */
     public function prunable()
     {

@@ -25,9 +25,9 @@ class MorphToMany extends BelongsToMany
     protected $morphType;
 
     /**
-     * The morph class of the morph type constraint.
+     * The class name of the morph type constraint.
      *
-     * @var class-string|string
+     * @var class-string<TRelatedModel>
      */
     protected $morphClass;
 
@@ -214,7 +214,7 @@ class MorphToMany extends BelongsToMany
     /**
      * Get the class name of the parent model.
      *
-     * @return class-string|string
+     * @return class-string<TRelatedModel>
      */
     public function getMorphClass()
     {

@@ -7,7 +7,6 @@ use Closure;
 use Illuminate\Container\Container;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\Request;
-use Illuminate\Routing\Attributes\Controllers\Middleware as MiddlewareAttribute;
 use Illuminate\Routing\Contracts\CallableDispatcher;
 use Illuminate\Routing\Contracts\ControllerDispatcher as ControllerDispatcherContract;
 use Illuminate\Routing\Controllers\HasMiddleware;
@@ -24,9 +23,6 @@ use Illuminate\Support\Traits\Macroable;
 use InvalidArgumentException;
 use Laravel\SerializableClosure\SerializableClosure;
 use LogicException;
-use ReflectionAttribute;
-use ReflectionClass;
-use ReflectionException;
 use Symfony\Component\Routing\Route as SymfonyRoute;
 
 use function Illuminate\Support\enum_value;
@@ -515,7 +511,11 @@ class Route
      */
     public function parameterNames()
     {
-        return $this->parameterNames ?? $this->parameterNames = $this->compileParameterNames();
+        if (isset($this->parameterNames)) {
+            return $this->parameterNames;
+        }
+
+        return $this->parameterNames = $this->compileParameterNames();
     }
 
     /**
@@ -1134,9 +1134,7 @@ class Route
             );
         }
 
-        return $this->attributeProvidedControllerMiddleware(
-            $controllerClass, $controllerMethod
-        );
+        return [];
     }
 
     /**
@@ -1162,50 +1160,6 @@ class Route
             ->map
             ->middleware
             ->flatten()
-            ->values()
-            ->all();
-    }
-
-    /**
-     * Get the attribute provided controller middleware for the given class and method.
-     *
-     * @return array
-     */
-    protected function attributeProvidedControllerMiddleware(string $class, string $method)
-    {
-        try {
-            $reflectionClass = new ReflectionClass($class);
-            $reflectionMethod = $reflectionClass->getMethod($method);
-        } catch (ReflectionException) {
-            return [];
-        }
-
-        $attributes = new Collection;
-
-        $current = $reflectionClass;
-
-        while ($current) {
-            $classAttributes = array_reverse($current->getAttributes(
-                MiddlewareAttribute::class, ReflectionAttribute::IS_INSTANCEOF
-            ));
-
-            foreach ($classAttributes as $attribute) {
-                $attributes->prepend($attribute);
-            }
-
-            $current = $current->getParentClass();
-        }
-
-        return $attributes->merge(
-            $reflectionMethod->getAttributes(MiddlewareAttribute::class, ReflectionAttribute::IS_INSTANCEOF)
-        )->map(function (ReflectionAttribute $attribute) use ($method) {
-            $instance = $attribute->newInstance();
-
-            return static::methodExcludedByOptions(
-                $method, ['only' => $instance->only, 'except' => $instance->except],
-            ) ? null : $instance->middleware;
-        })
-            ->filter()
             ->values()
             ->all();
     }
@@ -1347,10 +1301,14 @@ class Route
      */
     public static function getValidators()
     {
+        if (isset(static::$validators)) {
+            return static::$validators;
+        }
+
         // To match the route, we will use a chain of responsibility pattern with the
         // validator implementations. We will spin through each one making sure it
         // passes and then we will know if the route as a whole matches request.
-        return static::$validators ?? static::$validators = [
+        return static::$validators = [
             new UriValidator, new MethodValidator,
             new SchemeValidator, new HostValidator,
         ];

@@ -7,13 +7,12 @@ use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Contracts\Notifications\Dispatcher as DispatcherContract;
 use Illuminate\Contracts\Notifications\Factory as FactoryContract;
 use Illuminate\Support\Manager;
-use Illuminate\Support\Queue\Concerns\ResolvesQueueRoutes;
 use Illuminate\Support\Traits\Macroable;
 use InvalidArgumentException;
 
 class ChannelManager extends Manager implements DispatcherContract, FactoryContract
 {
-    use Macroable, ResolvesQueueRoutes;
+    use Macroable;
 
     /**
      * The resolved notification sender instance.
@@ -64,23 +63,12 @@ class ChannelManager extends Manager implements DispatcherContract, FactoryContr
     /**
      * Get a channel instance.
      *
-     * @param  \UnitEnum|string|null  $name
+     * @param  string|null  $name
      * @return mixed
      */
     public function channel($name = null)
     {
         return $this->driver($name);
-    }
-
-    /**
-     * Get a driver instance.
-     *
-     * @param  \UnitEnum|string|null  $driver
-     * @return mixed
-     */
-    public function driver($driver = null)
-    {
-        return parent::driver($driver);
     }
 
     /**

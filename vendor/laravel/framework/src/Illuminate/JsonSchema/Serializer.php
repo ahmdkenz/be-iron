@@ -58,7 +58,7 @@ class Serializer
                     static fn (Types\Type $property) => static::isRequired($property),
                 ));
 
-                if ($required !== []) {
+                if (count($required) > 0) {
                     $attributes['required'] = $required;
                 }
 

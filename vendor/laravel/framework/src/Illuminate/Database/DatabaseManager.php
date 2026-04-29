@@ -12,7 +12,6 @@ use Illuminate\Support\Traits\Macroable;
 use InvalidArgumentException;
 use PDO;
 use RuntimeException;
-use UnitEnum;
 
 use function Illuminate\Support\enum_value;
 
@@ -144,15 +143,11 @@ class DatabaseManager implements ConnectionResolverInterface
      * @param  array  $config
      * @param  bool  $force
      * @return \Illuminate\Database\ConnectionInterface
-     *
-     * @throws \RuntimeException
      */
-    public function connectUsing(UnitEnum|string $name, array $config, bool $force = false)
+    public function connectUsing(string $name, array $config, bool $force = false)
     {
-        $name = enum_value($name);
-
         if ($force) {
-            $this->purge($name);
+            $this->purge($name = enum_value($name));
         }
 
         if (isset($this->connections[$name])) {

@@ -56,7 +56,7 @@ class DatabaseMigrationRepository implements MigrationRepositoryInterface
      * Get the list of migrations.
      *
      * @param  int  $steps
-     * @return object{id: int, migration: string, batch: int}[]
+     * @return array{id: int, migration: string, batch: int}[]
      */
     public function getMigrations($steps)
     {
@@ -73,7 +73,7 @@ class DatabaseMigrationRepository implements MigrationRepositoryInterface
      * Get the list of the migrations by batch number.
      *
      * @param  int  $batch
-     * @return object{id: int, migration: string, batch: int}[]
+     * @return array{id: int, migration: string, batch: int}[]
      */
     public function getMigrationsByBatch($batch)
     {
@@ -87,7 +87,7 @@ class DatabaseMigrationRepository implements MigrationRepositoryInterface
     /**
      * Get the last migration batch.
      *
-     * @return object{id: int, migration: string, batch: int}[]
+     * @return array{id: int, migration: string, batch: int}[]
      */
     public function getLast()
     {
@@ -99,7 +99,7 @@ class DatabaseMigrationRepository implements MigrationRepositoryInterface
     /**
      * Get the completed migrations with their batch numbers.
      *
-     * @return array<string, int>
+     * @return array<int, string>[]
      */
     public function getMigrationBatches()
     {

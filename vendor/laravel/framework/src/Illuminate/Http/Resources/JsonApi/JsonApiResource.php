@@ -250,6 +250,6 @@ class JsonApiResource extends JsonResource
         parent::flushState();
 
         static::$jsonApiInformation = [];
-        static::$maxRelationshipDepth = 5;
+        static::$maxRelationshipDepth = 3;
     }
 }

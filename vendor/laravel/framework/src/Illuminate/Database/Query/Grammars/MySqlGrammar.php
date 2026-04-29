@@ -447,14 +447,6 @@ class MySqlGrammar extends Grammar
     }
 
     /**
-     * {@inheritdoc}
-     */
-    protected function supportsStraightJoins()
-    {
-        return true;
-    }
-
-    /**
      * Prepare a JSON column being updated using the JSON_SET function.
      *
      * @param  string  $key
@@ -521,7 +513,7 @@ class MySqlGrammar extends Grammar
     }
 
     /**
-     * Compile a delete statement without joins into SQL.
+     * Compile a delete query that does not use joins.
      *
      * @param  \Illuminate\Database\Query\Builder  $query
      * @param  string  $table
@@ -532,33 +524,9 @@ class MySqlGrammar extends Grammar
     {
         $sql = parent::compileDeleteWithoutJoins($query, $table, $where);
 
-        if (! empty($query->orders)) {
-            $sql .= ' '.$this->compileOrders($query, $query->orders);
-        }
-
-        if (isset($query->limit)) {
-            $sql .= ' '.$this->compileLimit($query, $query->limit);
-        }
-
-        return $sql;
-    }
-
-    /**
-     * Compile a delete statement with joins into SQL.
-     *
-     * Adds ORDER BY and LIMIT if present, for platforms that allow them (e.g., PlanetScale).
-     *
-     * Standard MySQL does not support ORDER BY or LIMIT with joined deletes and will throw a syntax error.
-     *
-     * @param  \Illuminate\Database\Query\Builder  $query
-     * @param  string  $table
-     * @param  string  $where
-     * @return string
-     */
-    protected function compileDeleteWithJoins(Builder $query, $table, $where)
-    {
-        $sql = parent::compileDeleteWithJoins($query, $table, $where);
-
+        // When using MySQL, delete statements may contain order by statements and limits
+        // so we will compile both of those here. Once we have finished compiling this
+        // we will return the completed SQL statement so it will be executed for us.
         if (! empty($query->orders)) {
             $sql .= ' '.$this->compileOrders($query, $query->orders);
         }

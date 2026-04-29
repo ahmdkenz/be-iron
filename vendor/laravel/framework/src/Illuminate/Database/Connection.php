@@ -404,12 +404,11 @@ class Connection implements ConnectionInterface
      * @param  string  $query
      * @param  array  $bindings
      * @param  bool  $useReadPdo
-     * @param  array  $fetchUsing
      * @return array
      */
-    public function select($query, $bindings = [], $useReadPdo = true, array $fetchUsing = [])
+    public function select($query, $bindings = [], $useReadPdo = true)
     {
-        return $this->run($query, $bindings, function ($query, $bindings) use ($useReadPdo, $fetchUsing) {
+        return $this->run($query, $bindings, function ($query, $bindings) use ($useReadPdo) {
             if ($this->pretending()) {
                 return [];
             }
@@ -425,7 +424,7 @@ class Connection implements ConnectionInterface
 
             $statement->execute();
 
-            return $statement->fetchAll(...$fetchUsing);
+            return $statement->fetchAll();
         });
     }
 
@@ -435,12 +434,11 @@ class Connection implements ConnectionInterface
      * @param  string  $query
      * @param  array  $bindings
      * @param  bool  $useReadPdo
-     * @param  array  $fetchUsing
      * @return array
      */
-    public function selectResultSets($query, $bindings = [], $useReadPdo = true, array $fetchUsing = [])
+    public function selectResultSets($query, $bindings = [], $useReadPdo = true)
     {
-        return $this->run($query, $bindings, function ($query, $bindings) use ($useReadPdo, $fetchUsing) {
+        return $this->run($query, $bindings, function ($query, $bindings) use ($useReadPdo) {
             if ($this->pretending()) {
                 return [];
             }
@@ -456,7 +454,7 @@ class Connection implements ConnectionInterface
             $sets = [];
 
             do {
-                $sets[] = $statement->fetchAll(...$fetchUsing);
+                $sets[] = $statement->fetchAll();
             } while ($statement->nextRowset());
 
             return $sets;
@@ -469,10 +467,9 @@ class Connection implements ConnectionInterface
      * @param  string  $query
      * @param  array  $bindings
      * @param  bool  $useReadPdo
-     * @param  array  $fetchUsing
      * @return \Generator<int, \stdClass>
      */
-    public function cursor($query, $bindings = [], $useReadPdo = true, array $fetchUsing = [])
+    public function cursor($query, $bindings = [], $useReadPdo = true)
     {
         $statement = $this->run($query, $bindings, function ($query, $bindings) use ($useReadPdo) {
             if ($this->pretending()) {
@@ -497,7 +494,7 @@ class Connection implements ConnectionInterface
             return $statement;
         });
 
-        while ($record = $statement->fetch(...$fetchUsing)) {
+        while ($record = $statement->fetch()) {
             yield $record;
         }
     }
@@ -622,7 +619,7 @@ class Connection implements ConnectionInterface
     /**
      * Run a raw, unprepared query against the PDO connection.
      *
-     * @param  literal-string  $query
+     * @param  string  $query
      * @return bool
      */
     public function unprepared($query)
@@ -834,11 +831,11 @@ class Connection implements ConnectionInterface
         // message to include the bindings with SQL, which will make this exception a
         // lot more helpful to the developer instead of just the database's errors.
         catch (Exception $e) {
-            $exceptionType = ($isUniqueConstraintError = $this->isUniqueConstraintError($e))
+            $exceptionType = $this->isUniqueConstraintError($e)
                 ? UniqueConstraintViolationException::class
                 : QueryException::class;
 
-            $exception = new $exceptionType(
+            throw new $exceptionType(
                 $this->getNameWithReadWriteType(),
                 $query,
                 $this->prepareBindings($bindings),
@@ -846,14 +843,6 @@ class Connection implements ConnectionInterface
                 $this->getConnectionDetails(),
                 $this->latestReadWriteTypeUsed(),
             );
-
-            if ($isUniqueConstraintError) {
-                ['index' => $index, 'columns' => $columns] = $this->parseUniqueConstraintViolation($e);
-
-                $exception->setIndex($index)->setColumns($columns);
-            }
-
-            throw $exception;
         }
     }
 
@@ -866,17 +855,6 @@ class Connection implements ConnectionInterface
     protected function isUniqueConstraintError(Exception $exception)
     {
         return false;
-    }
-
-    /**
-     * Extract the index and columns that caused a unique constraint violation.
-     *
-     * @param  Exception  $exception
-     * @return array{index: string|null, columns: list<string>}
-     */
-    protected function parseUniqueConstraintViolation(Exception $exception): array
-    {
-        return ['index' => null, 'columns' => []];
     }
 
     /**
@@ -1130,7 +1108,7 @@ class Connection implements ConnectionInterface
     /**
      * Get a new raw query expression.
      *
-     * @param  literal-string|int|float  $value
+     * @param  mixed  $value
      * @return \Illuminate\Contracts\Database\Query\Expression
      */
     public function raw($value)

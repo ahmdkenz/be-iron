@@ -10,12 +10,10 @@ use Illuminate\Contracts\Support\Responsable;
 use Illuminate\Database\Eloquent\JsonEncodingException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Http\Resources\Attributes\PreserveKeys;
 use Illuminate\Http\Resources\ConditionallyLoadsAttributes;
 use Illuminate\Http\Resources\DelegatesToResource;
 use JsonException;
 use JsonSerializable;
-use ReflectionClass;
 
 class JsonResource implements ArrayAccess, JsonSerializable, Responsable, UrlRoutable
 {
@@ -88,13 +86,7 @@ class JsonResource implements ArrayAccess, JsonSerializable, Responsable, UrlRou
     public static function collection($resource)
     {
         return tap(static::newCollection($resource), function ($collection) {
-            if (! array_key_exists(static::class, static::$cachedPreserveKeysAttributes)) {
-                static::$cachedPreserveKeysAttributes[static::class] = (new ReflectionClass(static::class))->getAttributes(PreserveKeys::class) !== [];
-            }
-
-            if (static::$cachedPreserveKeysAttributes[static::class]) {
-                $collection->preserveKeys = true;
-            } elseif (property_exists(static::class, 'preserveKeys')) {
+            if (property_exists(static::class, 'preserveKeys')) {
                 $collection->preserveKeys = (new static([]))->preserveKeys === true;
             }
         });

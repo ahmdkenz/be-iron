@@ -2,7 +2,6 @@
 
 namespace Illuminate\Http\Resources;
 
-use Illuminate\Http\Resources\Attributes\Collects;
 use Illuminate\Http\Resources\Json\JsonResource;
 use Illuminate\Pagination\AbstractCursorPaginator;
 use Illuminate\Pagination\AbstractPaginator;
@@ -14,13 +13,6 @@ use Traversable;
 
 trait CollectsResources
 {
-    /**
-     * The cached Collects attribute values.
-     *
-     * @var array<class-string, class-string|false>
-     */
-    protected static $cachedCollectsAttributes = [];
-
     /**
      * Map the given collection resource into its individual resources.
      *
@@ -59,17 +51,7 @@ trait CollectsResources
     {
         $collects = null;
 
-        if (! array_key_exists(static::class, static::$cachedCollectsAttributes)) {
-            $attribute = (new ReflectionClass($this))->getAttributes(Collects::class);
-
-            static::$cachedCollectsAttributes[static::class] = $attribute !== []
-                ? $attribute[0]->newInstance()->class
-                : false;
-        }
-
-        if (static::$cachedCollectsAttributes[static::class]) {
-            $collects = static::$cachedCollectsAttributes[static::class];
-        } elseif ($this->collects) {
+        if ($this->collects) {
             $collects = $this->collects;
         } elseif (str_ends_with(class_basename($this), 'Collection') &&
             (class_exists($class = Str::replaceLast('Collection', '', get_class($this))) ||

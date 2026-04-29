@@ -49,7 +49,7 @@ class In implements Stringable
         $values = array_map(function ($value) {
             $value = enum_value($value);
 
-            return '"'.str_replace('"', '""', (string) $value).'"';
+            return '"'.str_replace('"', '""', $value).'"';
         }, $this->values);
 
         return $this->rule.':'.implode(',', $values);

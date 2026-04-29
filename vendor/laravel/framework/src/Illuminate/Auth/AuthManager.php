@@ -4,12 +4,7 @@ namespace Illuminate\Auth;
 
 use Closure;
 use Illuminate\Contracts\Auth\Factory as FactoryContract;
-use Illuminate\Support\RebindsCallbacksToSelf;
 use InvalidArgumentException;
-use ReflectionException;
-use RuntimeException;
-
-use function Illuminate\Support\enum_value;
 
 /**
  * @mixin \Illuminate\Contracts\Auth\Guard
@@ -17,7 +12,7 @@ use function Illuminate\Support\enum_value;
  */
 class AuthManager implements FactoryContract
 {
-    use CreatesUserProviders, RebindsCallbacksToSelf;
+    use CreatesUserProviders;
 
     /**
      * The application instance.
@@ -64,12 +59,12 @@ class AuthManager implements FactoryContract
     /**
      * Attempt to get the guard from the local cache.
      *
-     * @param  \UnitEnum|string|null  $name
+     * @param  string|null  $name
      * @return \Illuminate\Contracts\Auth\Guard|\Illuminate\Contracts\Auth\StatefulGuard
      */
     public function guard($name = null)
     {
-        $name = enum_value($name) ?: $this->getDefaultDriver();
+        $name = $name ?: $this->getDefaultDriver();
 
         return $this->guards[$name] ??= $this->resolve($name);
     }
@@ -200,12 +195,12 @@ class AuthManager implements FactoryContract
     /**
      * Set the default guard driver the factory should serve.
      *
-     * @param  \UnitEnum|string|null  $name
+     * @param  string  $name
      * @return void
      */
     public function shouldUse($name)
     {
-        $name = enum_value($name) ?: $this->getDefaultDriver();
+        $name = $name ?: $this->getDefaultDriver();
 
         $this->setDefaultDriver($name);
 
@@ -215,12 +210,12 @@ class AuthManager implements FactoryContract
     /**
      * Set the default authentication driver name.
      *
-     * @param  \UnitEnum|string  $name
+     * @param  string  $name
      * @return void
      */
     public function setDefaultDriver($name)
     {
-        $this->app['config']['auth.defaults.guard'] = enum_value($name);
+        $this->app['config']['auth.defaults.guard'] = $name;
     }
 
     /**
@@ -269,19 +264,10 @@ class AuthManager implements FactoryContract
      *
      * @param  string  $driver
      * @param  \Closure  $callback
-     *
-     * @param-closure-this  $this  $callback
-     *
      * @return $this
      */
     public function extend($driver, Closure $callback)
     {
-        try {
-            $callback = $this->bindCallbackToSelf($callback) ?? throw new RuntimeException('Unable to bind custom driver callback');
-        } catch (ReflectionException $e) {
-            throw new RuntimeException('Unable to bind custom driver callback', previous: $e);
-        }
-
         $this->customCreators[$driver] = $callback;
 
         return $this;

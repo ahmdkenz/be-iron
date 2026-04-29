@@ -6,7 +6,7 @@ use Illuminate\Contracts\Database\Query\Expression as ExpressionContract;
 use Illuminate\Database\Grammar;
 
 /**
- * @template TValue of literal-string|int|float
+ * @template TValue of string|int|float
  */
 class Expression implements ExpressionContract
 {

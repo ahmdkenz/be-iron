@@ -2,9 +2,9 @@
 
 namespace Illuminate\Queue;
 
+use Carbon\Carbon;
 use Closure;
 use DateTimeInterface;
-use Illuminate\Bus\DebounceLock;
 use Illuminate\Bus\UniqueLock;
 use Illuminate\Container\Container;
 use Illuminate\Contracts\Cache\Repository as Cache;
@@ -12,16 +12,8 @@ use Illuminate\Contracts\Encryption\Encrypter;
 use Illuminate\Contracts\Queue\ShouldBeEncrypted;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueueAfterCommit;
-use Illuminate\Queue\Attributes\Backoff;
-use Illuminate\Queue\Attributes\DeleteWhenMissingModels;
-use Illuminate\Queue\Attributes\FailOnTimeout;
-use Illuminate\Queue\Attributes\MaxExceptions;
-use Illuminate\Queue\Attributes\ReadsQueueAttributes;
-use Illuminate\Queue\Attributes\Timeout;
-use Illuminate\Queue\Attributes\Tries;
 use Illuminate\Queue\Events\JobQueued;
 use Illuminate\Queue\Events\JobQueueing;
-use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\InteractsWithTime;
 use Illuminate\Support\Str;
@@ -30,7 +22,7 @@ use Throwable;
 
 abstract class Queue
 {
-    use InteractsWithTime, ReadsQueueAttributes;
+    use InteractsWithTime;
 
     /**
      * The IoC container instance.
@@ -164,8 +156,6 @@ abstract class Queue
      * @param  object  $job
      * @param  string  $queue
      * @return array
-     *
-     * @throws \RuntimeException
      */
     protected function createObjectPayload($job, $queue)
     {
@@ -174,12 +164,11 @@ abstract class Queue
             'displayName' => $this->getDisplayName($job),
             'job' => 'Illuminate\Queue\CallQueuedHandler@call',
             'maxTries' => $this->getJobTries($job),
-            'maxExceptions' => $this->getAttributeValue($job, MaxExceptions::class, 'maxExceptions'),
-            'failOnTimeout' => $this->getAttributeValue($job, FailOnTimeout::class, 'failOnTimeout') ?? false,
+            'maxExceptions' => $job->maxExceptions ?? null,
+            'failOnTimeout' => $job->failOnTimeout ?? false,
             'backoff' => $this->getJobBackoff($job),
-            'timeout' => $this->getAttributeValue($job, Timeout::class, 'timeout'),
+            'timeout' => $job->timeout ?? null,
             'retryUntil' => $this->getJobExpiration($job),
-            'deleteWhenMissingModels' => $this->getAttributeValue($job, DeleteWhenMissingModels::class, 'deleteWhenMissingModels') ?? false,
             'data' => [
                 'commandName' => $job,
                 'command' => $job,
@@ -229,10 +218,12 @@ abstract class Queue
      */
     public function getJobTries($job)
     {
-        $tries = $this->getAttributeValue($job, Tries::class, 'tries');
+        if (! method_exists($job, 'tries') && ! isset($job->tries)) {
+            return;
+        }
 
-        if (method_exists($job, 'tries')) {
-            $tries = $job->tries();
+        if (is_null($tries = $job->tries ?? $job->tries())) {
+            return;
         }
 
         return $tries;
@@ -246,13 +237,11 @@ abstract class Queue
      */
     public function getJobBackoff($job)
     {
-        $backoff = $this->getAttributeValue($job, Backoff::class, 'backoff');
-
-        if (method_exists($job, 'backoff')) {
-            $backoff = $job->backoff();
+        if (! method_exists($job, 'backoff') && ! isset($job->backoff)) {
+            return;
         }
 
-        if (is_null($backoff)) {
+        if (is_null($backoff = $job->backoff ?? $job->backoff())) {
             return;
         }
 
@@ -338,6 +327,7 @@ abstract class Queue
      * Create the given payload using any registered payload hooks.
      *
      * @param  string  $queue
+     * @param  array  $payload
      * @return array
      */
     protected function withCreatePayloadHooks($queue, array $payload)
@@ -369,14 +359,6 @@ abstract class Queue
                 $this->container->make('db.transactions')->addCallbackForRollback(
                     function () use ($job) {
                         (new UniqueLock($this->container->make(Cache::class)))->release($job);
-                    }
-                );
-            }
-
-            if (! empty($job->debounceOwner ?? '')) {
-                $this->container->make('db.transactions')->addCallbackForRollback(
-                    function () use ($job) {
-                        (new DebounceLock($this->container->make(Cache::class)))->release($job, $job->debounceOwner ?? '');
                     }
                 );
             }
@@ -491,6 +473,7 @@ abstract class Queue
     /**
      * Set the queue configuration array.
      *
+     * @param  array  $config
      * @return $this
      */
     public function setConfig(array $config)
@@ -513,6 +496,7 @@ abstract class Queue
     /**
      * Set the IoC container instance.
      *
+     * @param  \Illuminate\Container\Container  $container
      * @return void
      */
     public function setContainer(Container $container)

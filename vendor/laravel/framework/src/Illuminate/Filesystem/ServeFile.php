@@ -44,7 +44,7 @@ class ServeFile
                     }
                 }
             );
-        } catch (PathTraversalDetected) {
+        } catch (PathTraversalDetected $e) {
             abort(404);
         }
     }

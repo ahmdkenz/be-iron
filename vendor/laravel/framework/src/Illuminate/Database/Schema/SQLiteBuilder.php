@@ -55,7 +55,7 @@ class SQLiteBuilder extends Builder
 
         return $this->connection->getPostProcessor()->processTables(
             $this->connection->selectFromWriteConnection(
-                $this->grammar->compileTables($schema)
+                $this->grammar->compileTables($schema, $withSize)
             )
         );
     }

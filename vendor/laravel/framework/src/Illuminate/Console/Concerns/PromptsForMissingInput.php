@@ -21,7 +21,7 @@ trait PromptsForMissingInput
      * @param  \Symfony\Component\Console\Output\OutputInterface  $output
      * @return void
      */
-    protected function interact(InputInterface $input, OutputInterface $output): void
+    protected function interact(InputInterface $input, OutputInterface $output)
     {
         parent::interact($input, $output);
 

@@ -261,7 +261,7 @@ class Number
      * @param  int|float  $number
      * @param  int  $precision
      * @param  int|null  $maxPrecision
-     * @param  array<int, string>  $units
+     * @param  array  $units
      * @return string|false
      */
     protected static function summarize(int|float $number, int $precision = 0, ?int $maxPrecision = null, array $units = [])
@@ -289,15 +289,7 @@ class Number
         $displayExponent = $numberExponent - ($numberExponent % 3);
         $number /= pow(10, $displayExponent);
 
-        $formatted = static::format($number, $precision, $maxPrecision);
-
-        if (static::parseFloat($formatted) >= 1000 && isset($units[$displayExponent + 3])) {
-            $number /= 1000;
-            $displayExponent += 3;
-            $formatted = static::format($number, $precision, $maxPrecision);
-        }
-
-        return trim(sprintf('%s%s', $formatted, $units[$displayExponent] ?? ''));
+        return trim(sprintf('%s%s', static::format($number, $precision, $maxPrecision), $units[$displayExponent] ?? ''));
     }
 
     /**

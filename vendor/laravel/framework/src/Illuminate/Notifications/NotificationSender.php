@@ -9,10 +9,6 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Notifications\Events\NotificationFailed;
 use Illuminate\Notifications\Events\NotificationSending;
 use Illuminate\Notifications\Events\NotificationSent;
-use Illuminate\Queue\Attributes\Connection;
-use Illuminate\Queue\Attributes\Delay;
-use Illuminate\Queue\Attributes\Queue as QueueAttribute;
-use Illuminate\Queue\Attributes\ReadsQueueAttributes;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
 use Illuminate\Support\Traits\Localizable;
@@ -22,7 +18,7 @@ use Throwable;
 
 class NotificationSender
 {
-    use Localizable, ReadsQueueAttributes;
+    use Localizable;
 
     /**
      * The notification manager instance.
@@ -235,25 +231,23 @@ class NotificationSender
                     $notification->locale = $this->locale;
                 }
 
-                $connection = $this->getAttributeValue($notification, Connection::class, 'connection')
-                    ?? $this->manager->resolveConnectionFromQueueRoute($notification)
-                    ?? null;
+                $connection = $notification->connection;
 
                 if (method_exists($notification, 'viaConnections')) {
                     $connection = $notification->viaConnections()[$channel] ?? $connection;
                 }
 
-                $queue = $this->getAttributeValue($notification, QueueAttribute::class, 'queue')
-                    ?? $this->manager->resolveQueueFromQueueRoute($notification)
-                    ?? null;
+                $queue = $notification->queue;
 
                 if (method_exists($notification, 'viaQueues')) {
                     $queue = $notification->viaQueues()[$channel] ?? $queue;
                 }
 
-                $delay = method_exists($notification, 'withDelay')
-                    ? ($notification->withDelay($notifiable, $channel) ?? null)
-                    : $this->getAttributeValue($notification, Delay::class, 'delay');
+                $delay = $notification->delay;
+
+                if (method_exists($notification, 'withDelay')) {
+                    $delay = $notification->withDelay($notifiable, $channel) ?? null;
+                }
 
                 $messageGroup = $notification->messageGroup ?? (method_exists($notification, 'messageGroup') ? $notification->messageGroup() : null);
 

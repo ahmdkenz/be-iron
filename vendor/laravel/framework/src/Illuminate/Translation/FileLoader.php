@@ -33,7 +33,7 @@ class FileLoader implements Loader
     /**
      * All of the namespace hints.
      *
-     * @var array<string, string>
+     * @var array
      */
     protected $hints = [];
 
@@ -174,7 +174,7 @@ class FileLoader implements Loader
     /**
      * Get an array of all the registered namespaces.
      *
-     * @return array<string, string>
+     * @return array
      */
     public function namespaces()
     {

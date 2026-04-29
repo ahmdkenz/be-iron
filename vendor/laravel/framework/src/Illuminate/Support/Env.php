@@ -120,7 +120,7 @@ class Env
     /**
      * Write an array of key-value pairs to the environment file.
      *
-     * @param  array<string, mixed>  $variables
+     * @param  array  $variables
      * @param  string  $pathToFile
      * @param  bool  $overwrite
      * @return void
@@ -178,9 +178,9 @@ class Env
      *
      * @param  string  $key
      * @param  mixed  $value
-     * @param  array<int, string>  $envLines
+     * @param  array  $envLines
      * @param  bool  $overwrite
-     * @return array<int, string>
+     * @return array
      */
     protected static function addVariableToEnvContents(string $key, mixed $value, array $envLines, bool $overwrite): array
     {
@@ -293,7 +293,7 @@ class Env
      * Escape a string using addslashes, excluding the specified characters from being escaped.
      *
      * @param  string  $value
-     * @param  array<string>  $except
+     * @param  array  $except
      * @return string
      */
     protected static function addSlashesExceptFor(string $value, array $except = [])

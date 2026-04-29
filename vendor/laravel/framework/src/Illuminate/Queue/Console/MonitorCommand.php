@@ -100,10 +100,18 @@ class MonitorCommand extends Command
                 'connection' => $connection,
                 'queue' => $queue,
                 'size' => $size = $this->manager->connection($connection)->size($queue),
-                'pending' => $this->manager->connection($connection)->pendingSize($queue),
-                'delayed' => $this->manager->connection($connection)->delayedSize($queue),
-                'reserved' => $this->manager->connection($connection)->reservedSize($queue),
-                'oldest_pending' => $this->manager->connection($connection)->creationTimeOfOldestPendingJob($queue),
+                'pending' => method_exists($this->manager->connection($connection), 'pendingSize')
+                    ? $this->manager->connection($connection)->pendingSize($queue)
+                    : null,
+                'delayed' => method_exists($this->manager->connection($connection), 'delayedSize')
+                    ? $this->manager->connection($connection)->delayedSize($queue)
+                    : null,
+                'reserved' => method_exists($this->manager->connection($connection), 'reservedSize')
+                    ? $this->manager->connection($connection)->reservedSize($queue)
+                    : null,
+                'oldest_pending' => method_exists($this->manager->connection($connection), 'creationTimeOfOldestPendingJob')
+                    ? $this->manager->connection($connection)->creationTimeOfOldestPendingJob($queue)
+                    : null,
                 'status' => $size >= $this->option('max') ? '<fg=yellow;options=bold>ALERT</>' : '<fg=green;options=bold>OK</>',
             ];
         });

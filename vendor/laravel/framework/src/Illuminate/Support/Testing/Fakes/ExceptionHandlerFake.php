@@ -108,8 +108,6 @@ class ExceptionHandlerFake implements ExceptionHandler, Fake
      *
      * @param  (\Closure(\Throwable): bool)|class-string<\Throwable>  $exception
      * @return void
-     *
-     * @throws \PHPUnit\Framework\ExpectationFailedException
      */
     public function assertNotReported(Closure|string $exception)
     {
@@ -146,8 +144,6 @@ class ExceptionHandlerFake implements ExceptionHandler, Fake
      *
      * @param  \Throwable  $e
      * @return void
-     *
-     * @throws \Throwable
      */
     public function report($e)
     {
@@ -176,7 +172,7 @@ class ExceptionHandlerFake implements ExceptionHandler, Fake
      */
     protected function isFakedException(Throwable $e)
     {
-        return $this->exceptions === [] || in_array(get_class($e), $this->exceptions, true);
+        return count($this->exceptions) === 0 || in_array(get_class($e), $this->exceptions, true);
     }
 
     /**

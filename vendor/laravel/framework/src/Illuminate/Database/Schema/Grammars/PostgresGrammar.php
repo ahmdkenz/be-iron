@@ -1267,8 +1267,6 @@ class PostgresGrammar extends Grammar
      * @param  \Illuminate\Database\Schema\Blueprint  $blueprint
      * @param  \Illuminate\Support\Fluent  $column
      * @return string|null
-     *
-     * @throws \LogicException
      */
     protected function modifyVirtualAs(Blueprint $blueprint, Fluent $column)
     {
@@ -1293,8 +1291,6 @@ class PostgresGrammar extends Grammar
      * @param  \Illuminate\Database\Schema\Blueprint  $blueprint
      * @param  \Illuminate\Support\Fluent  $column
      * @return string|null
-     *
-     * @throws \LogicException
      */
     protected function modifyStoredAs(Blueprint $blueprint, Fluent $column)
     {
