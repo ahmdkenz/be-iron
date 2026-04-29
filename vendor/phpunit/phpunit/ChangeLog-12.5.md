@@ -2,6 +2,27 @@
 
 All notable changes of the PHPUnit 12.5 release series are documented in this file using the [Keep a CHANGELOG](https://keepachangelog.com/) principles.
 
+## [12.5.23] - 2026-04-18
+
+### Changed
+
+* Pass `LIBXML_NONET` when parsing/validating XML configuration files to make explicit that no network I/O is performed
+* Verify the result file written by an isolated child process with a random nonce before deserializing it
+
+## [12.5.22] - 2026-04-17
+
+### Fixed
+
+* [#6590](https://github.com/sebastianbergmann/phpunit/issues/6590): Silent failure when configuration file is invalid
+* [#6592](https://github.com/sebastianbergmann/phpunit/pull/6592): INI metacharacters `;` and `"` are not preserved when forwarding settings to child processes
+
+## [12.5.21] - 2026-04-16
+
+### Fixed
+
+* [#5860](https://github.com/sebastianbergmann/phpunit/issues/5860): PHP CLI `-d` settings are not forwarded to child processes for process isolation
+* [#6451](https://github.com/sebastianbergmann/phpunit/issues/6451): Incomplete version in `RequiresPhp` (e.g. `<=8.5`) is compared against full PHP version, causing unexpected skips
+
 ## [12.5.20] - 2026-04-15
 
 ### Fixed
@@ -187,6 +208,9 @@ All notable changes of the PHPUnit 12.5 release series are documented in this fi
 * [#6380](https://github.com/sebastianbergmann/phpunit/pull/6380): Allow `Throwable` in `expectExceptionObject()`
 * A PHPUnit notice is now emitted for test methods that create a mock object but do not configure an expectation for it
 
+[12.5.23]: https://github.com/sebastianbergmann/phpunit/compare/12.5.22...12.5.23
+[12.5.22]: https://github.com/sebastianbergmann/phpunit/compare/12.5.21...12.5.22
+[12.5.21]: https://github.com/sebastianbergmann/phpunit/compare/12.5.20...12.5.21
 [12.5.20]: https://github.com/sebastianbergmann/phpunit/compare/12.5.19...12.5.20
 [12.5.19]: https://github.com/sebastianbergmann/phpunit/compare/12.5.18...12.5.19
 [12.5.18]: https://github.com/sebastianbergmann/phpunit/compare/12.5.17...12.5.18

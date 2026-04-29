@@ -127,7 +127,7 @@ trait ValidatesAttributes
             try {
                 $records = $this->getDnsRecords($url.'.', DNS_A | DNS_AAAA);
 
-                if (is_array($records) && count($records) > 0) {
+                if (is_array($records) && $records !== []) {
                     return true;
                 }
             } catch (Exception) {
@@ -673,7 +673,7 @@ trait ValidatesAttributes
 
         $matches = [];
 
-        if (preg_match('/^[+-]?\d*\.?(\d*)$/', $value, $matches) !== 1) {
+        if (preg_match('/^[+-]?\d*\.?(\d*)$/', (string) $value, $matches) !== 1) {
             return false;
         }
 
@@ -740,6 +740,10 @@ trait ValidatesAttributes
     public function validateDigitsBetween($attribute, $value, $parameters)
     {
         $this->requireParameterCount(2, $parameters, 'digits_between');
+
+        if (! is_string($value) && ! is_numeric($value)) {
+            return false;
+        }
 
         $length = strlen((string) $value);
 
@@ -1517,7 +1521,7 @@ trait ValidatesAttributes
                 }
             }
 
-            return count(array_diff($value, $parameters)) === 0;
+            return array_diff($value, $parameters) === [];
         }
 
         return ! is_array($value) && in_array((string) $value, $parameters);
@@ -1699,7 +1703,7 @@ trait ValidatesAttributes
 
         $length = strlen((string) $value);
 
-        return ! preg_match('/[^0-9]/', $value) && $length <= $parameters[0];
+        return ! preg_match('/[^0-9]/', (string) $value) && $length <= $parameters[0];
     }
 
     /**
@@ -1809,7 +1813,7 @@ trait ValidatesAttributes
 
         $length = strlen((string) $value);
 
-        return ! preg_match('/[^0-9]/', $value) && $length >= $parameters[0];
+        return ! preg_match('/[^0-9]/', (string) $value) && $length >= $parameters[0];
     }
 
     /**
