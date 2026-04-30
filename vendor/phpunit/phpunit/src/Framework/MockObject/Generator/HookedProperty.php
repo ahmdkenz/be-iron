@@ -25,19 +25,17 @@ final readonly class HookedProperty
     private Type $type;
     private bool $getHook;
     private bool $setHook;
-    private bool $virtual;
     private ?Type $setterType;
 
     /**
      * @param non-empty-string $name
      */
-    public function __construct(string $name, Type $type, bool $getHook, bool $setHook, bool $virtual, ?Type $setterType)
+    public function __construct(string $name, Type $type, bool $getHook, bool $setHook, ?Type $setterType)
     {
         $this->name       = $name;
         $this->type       = $type;
         $this->getHook    = $getHook;
         $this->setHook    = $setHook;
-        $this->virtual    = $virtual;
         $this->setterType = $setterType;
     }
 
@@ -61,17 +59,7 @@ final readonly class HookedProperty
         return $this->setHook;
     }
 
-    public function shouldGenerateGetHook(): bool
-    {
-        return $this->getHook || !$this->virtual && $this->setHook;
-    }
-
-    public function shouldGenerateSetHook(): bool
-    {
-        return $this->setHook || !$this->virtual && $this->getHook;
-    }
-
-    public function setterType(): ?Type
+    public function setterType(): Type
     {
         return $this->setterType;
     }

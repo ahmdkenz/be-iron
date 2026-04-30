@@ -2,26 +2,21 @@
 
 namespace Spatie\Permission\Middleware;
 
-use BackedEnum;
 use Closure;
-use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Spatie\Permission\Exceptions\UnauthorizedException;
 use Spatie\Permission\Guard;
-use Spatie\Permission\Support\Config;
-
-use function Illuminate\Support\enum_value;
 
 class RoleMiddleware
 {
-    public function handle(Request $request, Closure $next, $role, ?string $guard = null)
+    public function handle($request, Closure $next, $role, $guard = null)
     {
         $authGuard = Auth::guard($guard);
 
         $user = $authGuard->user();
 
         // For machine-to-machine Passport clients
-        if (! $user && $request->bearerToken() && Config::usePassportClientCredentials()) {
+        if (! $user && $request->bearerToken() && config('permission.use_passport_client_credentials')) {
             $user = Guard::getPassportClient($guard);
         }
 
@@ -44,8 +39,12 @@ class RoleMiddleware
 
     /**
      * Specify the role and guard for the middleware.
+     *
+     * @param  array|string|\BackedEnum  $role
+     * @param  string|null  $guard
+     * @return string
      */
-    public static function using(array|string|BackedEnum $role, ?string $guard = null): string
+    public static function using($role, $guard = null)
     {
         $roleString = self::parseRolesToString($role);
 
@@ -54,12 +53,22 @@ class RoleMiddleware
         return static::class.':'.$args;
     }
 
-    protected static function parseRolesToString(array|string|BackedEnum $role): string
+    /**
+     * Convert array or string of roles to string representation.
+     *
+     * @return string
+     */
+    protected static function parseRolesToString(array|string|\BackedEnum $role)
     {
-        $role = enum_value($role);
+        // Convert Enum to its value if an Enum is passed
+        if ($role instanceof \BackedEnum) {
+            $role = $role->value;
+        }
 
         if (is_array($role)) {
-            return implode('|', array_map(fn ($r) => enum_value($r), $role));
+            $role = array_map(fn ($r) => $r instanceof \BackedEnum ? $r->value : $r, $role);
+
+            return implode('|', $role);
         }
 
         return (string) $role;

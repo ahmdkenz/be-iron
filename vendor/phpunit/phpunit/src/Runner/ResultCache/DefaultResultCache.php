@@ -33,8 +33,15 @@ use PHPUnit\Util\Filesystem;
  */
 final class DefaultResultCache implements ResultCache
 {
-    private const int VERSION                          = 2;
-    private const string DEFAULT_RESULT_CACHE_FILENAME = '.phpunit.result.cache';
+    /**
+     * @var int
+     */
+    private const VERSION = 2;
+
+    /**
+     * @var string
+     */
+    private const DEFAULT_RESULT_CACHE_FILENAME = '.phpunit.result.cache';
     private readonly string $cacheFilename;
 
     /**
@@ -47,13 +54,13 @@ final class DefaultResultCache implements ResultCache
      */
     private array $times = [];
 
-    public function __construct(string $filepath)
+    public function __construct(?string $filepath = null)
     {
-        if (is_dir($filepath)) {
+        if ($filepath !== null && is_dir($filepath)) {
             $filepath .= DIRECTORY_SEPARATOR . self::DEFAULT_RESULT_CACHE_FILENAME;
         }
 
-        $this->cacheFilename = $filepath;
+        $this->cacheFilename = $filepath ?? $_ENV['PHPUNIT_RESULT_CACHE'] ?? self::DEFAULT_RESULT_CACHE_FILENAME;
     }
 
     public function setStatus(ResultCacheId $id, TestStatus $status): void

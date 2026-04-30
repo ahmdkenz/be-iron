@@ -2,26 +2,21 @@
 
 namespace Spatie\Permission\Middleware;
 
-use BackedEnum;
 use Closure;
-use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Spatie\Permission\Exceptions\UnauthorizedException;
 use Spatie\Permission\Guard;
-use Spatie\Permission\Support\Config;
-
-use function Illuminate\Support\enum_value;
 
 class PermissionMiddleware
 {
-    public function handle(Request $request, Closure $next, $permission, ?string $guard = null)
+    public function handle($request, Closure $next, $permission, $guard = null)
     {
         $authGuard = Auth::guard($guard);
 
         $user = $authGuard->user();
 
         // For machine-to-machine Passport clients
-        if (! $user && $request->bearerToken() && Config::usePassportClientCredentials()) {
+        if (! $user && $request->bearerToken() && config('permission.use_passport_client_credentials')) {
             $user = Guard::getPassportClient($guard);
         }
 
@@ -44,22 +39,41 @@ class PermissionMiddleware
 
     /**
      * Specify the permission and guard for the middleware.
+     *
+     * @param  array|string|\BackedEnum  $permission
+     * @param  string|null  $guard
+     * @return string
      */
-    public static function using(array|string|BackedEnum $permission, ?string $guard = null): string
+    public static function using($permission, $guard = null)
     {
-        $permissionString = self::parsePermissionsToString(enum_value($permission));
+        // Convert Enum to its value if an Enum is passed
+        if ($permission instanceof \BackedEnum) {
+            $permission = $permission->value;
+        }
+
+        $permissionString = self::parsePermissionsToString($permission);
 
         $args = is_null($guard) ? $permissionString : "$permissionString,$guard";
 
         return static::class.':'.$args;
     }
 
-    protected static function parsePermissionsToString(array|string|BackedEnum $permission): string
+    /**
+     * Convert array or string of permissions to string representation.
+     *
+     * @return string
+     */
+    protected static function parsePermissionsToString(array|string|\BackedEnum $permission)
     {
-        $permission = enum_value($permission);
+        // Convert Enum to its value if an Enum is passed
+        if ($permission instanceof \BackedEnum) {
+            $permission = $permission->value;
+        }
 
         if (is_array($permission)) {
-            return implode('|', array_map(fn ($r) => enum_value($r), $permission));
+            $permission = array_map(fn ($r) => $r instanceof \BackedEnum ? $r->value : $r, $permission);
+
+            return implode('|', $permission);
         }
 
         return (string) $permission;

@@ -18,10 +18,7 @@ use function version_compare;
  */
 final readonly class MigrationBuilder
 {
-    /**
-     * @var non-empty-array<non-empty-string, non-empty-list<class-string>>
-     */
-    private const array AVAILABLE_MIGRATIONS = [
+    private const AVAILABLE_MIGRATIONS = [
         '8.5' => [
             RemoveLogTypes::class,
         ],
@@ -43,7 +40,7 @@ final readonly class MigrationBuilder
             ConvertLogTypes::class,
         ],
 
-        '9.6' => [
+        '9.5' => [
             RemoveListeners::class,
             RemoveTestSuiteLoaderAttributes::class,
             RemoveCacheResultFileAttribute::class,

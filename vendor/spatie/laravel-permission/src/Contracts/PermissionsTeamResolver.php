@@ -8,5 +8,10 @@ interface PermissionsTeamResolver
 {
     public function getPermissionsTeamId(): int|string|null;
 
-    public function setPermissionsTeamId(int|string|Model|null $id): void;
+    /**
+     * Set the team id for teams/groups support, this id is used when querying permissions/roles
+     *
+     * @param  int|string|Model|null  $id
+     */
+    public function setPermissionsTeamId($id): void;
 }

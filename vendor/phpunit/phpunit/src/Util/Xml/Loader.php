@@ -9,7 +9,6 @@
  */
 namespace PHPUnit\Util\Xml;
 
-use const LIBXML_NONET;
 use function error_reporting;
 use function file_get_contents;
 use function libxml_get_errors;
@@ -71,7 +70,7 @@ final readonly class Loader
         $internal  = libxml_use_internal_errors(true);
         $message   = '';
         $reporting = error_reporting(0);
-        $loaded    = $document->loadXML($actual, LIBXML_NONET);
+        $loaded    = $document->loadXML($actual);
 
         foreach (libxml_get_errors() as $error) {
             $message .= "\n" . $error->message;

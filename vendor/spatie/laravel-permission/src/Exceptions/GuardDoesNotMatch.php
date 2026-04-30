@@ -7,7 +7,7 @@ use InvalidArgumentException;
 
 class GuardDoesNotMatch extends InvalidArgumentException
 {
-    public static function create(string $givenGuard, Collection $expectedGuards): static
+    public static function create(string $givenGuard, Collection $expectedGuards)
     {
         return new static(__('The given role or permission should use guard `:expected` instead of `:given`.', [
             'expected' => $expectedGuards->implode(', '),

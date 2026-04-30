@@ -9,17 +9,24 @@ if (! function_exists('getModelForGuard')) {
     {
         return Guard::getModelForGuard($guard);
     }
+
 }
 
 if (! function_exists('setPermissionsTeamId')) {
-    function setPermissionsTeamId(int|string|Model|null $id): void
+    /**
+     * @param  int|string|null|Model  $id
+     */
+    function setPermissionsTeamId($id)
     {
         app(PermissionRegistrar::class)->setPermissionsTeamId($id);
     }
 }
 
 if (! function_exists('getPermissionsTeamId')) {
-    function getPermissionsTeamId(): int|string|null
+    /**
+     * @return int|string|null
+     */
+    function getPermissionsTeamId()
     {
         return app(PermissionRegistrar::class)->getPermissionsTeamId();
     }
