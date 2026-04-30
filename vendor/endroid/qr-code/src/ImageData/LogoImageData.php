@@ -6,15 +6,15 @@ namespace Endroid\QrCode\ImageData;
 
 use Endroid\QrCode\Logo\LogoInterface;
 
-final readonly class LogoImageData
+final class LogoImageData
 {
     private function __construct(
-        private string $data,
-        private ?\GdImage $image,
-        private string $mimeType,
-        private int $width,
-        private int $height,
-        private bool $punchoutBackground,
+        private readonly string $data,
+        private \GdImage|null $image,
+        private readonly string $mimeType,
+        private readonly int $width,
+        private readonly int $height,
+        private readonly bool $punchoutBackground
     ) {
     }
 
@@ -45,10 +45,6 @@ final readonly class LogoImageData
             return new self($data, null, $mimeType, $width, $height, $logo->getPunchoutBackground());
         }
 
-        if (!function_exists('imagecreatefromstring')) {
-            throw new \Exception('Function "imagecreatefromstring" does not exist: check your GD installation');
-        }
-
         error_clear_last();
         $image = @imagecreatefromstring($data);
 
@@ -63,12 +59,12 @@ final readonly class LogoImageData
         }
 
         // Only target width specified: calculate height
-        if (null !== $width) {
+        if (null !== $width && null === $height) {
             return new self($data, $image, $mimeType, $width, intval(imagesy($image) * $width / imagesx($image)), $logo->getPunchoutBackground());
         }
 
         // Only target height specified: calculate width
-        if (null !== $height) {
+        if (null === $width && null !== $height) {
             return new self($data, $image, $mimeType, intval(imagesx($image) * $height / imagesy($image)), $height, $logo->getPunchoutBackground());
         }
 

@@ -18,7 +18,12 @@ class WildcardPermission implements Wildcard
     /** @var non-empty-string */
     public const SUBPART_DELIMITER = ',';
 
-    public function __construct(protected Model $record) {}
+    protected Model $record;
+
+    public function __construct(Model $record)
+    {
+        $this->record = $record;
+    }
 
     public function getIndex(): array
     {

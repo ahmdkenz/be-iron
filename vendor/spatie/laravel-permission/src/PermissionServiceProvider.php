@@ -6,50 +6,34 @@ use Composer\InstalledVersions;
 use Illuminate\Contracts\Auth\Access\Gate;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Contracts\Foundation\Application;
+use Illuminate\Filesystem\Filesystem;
 use Illuminate\Foundation\Console\AboutCommand;
 use Illuminate\Routing\Route;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Collection;
+use Illuminate\Support\ServiceProvider;
 use Illuminate\View\Compilers\BladeCompiler;
 use Laravel\Octane\Contracts\OperationTerminated;
-use Spatie\LaravelPackageTools\Package;
-use Spatie\LaravelPackageTools\PackageServiceProvider;
 use Spatie\Permission\Contracts\Permission as PermissionContract;
 use Spatie\Permission\Contracts\Role as RoleContract;
 
-use function Illuminate\Support\enum_value;
-
-class PermissionServiceProvider extends PackageServiceProvider
+class PermissionServiceProvider extends ServiceProvider
 {
-    public function configurePackage(Package $package): void
+    public function boot()
     {
-        $package
-            ->name('laravel-permission')
-            ->hasConfigFile('permission')
-            ->hasMigrations(['create_permission_tables'])
-            ->hasCommands([
-                Commands\CacheResetCommand::class,
-                Commands\CreateRoleCommand::class,
-                Commands\CreatePermissionCommand::class,
-                Commands\ShowCommand::class,
-                Commands\UpgradeForTeamsCommand::class,
-                Commands\AssignRoleCommand::class,
-            ]);
-    }
+        $this->offerPublishing();
 
-    public function registeringPackage(): void
-    {
-        $this->callAfterResolving('blade.compiler', fn (BladeCompiler $bladeCompiler) => $this->registerBladeExtensions($bladeCompiler));
-    }
-
-    public function packageBooted(): void
-    {
         $this->registerMacroHelpers();
+
+        $this->registerCommands();
+
         $this->registerModelBindings();
+
         $this->registerOctaneListener();
 
         $this->callAfterResolving(Gate::class, function (Gate $gate, Application $app) {
             if ($this->app['config']->get('permission.register_permission_check_method')) {
+                /** @var PermissionRegistrar $permissionLoader */
                 $permissionLoader = $app->get(PermissionRegistrar::class);
                 $permissionLoader->clearPermissionsCollection();
                 $permissionLoader->registerPermissions($gate);
@@ -57,61 +41,57 @@ class PermissionServiceProvider extends PackageServiceProvider
         });
 
         $this->app->singleton(PermissionRegistrar::class);
+
         $this->registerAbout();
     }
 
-    public static function bladeMethodWrapper(string $method, mixed $role, ?string $guard = null): bool
+    public function register()
     {
-        return auth($guard)->check() && auth($guard)->user()->{$method}($role);
+        $this->mergeConfigFrom(
+            __DIR__.'/../config/permission.php',
+            'permission'
+        );
+
+        $this->callAfterResolving('blade.compiler', fn (BladeCompiler $bladeCompiler) => $this->registerBladeExtensions($bladeCompiler));
     }
 
-    protected function registerBladeExtensions(BladeCompiler $bladeCompiler): void
+    protected function offerPublishing(): void
     {
-        $bladeMethodWrapper = '\\Spatie\\Permission\\PermissionServiceProvider::bladeMethodWrapper';
+        if (! $this->app->runningInConsole()) {
+            return;
+        }
 
-        // permission checks
-        $bladeCompiler->if('haspermission', fn () => $bladeMethodWrapper('checkPermissionTo', ...func_get_args()));
+        if (! function_exists('config_path')) {
+            // function not available and 'publish' not relevant in Lumen
+            return;
+        }
 
-        // role checks
-        $bladeCompiler->if('role', fn () => $bladeMethodWrapper('hasRole', ...func_get_args()));
-        $bladeCompiler->if('hasrole', fn () => $bladeMethodWrapper('hasRole', ...func_get_args()));
-        $bladeCompiler->if('hasanyrole', fn () => $bladeMethodWrapper('hasAnyRole', ...func_get_args()));
-        $bladeCompiler->if('hasallroles', fn () => $bladeMethodWrapper('hasAllRoles', ...func_get_args()));
-        $bladeCompiler->if('hasexactroles', fn () => $bladeMethodWrapper('hasExactRoles', ...func_get_args()));
-        $bladeCompiler->directive('endunlessrole', fn () => '<?php endif; ?>');
+        $this->publishes([
+            __DIR__.'/../config/permission.php' => config_path('permission.php'),
+        ], 'permission-config');
+
+        $this->publishes([
+            __DIR__.'/../database/migrations/create_permission_tables.php.stub' => $this->getMigrationFileName('create_permission_tables.php'),
+        ], 'permission-migrations');
     }
 
-    protected function registerModelBindings(): void
+    protected function registerCommands(): void
     {
-        $this->app->bind(PermissionContract::class, fn ($app) => $app->make($app->config['permission.models.permission']));
-        $this->app->bind(RoleContract::class, fn ($app) => $app->make($app->config['permission.models.role']));
-    }
+        $this->commands([
+            Commands\CacheReset::class,
+        ]);
 
-    protected function registerMacroHelpers(): void
-    {
-        Route::macro('role', function ($roles = []) {
-            $roles = Arr::wrap($roles);
-            $roles = array_map(fn ($role) => enum_value($role), $roles);
+        if (! $this->app->runningInConsole()) {
+            return;
+        }
 
-            /** @var Route $this */
-            return $this->middleware('role:'.implode('|', $roles));
-        });
-
-        Route::macro('permission', function ($permissions = []) {
-            $permissions = Arr::wrap($permissions);
-            $permissions = array_map(fn ($permission) => enum_value($permission), $permissions);
-
-            /** @var Route $this */
-            return $this->middleware('permission:'.implode('|', $permissions));
-        });
-
-        Route::macro('roleOrPermission', function ($rolesOrPermissions = []) {
-            $rolesOrPermissions = Arr::wrap($rolesOrPermissions);
-            $rolesOrPermissions = array_map(fn ($item) => enum_value($item), $rolesOrPermissions);
-
-            /** @var Route $this */
-            return $this->middleware('role_or_permission:'.implode('|', $rolesOrPermissions));
-        });
+        $this->commands([
+            Commands\CreateRole::class,
+            Commands\CreatePermission::class,
+            Commands\Show::class,
+            Commands\UpgradeForTeams::class,
+            Commands\AssignRole::class,
+        ]);
     }
 
     protected function registerOctaneListener(): void
@@ -135,6 +115,79 @@ class PermissionServiceProvider extends PackageServiceProvider
             // @phpstan-ignore-next-line
             $event->sandbox->make(PermissionRegistrar::class)->clearPermissionsCollection();
         });
+    }
+
+    protected function registerModelBindings(): void
+    {
+        $this->app->bind(PermissionContract::class, fn ($app) => $app->make($app->config['permission.models.permission']));
+        $this->app->bind(RoleContract::class, fn ($app) => $app->make($app->config['permission.models.role']));
+    }
+
+    public static function bladeMethodWrapper($method, $role, $guard = null): bool
+    {
+        return auth($guard)->check() && auth($guard)->user()->{$method}($role);
+    }
+
+    protected function registerBladeExtensions(BladeCompiler $bladeCompiler): void
+    {
+        $bladeMethodWrapper = '\\Spatie\\Permission\\PermissionServiceProvider::bladeMethodWrapper';
+
+        // permission checks
+        $bladeCompiler->if('haspermission', fn () => $bladeMethodWrapper('checkPermissionTo', ...func_get_args()));
+
+        // role checks
+        $bladeCompiler->if('role', fn () => $bladeMethodWrapper('hasRole', ...func_get_args()));
+        $bladeCompiler->if('hasrole', fn () => $bladeMethodWrapper('hasRole', ...func_get_args()));
+        $bladeCompiler->if('hasanyrole', fn () => $bladeMethodWrapper('hasAnyRole', ...func_get_args()));
+        $bladeCompiler->if('hasallroles', fn () => $bladeMethodWrapper('hasAllRoles', ...func_get_args()));
+        $bladeCompiler->if('hasexactroles', fn () => $bladeMethodWrapper('hasExactRoles', ...func_get_args()));
+        $bladeCompiler->directive('endunlessrole', fn () => '<?php endif; ?>');
+    }
+
+    protected function registerMacroHelpers(): void
+    {
+        if (! method_exists(Route::class, 'macro')) { // @phpstan-ignore-line Lumen
+            return;
+        }
+
+        Route::macro('role', function ($roles = []) {
+            $roles = Arr::wrap($roles);
+            $roles = array_map(fn ($role) => $role instanceof \BackedEnum ? $role->value : $role, $roles);
+
+            /** @var Route $this */
+            return $this->middleware('role:'.implode('|', $roles));
+        });
+
+        Route::macro('permission', function ($permissions = []) {
+            $permissions = Arr::wrap($permissions);
+            $permissions = array_map(fn ($permission) => $permission instanceof \BackedEnum ? $permission->value : $permission, $permissions);
+
+            /** @var Route $this */
+            return $this->middleware('permission:'.implode('|', $permissions));
+        });
+
+        Route::macro('roleOrPermission', function ($rolesOrPermissions = []) {
+            $rolesOrPermissions = Arr::wrap($rolesOrPermissions);
+            $rolesOrPermissions = array_map(fn ($item) => $item instanceof \BackedEnum ? $item->value : $item, $rolesOrPermissions);
+
+            /** @var Route $this */
+            return $this->middleware('role_or_permission:'.implode('|', $rolesOrPermissions));
+        });
+    }
+
+    /**
+     * Returns existing migration file if found, else uses the current timestamp.
+     */
+    protected function getMigrationFileName(string $migrationFileName): string
+    {
+        $timestamp = date('Y_m_d_His');
+
+        $filesystem = $this->app->make(Filesystem::class);
+
+        return Collection::make([$this->app->databasePath().DIRECTORY_SEPARATOR.'migrations'.DIRECTORY_SEPARATOR])
+            ->flatMap(fn ($path) => $filesystem->glob($path.'*_'.$migrationFileName))
+            ->push($this->app->databasePath()."/migrations/{$timestamp}_{$migrationFileName}")
+            ->first();
     }
 
     protected function registerAbout(): void

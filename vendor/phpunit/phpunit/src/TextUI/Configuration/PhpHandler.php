@@ -18,10 +18,6 @@ use function implode;
 use function ini_get;
 use function ini_set;
 use function putenv;
-use function restore_error_handler;
-use function set_error_handler;
-use function sprintf;
-use PHPUnit\Event\Facade as EventFacade;
 
 /**
  * @no-named-arguments Parameter names are not covered by the backward compatibility promise for PHPUnit
@@ -72,31 +68,7 @@ final readonly class PhpHandler
                 $value = (string) constant($value);
             }
 
-            $error = '';
-
-            set_error_handler(
-                static function (int $errno, string $errstr, string $errfile, int $errline) use (&$error): true
-                {
-                    $error = $errstr;
-
-                    return true;
-                },
-            );
-
-            $success = ini_set($iniSetting->name(), $value);
-
-            restore_error_handler();
-
-            if ($success === false) {
-                EventFacade::emitter()->testRunnerTriggeredPhpunitWarning(
-                    sprintf(
-                        'Failed to set "%s=%s": %s',
-                        $iniSetting->name(),
-                        $value,
-                        $error,
-                    ),
-                );
-            }
+            ini_set($iniSetting->name(), $value);
         }
     }
 

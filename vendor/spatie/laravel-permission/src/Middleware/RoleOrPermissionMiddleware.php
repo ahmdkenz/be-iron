@@ -2,26 +2,21 @@
 
 namespace Spatie\Permission\Middleware;
 
-use BackedEnum;
 use Closure;
-use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Spatie\Permission\Exceptions\UnauthorizedException;
 use Spatie\Permission\Guard;
-use Spatie\Permission\Support\Config;
-
-use function Illuminate\Support\enum_value;
 
 class RoleOrPermissionMiddleware
 {
-    public function handle(Request $request, Closure $next, $roleOrPermission, ?string $guard = null)
+    public function handle($request, Closure $next, $roleOrPermission, $guard = null)
     {
         $authGuard = Auth::guard($guard);
 
         $user = $authGuard->user();
 
         // For machine-to-machine Passport clients
-        if (! $user && $request->bearerToken() && Config::usePassportClientCredentials()) {
+        if (! $user && $request->bearerToken() && config('permission.use_passport_client_credentials')) {
             $user = Guard::getPassportClient($guard);
         }
 
@@ -44,8 +39,12 @@ class RoleOrPermissionMiddleware
 
     /**
      * Specify the role or permission and guard for the middleware.
+     *
+     * @param  array|string|\BackedEnum  $roleOrPermission
+     * @param  string|null  $guard
+     * @return string
      */
-    public static function using(array|string|BackedEnum $roleOrPermission, ?string $guard = null): string
+    public static function using($roleOrPermission, $guard = null)
     {
         $roleOrPermissionString = self::parseRoleOrPermissionToString($roleOrPermission);
         $args = is_null($guard) ? $roleOrPermissionString : "$roleOrPermissionString,$guard";
@@ -53,12 +52,22 @@ class RoleOrPermissionMiddleware
         return static::class.':'.$args;
     }
 
-    protected static function parseRoleOrPermissionToString(array|string|BackedEnum $roleOrPermission): string
+    /**
+     * Convert array or string of roles/permissions to string representation.
+     *
+     * @return string
+     */
+    protected static function parseRoleOrPermissionToString(array|string|\BackedEnum $roleOrPermission)
     {
-        $roleOrPermission = enum_value($roleOrPermission);
+        // Convert Enum to its value if an Enum is passed
+        if ($roleOrPermission instanceof \BackedEnum) {
+            $roleOrPermission = $roleOrPermission->value;
+        }
 
         if (is_array($roleOrPermission)) {
-            return implode('|', array_map(fn ($r) => enum_value($r), $roleOrPermission));
+            $roleOrPermission = array_map(fn ($r) => $r instanceof \BackedEnum ? $r->value : $r, $roleOrPermission);
+
+            return implode('|', $roleOrPermission);
         }
 
         return (string) $roleOrPermission;

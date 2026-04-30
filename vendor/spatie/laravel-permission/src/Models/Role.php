@@ -2,11 +2,10 @@
 
 namespace Spatie\Permission\Models;
 
-use BackedEnum;
-use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Support\Carbon;
+use Spatie\Permission\Contracts\Permission;
 use Spatie\Permission\Contracts\Role as RoleContract;
 use Spatie\Permission\Exceptions\GuardDoesNotMatch;
 use Spatie\Permission\Exceptions\PermissionDoesNotExist;
@@ -14,23 +13,15 @@ use Spatie\Permission\Exceptions\RoleAlreadyExists;
 use Spatie\Permission\Exceptions\RoleDoesNotExist;
 use Spatie\Permission\Guard;
 use Spatie\Permission\PermissionRegistrar;
-use Spatie\Permission\Support\Config;
-use Spatie\Permission\Traits\HasAssignedModels;
 use Spatie\Permission\Traits\HasPermissions;
 use Spatie\Permission\Traits\RefreshesPermissionCache;
 
 /**
- * @property int|string $id
- * @property string $name
- * @property string $guard_name
  * @property ?Carbon $created_at
  * @property ?Carbon $updated_at
- * @property-read Collection<int, Permission> $permissions
- * @property-read Collection<int, Model> $users
  */
 class Role extends Model implements RoleContract
 {
-    use HasAssignedModels;
     use HasPermissions;
     use RefreshesPermissionCache;
 
@@ -43,7 +34,7 @@ class Role extends Model implements RoleContract
         parent::__construct($attributes);
 
         $this->guarded[] = $this->primaryKey;
-        $this->table = Config::rolesTable() ?: parent::getTable();
+        $this->table = config('permission.table_names.roles') ?: parent::getTable();
     }
 
     /**
@@ -84,8 +75,8 @@ class Role extends Model implements RoleContract
         $registrar = app(PermissionRegistrar::class);
 
         return $this->belongsToMany(
-            Config::permissionModel(),
-            Config::roleHasPermissionsTable(),
+            config('permission.models.permission'),
+            config('permission.table_names.role_has_permissions'),
             $registrar->pivotRole,
             $registrar->pivotPermission
         );
@@ -99,9 +90,9 @@ class Role extends Model implements RoleContract
         return $this->morphedByMany(
             getModelForGuard($this->attributes['guard_name'] ?? config('auth.defaults.guard')),
             'model',
-            Config::modelHasRolesTable(),
+            config('permission.table_names.model_has_roles'),
             app(PermissionRegistrar::class)->pivotRole,
-            Config::morphKey()
+            config('permission.column_names.model_morph_key')
         );
     }
 
@@ -199,7 +190,7 @@ class Role extends Model implements RoleContract
     /**
      * Determine if the role may perform the given permission.
      *
-     * @param  string|int|\Spatie\Permission\Contracts\Permission|BackedEnum  $permission
+     * @param  string|int|Permission|\BackedEnum  $permission
      *
      * @throws PermissionDoesNotExist|GuardDoesNotMatch
      */

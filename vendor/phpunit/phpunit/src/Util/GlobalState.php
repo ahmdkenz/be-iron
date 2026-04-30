@@ -11,6 +11,7 @@ namespace PHPUnit\Util;
 
 use const PHP_MAJOR_VERSION;
 use const PHP_MINOR_VERSION;
+use function array_keys;
 use function array_reverse;
 use function array_shift;
 use function assert;
@@ -30,7 +31,6 @@ use function str_starts_with;
 use function strtr;
 use function var_export;
 use Closure;
-use Throwable;
 
 /**
  * @no-named-arguments Parameter names are not covered by the backward compatibility promise for PHPUnit
@@ -40,9 +40,9 @@ use Throwable;
 final readonly class GlobalState
 {
     /**
-     * @var non-empty-list<non-empty-string>
+     * @var list<string>
      */
-    private const array SUPER_GLOBAL_ARRAYS = [
+    private const SUPER_GLOBAL_ARRAYS = [
         '_ENV',
         '_POST',
         '_GET',
@@ -53,27 +53,9 @@ final readonly class GlobalState
     ];
 
     /**
-     * Keys in $_SERVER that are populated by the SAPI in the child process
-     * and must therefore not be preserved from the parent process.
-     *
-     * @var non-empty-list<non-empty-string>
+     * @var array<string, array<string, true>>
      */
-    private const array SAPI_SERVER_KEYS = [
-        'PHP_SELF',
-        'SCRIPT_NAME',
-        'SCRIPT_FILENAME',
-        'PATH_TRANSLATED',
-        'DOCUMENT_ROOT',
-        'REQUEST_TIME',
-        'REQUEST_TIME_FLOAT',
-        'argv',
-        'argc',
-    ];
-
-    /**
-     * @var non-empty-array<non-empty-string, non-empty-array<non-empty-string, true>>
-     */
-    private const array DEPRECATED_INI_SETTINGS = [
+    private const DEPRECATED_INI_SETTINGS = [
         '7.3' => [
             'iconv.input_encoding'       => true,
             'iconv.output_encoding'      => true,
@@ -215,9 +197,7 @@ final readonly class GlobalState
         }
 
         foreach (array_reverse($files) as $file) {
-            if (isset($GLOBALS['__PHPUNIT_ISOLATION_EXCLUDE_LIST']) &&
-                is_array($GLOBALS['__PHPUNIT_ISOLATION_EXCLUDE_LIST']) &&
-                $GLOBALS['__PHPUNIT_ISOLATION_EXCLUDE_LIST'] !== [] &&
+            if (!empty($GLOBALS['__PHPUNIT_ISOLATION_EXCLUDE_LIST']) &&
                 in_array($file, $GLOBALS['__PHPUNIT_ISOLATION_EXCLUDE_LIST'], true)) {
                 continue;
             }
@@ -227,7 +207,7 @@ final readonly class GlobalState
             }
 
             // Skip virtual file system protocols
-            if (preg_match('/^(vfs|phpvfs[a-z0-9]+):/', $file) > 0) {
+            if (preg_match('/^(vfs|phpvfs[a-z0-9]+):/', $file)) {
                 continue;
             }
 
@@ -281,36 +261,23 @@ final readonly class GlobalState
         return $result;
     }
 
-    public static function exportGlobals(): GlobalStateResult
+    public static function getGlobalsAsString(): string
     {
-        $result         = '';
-        $skippedGlobals = [];
+        $result = '';
 
         foreach (self::SUPER_GLOBAL_ARRAYS as $superGlobalArray) {
             if (isset($GLOBALS[$superGlobalArray]) && is_array($GLOBALS[$superGlobalArray])) {
-                foreach ($GLOBALS[$superGlobalArray] as $key => $value) {
-                    if ($superGlobalArray === '_SERVER' && in_array($key, self::SAPI_SERVER_KEYS, true)) {
+                foreach (array_keys($GLOBALS[$superGlobalArray]) as $key) {
+                    if ($GLOBALS[$superGlobalArray][$key] instanceof Closure) {
                         continue;
                     }
 
-                    $name = sprintf('$GLOBALS[\'%s\'][\'%s\']', $superGlobalArray, $key);
-
-                    if ($value instanceof Closure) {
-                        $skippedGlobals[] = ['name' => $name, 'reason' => 'is a Closure'];
-
-                        continue;
-                    }
-
-                    try {
-                        $result .= sprintf(
-                            '$GLOBALS[\'%s\'][\'%s\'] = %s;' . "\n",
-                            $superGlobalArray,
-                            $key,
-                            self::exportVariable($GLOBALS[$superGlobalArray][$key]),
-                        );
-                    } catch (Throwable) {
-                        $skippedGlobals[] = ['name' => $name, 'reason' => 'is not serializable'];
-                    }
+                    $result .= sprintf(
+                        '$GLOBALS[\'%s\'][\'%s\'] = %s;' . "\n",
+                        $superGlobalArray,
+                        $key,
+                        self::exportVariable($GLOBALS[$superGlobalArray][$key]),
+                    );
                 }
             }
         }
@@ -318,31 +285,17 @@ final readonly class GlobalState
         $excludeList   = self::SUPER_GLOBAL_ARRAYS;
         $excludeList[] = 'GLOBALS';
 
-        foreach ($GLOBALS as $key => $value) {
-            if (in_array($key, $excludeList, true)) {
-                continue;
-            }
-
-            $name = sprintf('$GLOBALS[\'%s\']', $key);
-
-            if ($value instanceof Closure) {
-                $skippedGlobals[] = ['name' => $name, 'reason' => 'is a Closure'];
-
-                continue;
-            }
-
-            try {
+        foreach (array_keys($GLOBALS) as $key) {
+            if (!$GLOBALS[$key] instanceof Closure && !in_array($key, $excludeList, true)) {
                 $result .= sprintf(
                     '$GLOBALS[\'%s\'] = %s;' . "\n",
                     $key,
-                    self::exportVariable($value),
+                    self::exportVariable($GLOBALS[$key]),
                 );
-            } catch (Throwable) {
-                $skippedGlobals[] = ['name' => $name, 'reason' => 'is not serializable'];
             }
         }
 
-        return new GlobalStateResult($result, $skippedGlobals);
+        return $result;
     }
 
     private static function exportVariable(mixed $variable): string
