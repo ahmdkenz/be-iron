@@ -21,8 +21,6 @@ class UpdateKlienArRequest extends FormRequest
             'tipe_outlet'   => ['nullable', 'string', 'max:50'],
             'stokis_area'   => ['nullable', 'string', 'max:100'],
             'no_npwp'       => ['nullable', 'string', 'max:30'],
-            'kat_1'         => ['nullable', 'string', 'max:100'],
-            'kat_2'         => ['nullable', 'string', 'max:100'],
             'perusahaan_id' => ['required', 'integer', 'exists:tb_perusahaan,id'],
             'karyawan_ar_id'=> ['required', 'integer', 'exists:tb_karyawan,id'],
             'resto_id'      => ['nullable', 'integer', 'exists:tb_resto,id'],

@@ -28,8 +28,6 @@ class InvoiceResource extends JsonResource
                 'tipe_outlet' => $this->klienAr->tipe_outlet,
                 'stokis_area' => $this->klienAr->stokis_area,
                 'no_npwp'     => $this->klienAr->no_npwp,
-                'kat_1'       => $this->klienAr->kat_1,
-                'kat_2'       => $this->klienAr->kat_2,
                 'karyawan_ar' => $this->klienAr->relationLoaded('karyawanAr') ? [
                     'id'           => $this->klienAr->karyawanAr?->id,
                     'nik'          => $this->klienAr->karyawanAr?->nik,

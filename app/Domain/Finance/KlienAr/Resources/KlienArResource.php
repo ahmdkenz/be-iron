@@ -19,8 +19,6 @@ class KlienArResource extends JsonResource
             'tipe_outlet'    => $this->tipe_outlet,
             'stokis_area'    => $this->stokis_area,
             'no_npwp'        => $this->no_npwp,
-            'kat_1'          => $this->kat_1,
-            'kat_2'          => $this->kat_2,
             'perusahaan_id'  => $this->perusahaan_id,
             'perusahaan'     => $this->whenLoaded('perusahaan', fn() => [
                 'id'                        => $this->perusahaan->id,
