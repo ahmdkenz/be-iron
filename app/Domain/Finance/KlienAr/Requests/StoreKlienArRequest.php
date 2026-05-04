@@ -14,7 +14,6 @@ class StoreKlienArRequest extends FormRequest
             'kode_klien'    => ['nullable', 'string', 'max:20'],
             'nama_klien'    => ['required', 'string', 'max:150'],
             'alias'         => ['nullable', 'string', 'max:100'],
-            'kategori_ar'   => ['required', 'in:INTERNAL,EKSTERNAL'],
             'tipe_klien'    => ['required', 'in:PT,RESTO,STOKIS,MITRA'],
             'tipe_outlet'   => ['nullable', 'string', 'max:50'],
             'stokis_area'   => ['nullable', 'string', 'max:100'],
