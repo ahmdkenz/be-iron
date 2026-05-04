@@ -31,6 +31,7 @@ Route::prefix('invoices')->group(function () {
     Route::get('/summary', [InvoiceController::class, 'summary']);
     Route::get('/rekap-klien', [InvoiceController::class, 'rekapKlien']);
     Route::get('/export', [InvoiceController::class, 'export']);
+    Route::get('/{id}/print', [InvoiceController::class, 'print']);
     Route::get('/carryover', [InvoiceController::class, 'carryover']);
     Route::get('/preview-no', [InvoiceController::class, 'previewNo']);
     Route::post('/', [InvoiceController::class, 'store']);
@@ -68,7 +69,7 @@ Route::prefix('opening-balance')->group(function () {
     Route::get('/summary', [OpeningBalanceController::class, 'summary']);
     Route::post('/', [OpeningBalanceController::class, 'store']);
     Route::put('/{invoice}', [OpeningBalanceController::class, 'update']);
-    Route::patch('/{invoice}/approve', [OpeningBalanceController::class, 'approve']);
-    Route::patch('/{invoice}/reject', [OpeningBalanceController::class, 'reject']);
+    Route::patch('/{invoice}/approve', [OpeningBalanceController::class, 'approve'])->middleware('role:DIREKTUR');
+    Route::patch('/{invoice}/reject', [OpeningBalanceController::class, 'reject'])->middleware('role:DIREKTUR');
     Route::patch('/{invoice}/resubmit', [OpeningBalanceController::class, 'resubmit']);
 });

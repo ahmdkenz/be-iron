@@ -29,20 +29,20 @@ class AuthController extends Controller
             return $this->errorResponse('Akun Anda tidak aktif. Hubungi administrator.', 403);
         }
 
-        // Revoke previous tokens
-        $user->tokens()->delete();
-
-        $token = $user->createToken('auth_token')->plainTextToken;
+        auth()->login($user);
+        $request->session()->regenerate();
 
         return $this->successResponse([
-            'token' => $token,
-            'user'  => new UserResource($user),
+            'user' => new UserResource($user),
         ], 'Login berhasil');
     }
 
     public function logout(Request $request): JsonResponse
     {
-        $request->user()->currentAccessToken()->delete();
+        auth()->logout();
+        $request->session()->invalidate();
+        $request->session()->regenerateToken();
+
         return $this->successResponse(null, 'Logout berhasil');
     }
 
