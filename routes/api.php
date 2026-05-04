@@ -14,7 +14,7 @@ Route::prefix('v1')->group(function () {
     Route::prefix('auth')->group(base_path('routes/api/auth.php'));
 
     // ─── Protected Routes ─────────────────────────────────────────────
-    Route::middleware('auth:sanctum')->group(function () {
+    Route::middleware(['auth:sanctum', 'throttle:60,1'])->group(function () {
 
         Route::prefix('master')->group(base_path('routes/api/master.php'));
         Route::prefix('iam')->group(base_path('routes/api/iam.php'));
