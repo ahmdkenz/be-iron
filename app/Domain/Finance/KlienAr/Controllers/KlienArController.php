@@ -42,8 +42,6 @@ class KlienArController extends Controller
 
     public function previewKode(Request $request): JsonResponse
     {
-        $this->forbidReadOnlyMutation();
-
         $payload = $request->validate([
             'tipe_klien' => ['required', 'in:PT,RESTO,STOKIS,MITRA'],
         ]);
@@ -55,7 +53,11 @@ class KlienArController extends Controller
 
     public function store(StoreKlienArRequest $request): JsonResponse
     {
-        $this->forbidReadOnlyMutation();
+        abort_if(
+            $this->isDirectorOnly(),
+            403,
+            'Direktur hanya memiliki akses lihat data klien AR'
+        );
 
         $klien = $this->service->create(KlienArDTO::fromRequest($request->validated()));
         return $this->createdResponse(new KlienArResource($klien), 'Klien AR berhasil dibuat');
@@ -125,6 +127,11 @@ class KlienArController extends Controller
         $user = auth()->user();
 
         return RoleHelper::isArOnly($user) || RoleHelper::isDirectorOnly($user);
+    }
+
+    private function isDirectorOnly(): bool
+    {
+        return RoleHelper::isDirectorOnly(auth()->user());
     }
 
     private function isPicArOnly(): bool

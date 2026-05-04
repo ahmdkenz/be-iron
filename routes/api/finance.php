@@ -3,9 +3,13 @@
 use App\Domain\Finance\AgingReport\Controllers\AgingReportController;
 use App\Domain\Finance\Dashboard\Controllers\DashboardController;
 use App\Domain\Finance\Invoice\Controllers\InvoiceController;
+use App\Domain\Finance\JatuhTempo\Controllers\JatuhTempoController;
+use App\Domain\Finance\KinerjaAr\Controllers\KinerjaArController;
 use App\Domain\Finance\KlienAr\Controllers\KlienArController;
+use App\Domain\Finance\MutasiPiutang\Controllers\MutasiPiutangController;
 use App\Domain\Finance\OpeningBalance\Controllers\OpeningBalanceController;
 use App\Domain\Finance\PembayaranAr\Controllers\PembayaranArController;
+use App\Domain\Finance\RekapPembayaran\Controllers\RekapPembayaranController;
 use Illuminate\Support\Facades\Route;
 
 // ─── Master Klien AR ──────────────────────────────────────────────
@@ -45,6 +49,18 @@ Route::delete('/pembayaran/{pembayaran}', [PembayaranArController::class, 'destr
 
 // ─── Aging Report ────────────────────────────────────────────────
 Route::get('/aging-report', [AgingReportController::class, 'index']);
+
+// ─── Mutasi Piutang ───────────────────────────────────────────────
+Route::get('/mutasi-piutang', [MutasiPiutangController::class, 'index']);
+
+// ─── Jatuh Tempo ──────────────────────────────────────────────────
+Route::get('/jatuh-tempo', [JatuhTempoController::class, 'index']);
+
+// ─── Rekap Pembayaran ─────────────────────────────────────────────
+Route::get('/rekap-pembayaran', [RekapPembayaranController::class, 'index']);
+
+// ─── Kinerja AR per PIC ───────────────────────────────────────────
+Route::get('/kinerja-ar', [KinerjaArController::class, 'index']);
 
 // ─── Opening Balance ──────────────────────────────────────────────
 Route::prefix('opening-balance')->group(function () {
