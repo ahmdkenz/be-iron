@@ -15,7 +15,6 @@ class KlienArResource extends JsonResource
             'nama_klien'     => $this->nama_klien,
             'alias'          => $this->alias,
             'tipe_klien'     => $this->tipe_klien,
-            'kategori_ar'    => $this->kategori_ar,
             'tipe_outlet'    => $this->tipe_outlet,
             'stokis_area'    => $this->stokis_area,
             'no_npwp'        => $this->no_npwp,

@@ -15,7 +15,6 @@ class KlienArRepository
                 ->orWhere('kode_klien', 'like', "%{$v}%")
                 ->orWhere('alias', 'like', "%{$v}%")
             ))
-            ->when($filters['kategori_ar'] ?? null, fn($q, $v) => $q->where('kategori_ar', $v))
             ->when($filters['perusahaan_id'] ?? null, fn($q, $v) => $q->where('perusahaan_id', $v))
             ->when($filters['karyawan_ar_id'] ?? null, fn($q, $v) => $q->where('karyawan_ar_id', $v))
             ->when(isset($filters['status']), fn($q) => $q->where('status', $filters['status']))

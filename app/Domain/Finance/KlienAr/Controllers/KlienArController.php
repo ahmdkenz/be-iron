@@ -21,7 +21,7 @@ class KlienArController extends Controller
 
     public function index(Request $request): JsonResponse
     {
-        $filters = $request->only(['search', 'status', 'kategori_ar', 'perusahaan_id', 'karyawan_ar_id']);
+        $filters = $request->only(['search', 'status', 'perusahaan_id', 'karyawan_ar_id']);
         $this->applyPicArScope($filters);
 
         $list = $this->service->paginate($filters);

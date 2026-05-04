@@ -17,7 +17,6 @@ class KlienAr extends Model
         'nama_klien',
         'alias',
         'tipe_klien',
-        'kategori_ar',
         'tipe_outlet',
         'stokis_area',
         'no_npwp',
