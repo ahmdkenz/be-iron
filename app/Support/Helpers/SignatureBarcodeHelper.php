@@ -9,14 +9,14 @@ use Throwable;
 
 class SignatureBarcodeHelper
 {
-    public static function generateDataUri(?string $payload): ?string
+    public static function generateDataUri(?string $payload, int $size = 120): ?string
     {
         if (!$payload) {
             return null;
         }
 
         try {
-            $qrCode = new QrCode(data: $payload, size: 120, margin: 4);
+            $qrCode = new QrCode(data: $payload, size: $size, margin: 4);
             $result = (new SvgWriter())->write($qrCode);
 
             return 'data:image/svg+xml;base64,' . base64_encode($result->getString());
@@ -25,43 +25,21 @@ class SignatureBarcodeHelper
         }
     }
 
-    public static function buildPreparedOpeningBalancePayload(Invoice $invoice): ?string
+    public static function buildPreparedVerificationUrl(Invoice $invoice): ?string
     {
-        if (!$invoice->is_opening_balance) {
+        if (!$invoice->prepared_token) {
             return null;
         }
 
-        $actorId = $invoice->submitted_by ?: $invoice->created_by;
-        $signedAt = $invoice->submitted_at ?: $invoice->created_at;
-
-        if (!$actorId || !$signedAt) {
-            return null;
-        }
-
-        return sprintf(
-            'OB-%d-SUB-%d-%s',
-            $invoice->id,
-            $actorId,
-            $signedAt->format('YmdHis')
-        );
+        return route('verify.prepared', ['token' => $invoice->prepared_token]);
     }
 
-    public static function buildApprovedOpeningBalancePayload(Invoice $invoice): ?string
+    public static function buildApprovedVerificationUrl(Invoice $invoice): ?string
     {
-        if (
-            !$invoice->is_opening_balance
-            || $invoice->approval_status !== 'APPROVED'
-            || !$invoice->approved_by
-            || !$invoice->approved_at
-        ) {
+        if (!$invoice->approved_token) {
             return null;
         }
 
-        return sprintf(
-            'OB-%d-APR-%d-%s',
-            $invoice->id,
-            $invoice->approved_by,
-            $invoice->approved_at->format('YmdHis')
-        );
+        return route('verify.approved', ['token' => $invoice->approved_token]);
     }
 }

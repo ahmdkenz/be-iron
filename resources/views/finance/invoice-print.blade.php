@@ -319,23 +319,21 @@
     <tr>
       <td class="sig-col">
         <div class="sig-title">{{ $invoice->is_opening_balance ? 'Diajukan Oleh' : 'Disiapkan Oleh' }}</div>
-        @if($invoice->is_opening_balance && !empty($signatureData['prepared_barcode_src']))
+        @if(!empty($signatureData['prepared_qr_src']))
         <div class="sig-barcode-wrap">
-          <div class="sig-barcode"><img src="{{ $signatureData['prepared_barcode_src'] }}" alt="Barcode pengaju opening balance"></div>
-          <div class="sig-barcode-code">OPENING BALANCE CREATOR</div>
+          <div class="sig-barcode"><img src="{{ $signatureData['prepared_qr_src'] }}" alt="QR verifikasi penyiap dokumen"></div>
         </div>
         @else
         <div class="sig-placeholder"></div>
         @endif
-        <div class="sig-name">{{ $signatureData['prepared_by_name'] ?? ($invoice->klienAr->karyawanAr->nama_karyawan ?? '___________________') }}</div>
+        <div class="sig-name">{{ $signatureData['prepared_by_name'] ?? '___________________' }}</div>
         <div class="sig-role">{{ $invoice->is_opening_balance ? 'Pengaju Opening Balance' : 'Staff AR' }}</div>
       </td>
       <td class="sig-col">
         <div class="sig-title">Disetujui Oleh</div>
-        @if($invoice->is_opening_balance && !empty($signatureData['approved_barcode_src']))
+        @if(!empty($signatureData['approved_qr_src']))
         <div class="sig-barcode-wrap">
-          <div class="sig-barcode"><img src="{{ $signatureData['approved_barcode_src'] }}" alt="Barcode approval direktur"></div>
-          <div class="sig-barcode-code">DIREKTUR APPROVAL</div>
+          <div class="sig-barcode"><img src="{{ $signatureData['approved_qr_src'] }}" alt="QR verifikasi persetujuan dokumen"></div>
         </div>
         @else
         <div class="sig-placeholder"></div>
@@ -348,7 +346,6 @@
         <div class="sig-title">Diterima Oleh</div>
         <div class="sig-placeholder"></div>
         <div class="sig-name">___________________</div>
-        <div class="sig-role" style="font-weight:bold; color:#111;">{{ $invoice->klienAr->nama_klien }}</div>
       </td>
     </tr>
   </table>
