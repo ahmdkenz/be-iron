@@ -31,6 +31,9 @@ class PembayaranArController extends Controller
             ->when($request->klien_ar_id, fn($q, $v) =>
                 $q->whereHas('invoice', fn($q) => $q->where('klien_ar_id', $v))
             )
+            ->when($request->karyawan_id, fn($q, $v) =>
+                $q->whereHas('invoice', fn($q) => $q->where('karyawan_id', $v))
+            )
             ->when($request->metode_pembayaran, fn($q, $v) => $q->where('metode_pembayaran', $v))
             ->when($request->tanggal_dari, fn($q, $v) => $q->whereDate('tanggal_pembayaran', '>=', $v))
             ->when($request->tanggal_sampai, fn($q, $v) => $q->whereDate('tanggal_pembayaran', '<=', $v));
