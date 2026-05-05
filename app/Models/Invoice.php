@@ -37,6 +37,8 @@ class Invoice extends Model
         'rejected_by',
         'is_opening_balance',
         'keterangan',
+        'prepared_token',
+        'approved_token',
         'created_by',
         'updated_by',
     ];

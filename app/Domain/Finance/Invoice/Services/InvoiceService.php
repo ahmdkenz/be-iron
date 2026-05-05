@@ -10,6 +10,7 @@ use App\Models\KlienAr;
 use Carbon\Carbon;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 class InvoiceService
 {
@@ -109,6 +110,8 @@ class InvoiceService
             'sisa_tagihan'               => $totalTagihan,
             'status'                     => $dto->status,
             'keterangan'                 => $dto->keterangan,
+            'prepared_token'             => Str::uuid()->toString(),
+            'approved_token'             => Str::uuid()->toString(),
             'created_by'                 => auth()->id(),
         ]);
 
@@ -162,6 +165,7 @@ class InvoiceService
                 'submitted_by'               => auth()->id(),
                 'is_opening_balance'         => true,
                 'keterangan'                 => $data['keterangan'] ?? 'Opening Balance',
+                'prepared_token'             => Str::uuid()->toString(),
                 'created_by'                 => auth()->id(),
             ]);
 
@@ -239,6 +243,7 @@ class InvoiceService
                 'approved_by'     => auth()->id(),
                 'rejected_at'     => null,
                 'rejected_by'     => null,
+                'approved_token'  => Str::uuid()->toString(),
                 'updated_by'      => auth()->id(),
             ]);
 

@@ -216,37 +216,29 @@ class InvoiceController extends Controller
 
     private function buildSignatureData($invoice): array
     {
-        if (!$invoice->is_opening_balance) {
-            return [
-                'prepared_by_name' => $invoice->klienAr?->karyawanAr?->nama_karyawan ?? '___________________',
-                'prepared_barcode_src' => null,
-                'approved_by_name' => '___________________',
-                'approved_barcode_src' => null,
-            ];
+        if ($invoice->is_opening_balance) {
+            $preparedByUser = $invoice->submittedBy ?: $invoice->createdBy;
+            $preparedByName = $preparedByUser?->karyawan?->nama_karyawan
+                ?? $preparedByUser?->username
+                ?? '___________________';
+
+            $approvedByName = $invoice->approvedBy?->karyawan?->nama_karyawan
+                ?? $invoice->approvedBy?->username
+                ?? '___________________';
+        } else {
+            $preparedByName = $invoice->klienAr?->karyawanAr?->nama_karyawan ?? '___________________';
+            $approvedByName = 'Direktur';
         }
-
-        $preparedByUser = $invoice->submittedBy ?: $invoice->createdBy;
-        $preparedByName = $preparedByUser?->karyawan?->nama_karyawan
-            ?? $preparedByUser?->username
-            ?? '___________________';
-
-        $approvedByName = $invoice->approvedBy?->karyawan?->nama_karyawan
-            ?? $invoice->approvedBy?->username
-            ?? '___________________';
 
         return [
             'prepared_by_name' => $preparedByName,
-            'prepared_barcode_src' => $invoice->is_opening_balance
-                ? SignatureBarcodeHelper::generateDataUri(
-                    SignatureBarcodeHelper::buildPreparedOpeningBalancePayload($invoice)
-                )
-                : null,
+            'prepared_qr_src'  => SignatureBarcodeHelper::generateDataUri(
+                SignatureBarcodeHelper::buildPreparedVerificationUrl($invoice), 150
+            ),
             'approved_by_name' => $approvedByName,
-            'approved_barcode_src' => $invoice->is_opening_balance
-                ? SignatureBarcodeHelper::generateDataUri(
-                    SignatureBarcodeHelper::buildApprovedOpeningBalancePayload($invoice)
-                )
-                : null,
+            'approved_qr_src'  => SignatureBarcodeHelper::generateDataUri(
+                SignatureBarcodeHelper::buildApprovedVerificationUrl($invoice), 150
+            ),
         ];
     }
 }
