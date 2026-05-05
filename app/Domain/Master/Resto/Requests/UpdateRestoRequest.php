@@ -12,8 +12,8 @@ class UpdateRestoRequest extends FormRequest
     {
         return [
             'nama_resto'    => ['required', 'string', 'max:150'],
-            'perusahaan_id' => ['required', 'integer', 'exists:tb_perusahaan,id'],
-            'brand_id'      => ['required', 'integer', 'exists:tb_brand,id'],
+            'perusahaan_id' => ['nullable', 'integer', 'exists:tb_perusahaan,id'],
+            'brand_id'      => ['nullable', 'integer', 'exists:tb_brand,id'],
             'investor_id'   => ['nullable', 'integer', 'exists:tb_investor,id'],
             'karyawan_id'   => ['nullable', 'integer', 'exists:tb_karyawan,id'],
             'area'          => ['nullable', 'string', 'max:100'],
