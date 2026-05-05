@@ -27,17 +27,11 @@ class RestoController extends Controller
 
     public function previewKode(Request $request): JsonResponse
     {
-        $this->forbidReadOnlyMutation();
-
         $request->validate([
-            'perusahaan_id' => ['required', 'integer', 'exists:tb_perusahaan,id'],
-            'brand_id'      => ['required', 'integer', 'exists:tb_brand,id'],
+            'nama_resto' => ['required', 'string', 'max:150'],
         ]);
 
-        $kode = $this->service->generateKodeResto(
-            (int) $request->input('perusahaan_id'),
-            (int) $request->input('brand_id')
-        );
+        $kode = $this->service->generateKodeResto($request->input('nama_resto'));
 
         return $this->successResponse(['kode' => $kode]);
     }
