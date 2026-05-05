@@ -21,7 +21,7 @@ class RestoController extends Controller
 
     public function index(Request $request): JsonResponse
     {
-        $list = $this->service->paginate($request->only(['search', 'status', 'perusahaan_id']));
+        $list = $this->service->paginate($request->only(['search', 'status', 'perusahaan_id', 'karyawan_id']));
         return $this->paginatedResponse($list->through(fn($r) => new RestoResource($r)));
     }
 
