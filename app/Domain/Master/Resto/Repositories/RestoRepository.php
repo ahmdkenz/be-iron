@@ -24,6 +24,7 @@ class RestoRepository
             ))
             ->when(isset($filters['status']), fn($q) => $q->where('status', $filters['status']))
             ->when($filters['perusahaan_id'] ?? null, fn($q, $v) => $q->where('perusahaan_id', $v))
+            ->when($filters['karyawan_id'] ?? null, fn($q, $v) => $q->where('karyawan_id', $v))
             ->latest()
             ->paginate($perPage);
     }
