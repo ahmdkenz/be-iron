@@ -22,6 +22,7 @@ Route::prefix('klien-ar')->group(function () {
     Route::post('/', [KlienArController::class, 'store']);
     Route::get('/{klien_ar}', [KlienArController::class, 'show']);
     Route::put('/{klien_ar}', [KlienArController::class, 'update']);
+    Route::patch('/{klien_ar}/wa', [KlienArController::class, 'updateNoWa']);
     Route::delete('/{klien_ar}', [KlienArController::class, 'destroy']);
 });
 

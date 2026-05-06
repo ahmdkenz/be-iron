@@ -20,15 +20,16 @@ class InvoiceResource extends JsonResource
             'periode_akhir'              => $this->periode_akhir?->format('Y-m-d'),
             'klien_ar_id'                => $this->klien_ar_id,
             'klien_ar'                   => $this->whenLoaded('klienAr', fn() => [
-                'id'          => $this->klienAr->id,
-                'kode_klien'  => $this->klienAr->kode_klien,
-                'nama_klien'  => $this->klienAr->nama_klien,
-                'alias'       => $this->klienAr->alias,
-                'tipe_klien'  => $this->klienAr->tipe_klien,
-                'tipe_outlet' => $this->klienAr->tipe_outlet,
-                'stokis_area' => $this->klienAr->stokis_area,
-                'no_npwp'     => $this->klienAr->no_npwp,
-                'karyawan_ar' => $this->klienAr->relationLoaded('karyawanAr') ? [
+                'id'           => $this->klienAr->id,
+                'kode_klien'   => $this->klienAr->kode_klien,
+                'nama_klien'   => $this->klienAr->nama_klien,
+                'alias'        => $this->klienAr->alias,
+                'tipe_klien'   => $this->klienAr->tipe_klien,
+                'tipe_outlet'  => $this->klienAr->tipe_outlet,
+                'stokis_area'  => $this->klienAr->stokis_area,
+                'no_npwp'      => $this->klienAr->no_npwp,
+                'no_wa'        => $this->klienAr->no_wa,
+                'karyawan_ar'  => $this->klienAr->relationLoaded('karyawanAr') ? [
                     'id'           => $this->klienAr->karyawanAr?->id,
                     'nik'          => $this->klienAr->karyawanAr?->nik,
                     'nama_karyawan'=> $this->klienAr->karyawanAr?->nama_karyawan,
@@ -101,6 +102,9 @@ class InvoiceResource extends JsonResource
             'can_submit'                 => $this->canSubmit($request->user()),
             'can_record_payment'         => $this->isApprovedForFinanceFlow(),
             'can_print'                  => $this->isApprovedForFinanceFlow(),
+            'share_url'                  => $this->isApprovedForFinanceFlow() && $this->prepared_token
+                ? url('/api/v1/invoices/public/' . $this->prepared_token)
+                : null,
             'created_at'                 => $this->created_at?->toIso8601String(),
             'updated_at'                 => $this->updated_at?->toIso8601String(),
         ];

@@ -80,6 +80,17 @@ class KlienArController extends Controller
         return $this->successResponse(new KlienArResource($updated), 'Klien AR berhasil diperbarui');
     }
 
+    public function updateNoWa(Request $request, int $id): JsonResponse
+    {
+        $data  = $request->validate(['no_wa' => ['nullable', 'string', 'max:20']]);
+        $klien = $this->service->findOrFail($id);
+        $this->authorizePicArKlien($klien->karyawan_ar_id);
+
+        $klien->update(['no_wa' => $data['no_wa'] ?? null, 'updated_by' => auth()->id()]);
+
+        return $this->successResponse(new KlienArResource($klien->fresh()), 'No. WhatsApp berhasil diperbarui');
+    }
+
     public function destroy(int $id): JsonResponse
     {
         $this->forbidReadOnlyMutation();

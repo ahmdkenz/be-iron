@@ -13,6 +13,11 @@ Route::prefix('v1')->group(function () {
     // ─── Public Routes ────────────────────────────────────────────────
     Route::prefix('auth')->group(base_path('routes/api/auth.php'));
 
+    Route::get('/invoices/public/{token}', [
+        \App\Domain\Finance\Invoice\Controllers\InvoiceController::class,
+        'publicPrint',
+    ]);
+
     // ─── Protected Routes ─────────────────────────────────────────────
     Route::middleware(['auth:sanctum', 'throttle:60,1'])->group(function () {
 
