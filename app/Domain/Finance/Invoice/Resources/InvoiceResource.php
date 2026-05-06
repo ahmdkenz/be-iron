@@ -55,13 +55,13 @@ class InvoiceResource extends JsonResource
             'sisa_tagihan'               => (float) $this->sisa_tagihan,
             'status'                     => $this->status,
             'approval_status'            => $this->approval_status,
-            'submitted_at'               => $this->submitted_at?->format('Y-m-d H:i:s'),
+            'submitted_at'               => $this->submitted_at?->toIso8601String(),
             'submitted_by'               => $this->submitted_by,
             'submitted_by_name'          => $this->whenLoaded('submittedBy', fn() => $this->submittedBy?->username),
-            'approved_at'                => $this->approved_at?->format('Y-m-d H:i:s'),
+            'approved_at'                => $this->approved_at?->toIso8601String(),
             'approved_by'                => $this->approved_by,
             'approved_by_name'           => $this->whenLoaded('approvedBy', fn() => $this->approvedBy?->username),
-            'rejected_at'                => $this->rejected_at?->format('Y-m-d H:i:s'),
+            'rejected_at'                => $this->rejected_at?->toIso8601String(),
             'rejected_by'                => $this->rejected_by,
             'rejected_by_name'           => $this->whenLoaded('rejectedBy', fn() => $this->rejectedBy?->username),
             'is_opening_balance'         => $this->is_opening_balance,
@@ -78,7 +78,7 @@ class InvoiceResource extends JsonResource
                     'no_referensi'        => $p->no_referensi,
                     'keterangan'          => $p->keterangan,
                     'created_by_name'     => $p->relationLoaded('createdBy') ? $p->createdBy?->username : null,
-                    'created_at'          => $p->created_at?->format('Y-m-d H:i:s'),
+                    'created_at'          => $p->created_at?->toIso8601String(),
                 ])
             ),
             'approval_logs'              => $this->whenLoaded('approvalLogs', fn() =>
@@ -88,7 +88,7 @@ class InvoiceResource extends JsonResource
                     'note'       => $log->note,
                     'actor_id'   => $log->actor_id,
                     'actor_name' => $log->relationLoaded('actor') ? $log->actor?->username : null,
-                    'created_at' => $log->created_at?->format('Y-m-d H:i:s'),
+                    'created_at' => $log->created_at?->toIso8601String(),
                 ])->values()
             ),
             'created_by'                 => $this->created_by,
@@ -101,8 +101,8 @@ class InvoiceResource extends JsonResource
             'can_submit'                 => $this->canSubmit($request->user()),
             'can_record_payment'         => $this->isApprovedForFinanceFlow(),
             'can_print'                  => $this->isApprovedForFinanceFlow(),
-            'created_at'                 => $this->created_at?->format('Y-m-d H:i:s'),
-            'updated_at'                 => $this->updated_at?->format('Y-m-d H:i:s'),
+            'created_at'                 => $this->created_at?->toIso8601String(),
+            'updated_at'                 => $this->updated_at?->toIso8601String(),
         ];
     }
 
