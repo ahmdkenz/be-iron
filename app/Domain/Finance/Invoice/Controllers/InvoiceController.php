@@ -176,6 +176,39 @@ class InvoiceController extends Controller
         ]);
     }
 
+    public function publicPrint(string $token): Response
+    {
+        $invoice = \App\Models\Invoice::where('prepared_token', $token)->firstOrFail();
+        abort_if(
+            $invoice->requiresApproval() && !$invoice->isApprovedForFinanceFlow(),
+            422,
+            'Invoice belum disetujui, dokumen belum dapat diakses'
+        );
+
+        $invoice->load([
+            'klienAr.karyawanAr',
+            'perusahaan',
+            'items',
+            'pembayarans',
+            'createdBy.karyawan',
+            'submittedBy.karyawan',
+            'approvedBy.karyawan',
+        ]);
+
+        $signatureData = $this->buildSignatureData($invoice);
+        $filename = 'Invoice-' . str_replace(['/', '\\', ' '], '-', $invoice->no_invoice) . '.pdf';
+
+        return Pdf::loadView('finance.invoice-print', compact('invoice', 'signatureData'))
+            ->setPaper('a4', 'portrait')
+            ->setOptions([
+                'isHtml5ParserEnabled' => true,
+                'isRemoteEnabled'      => false,
+                'defaultFont'          => 'Arial',
+                'dpi'                  => 150,
+            ])
+            ->stream($filename);
+    }
+
     public function print(Request $request, int $id): Response|string
     {
         $invoice = $this->service->findOrFail($id);

@@ -20,6 +20,7 @@ class KlienAr extends Model
         'tipe_outlet',
         'stokis_area',
         'no_npwp',
+        'no_wa',
         'perusahaan_id',
         'karyawan_ar_id',
         'resto_id',
