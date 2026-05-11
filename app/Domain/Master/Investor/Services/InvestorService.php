@@ -5,16 +5,21 @@ namespace App\Domain\Master\Investor\Services;
 use App\Domain\Master\Investor\DTO\InvestorDTO;
 use App\Domain\Master\Investor\Repositories\InvestorRepository;
 use App\Models\Investor;
-use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Pagination\LengthAwarePaginator;
 
 class InvestorService
 {
     public function __construct(private readonly InvestorRepository $repository) {}
 
-    public function getAll(array $filters = [], bool $all = false): LengthAwarePaginator|Collection
+    public function getAll(array $filters = [], bool $all = false): LengthAwarePaginator|EloquentCollection
     {
         return $all ? $this->repository->all() : $this->repository->paginate($filters);
+    }
+
+    public function getAllForExport(array $filters = []): EloquentCollection
+    {
+        return $this->repository->getAllForExport($filters);
     }
 
     public function findOrFail(int $id): Investor

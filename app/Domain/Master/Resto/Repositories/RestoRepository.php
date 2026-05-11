@@ -3,7 +3,7 @@
 namespace App\Domain\Master\Resto\Repositories;
 
 use App\Models\Resto;
-use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Pagination\LengthAwarePaginator;
 
 class RestoRepository
@@ -57,5 +57,19 @@ class RestoRepository
             ->where('perusahaan_id', $perusahaanId)
             ->where('brand_id', $brandId)
             ->count();
+    }
+
+    public function getAllForExport(array $filters = []): EloquentCollection
+    {
+        return $this->baseQuery()
+            ->when($filters['search'] ?? null, fn($q, $v) => $q->where(fn($q) => $q
+                ->where('kode_resto', 'like', "%{$v}%")
+                ->orWhere('nama_resto', 'like', "%{$v}%")
+                ->orWhere('kota', 'like', "%{$v}%")
+                ->orWhere('area', 'like', "%{$v}%")
+            ))
+            ->when(isset($filters['status']), fn($q) => $q->where('status', $filters['status']))
+            ->latest()
+            ->get();
     }
 }

@@ -3,7 +3,7 @@
 namespace App\Domain\Master\Investor\Repositories;
 
 use App\Models\Investor;
-use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Pagination\LengthAwarePaginator;
 
 class InvestorRepository
@@ -20,11 +20,22 @@ class InvestorRepository
             ->paginate($perPage);
     }
 
-    public function all(): Collection
+    public function all(): EloquentCollection
     {
         return Investor::where('status', true)
             ->orderBy('nama_investor')
             ->get(['id', 'nama_investor', 'pengelola']);
+    }
+
+    public function getAllForExport(array $filters = []): EloquentCollection
+    {
+        return Investor::when($filters['search'] ?? null, fn($q, $v) => $q->where(fn($q) => $q
+                ->where('nama_investor', 'like', "%{$v}%")
+                ->orWhere('pengelola', 'like', "%{$v}%")
+            ))
+            ->when(isset($filters['status']), fn($q) => $q->where('status', $filters['status']))
+            ->latest()
+            ->get();
     }
 
     public function findById(int $id): ?Investor

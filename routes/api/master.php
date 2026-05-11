@@ -10,7 +10,15 @@ use Illuminate\Support\Facades\Route;
 
 // Must declare named sub-routes BEFORE apiResource binding
 Route::get('/karyawan/search', [KaryawanController::class, 'search']);
-Route::get('/resto/preview-kode', [RestoController::class, 'previewKode']);
+
+Route::get('/investor/export',          [InvestorController::class, 'export']);
+Route::get('/investor/import-template', [InvestorController::class, 'importTemplate']);
+Route::post('/investor/import',         [InvestorController::class, 'import']);
+
+Route::get('/resto/preview-kode',       [RestoController::class, 'previewKode']);
+Route::get('/resto/export',             [RestoController::class, 'export']);
+Route::get('/resto/import-template',    [RestoController::class, 'importTemplate']);
+Route::post('/resto/import',            [RestoController::class, 'import']);
 
 Route::apiResource('karyawan', KaryawanController::class);
 Route::apiResource('perusahaan', PerusahaanController::class);

@@ -5,6 +5,7 @@ namespace App\Domain\Master\Resto\Services;
 use App\Domain\Master\Resto\DTO\RestoDTO;
 use App\Domain\Master\Resto\Repositories\RestoRepository;
 use App\Models\Resto;
+use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Pagination\LengthAwarePaginator;
 
 class RestoService
@@ -14,6 +15,11 @@ class RestoService
     public function paginate(array $filters = []): LengthAwarePaginator
     {
         return $this->repository->paginate($filters);
+    }
+
+    public function getAllForExport(array $filters = []): EloquentCollection
+    {
+        return $this->repository->getAllForExport($filters);
     }
 
     public function findOrFail(int $id): Resto
