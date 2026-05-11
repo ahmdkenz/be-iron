@@ -143,7 +143,7 @@ class InvoiceController extends Controller
         $invoices = $this->service->paginate(array_merge($filters, ['per_page' => 9999]))->items();
 
         $headers = [
-            'No Invoice', 'Klien', 'Perusahaan', 'Tanggal Invoice', 'Jatuh Tempo',
+            'No Invoice', 'Klien', 'Perusahaan', 'Tanggal Invoice',
             'Periode Awal', 'Periode Akhir', 'Subtotal', 'Tagihan Sebelumnya',
             'Total Tagihan', 'Total Pembayaran', 'Sisa Tagihan', 'Status',
         ];
@@ -159,7 +159,6 @@ class InvoiceController extends Controller
                     $inv->klienAr?->nama_klien,
                     $inv->perusahaan?->nama_singkatan_perusahaan,
                     $inv->tanggal_invoice?->format('Y-m-d'),
-                    $inv->tanggal_jatuh_tempo?->format('Y-m-d'),
                     $inv->periode_awal?->format('Y-m-d'),
                     $inv->periode_akhir?->format('Y-m-d'),
                     $inv->subtotal,

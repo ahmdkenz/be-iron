@@ -7,7 +7,7 @@ class PerusahaanDTO
     public function __construct(
         public readonly string $kode_perusahaan,
         public readonly string $nama_perusahaan,
-        public readonly string $nama_singkatan_perusahaan,
+        public readonly ?string $nama_singkatan_perusahaan,
         public readonly ?string $alamat,
         public readonly ?string $kota,
         public readonly ?string $kode_pos,
@@ -23,7 +23,7 @@ class PerusahaanDTO
         return new self(
             kode_perusahaan:           $data['kode_perusahaan'],
             nama_perusahaan:           $data['nama_perusahaan'],
-            nama_singkatan_perusahaan: $data['nama_singkatan_perusahaan'],
+            nama_singkatan_perusahaan: $data['nama_singkatan_perusahaan'] ?? null,
             alamat:                    $data['alamat'] ?? null,
             kota:                      $data['kota'] ?? null,
             kode_pos:                  $data['kode_pos'] ?? null,
