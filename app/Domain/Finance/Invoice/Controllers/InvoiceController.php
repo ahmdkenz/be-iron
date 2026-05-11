@@ -221,6 +221,7 @@ class InvoiceController extends Controller
             'klienAr.karyawanAr',
             'perusahaan',
             'items',
+            'openingBalanceDetails.items.barang',
             'pembayarans',
             'createdBy.karyawan',
             'submittedBy.karyawan',

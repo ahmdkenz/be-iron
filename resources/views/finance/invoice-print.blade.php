@@ -68,13 +68,39 @@
     .items-table th { background: #faa18fa8; padding: 12px 8px; border-top: 1px solid #ccc; border-bottom: 1px solid #ccc; font-size: 15px; font-weight: bold; text-transform: uppercase; color: #111; }
     .items-table td { padding: 12px 8px; border-bottom: 1px solid #eee; font-size: 16px; }
     .item-desc { font-size: 14px; color: #666; font-style: italic; margin-top: 6px; display: block; }
-    
+
     .col-no { width: 5%; }
     .col-desc { width: 35%; }
     .col-qty { width: 8%; }
     .col-sat { width: 7%; }
     .col-harga { width: 20%; }
     .col-sub { width: 25%; }
+
+    /* Opening Balance Detail Table */
+    .ob-section-title { font-size: 14px; font-weight: bold; text-transform: uppercase; color: #b71c1c; letter-spacing: 1px; margin-bottom: 8px; margin-top: 4px; }
+    .ob-detail-table { margin-bottom: 30px; width: 100%; }
+    .ob-detail-table th { background: #faa18fa8; padding: 10px 8px; border-top: 1px solid #ccc; border-bottom: 1px solid #ccc; font-size: 14px; font-weight: bold; text-transform: uppercase; color: #111; }
+    .ob-detail-table td { padding: 10px 8px; border-bottom: 1px solid #eee; font-size: 15px; vertical-align: top; }
+    .ob-detail-no { width: 5%; }
+    .ob-detail-invoice { width: 18%; }
+    .ob-detail-date { width: 14%; }
+    .ob-detail-desc { width: 28%; }
+    .ob-detail-jumlah { width: 17%; }
+    .ob-detail-sisa { width: 18%; }
+    .ob-detail-row-summary { background: #fffbf0; }
+    .ob-detail-row-summary td { border-bottom: 2px solid #ccc; }
+
+    /* OB Sub-items */
+    .ob-sub-items { margin-top: 6px; padding: 6px 0 0 0; border-top: 1px dashed #ccc; }
+    .ob-sub-item-row { font-size: 13px; color: #444; padding: 3px 0; display: block; }
+    .ob-sub-item-label { color: #888; font-size: 12px; }
+    .ob-sub-table { width: 100%; border-collapse: collapse; margin-top: 4px; }
+    .ob-sub-table th { background: #f0f0f0; font-size: 12px; font-weight: bold; padding: 4px 6px; border: 1px solid #ddd; color: #555; text-transform: uppercase; }
+    .ob-sub-table td { font-size: 12px; padding: 4px 6px; border: 1px solid #eee; color: #333; }
+    .ob-sub-total-row td { background: #f5f5f5; font-weight: bold; border-top: 1px solid #ccc; }
+
+    /* OB Grand total row */
+    .ob-grand-row td { background: #fef2f2; border-top: 2px solid #b71c1c; border-bottom: 2px solid #b71c1c; font-weight: bold; color: #b71c1c; font-size: 16px; padding: 10px 8px; }
 
     /* Summary Section */
     .summary-left { width: 55%; padding-right: 30px; }
@@ -167,7 +193,7 @@
   <div class="divider-thick"></div>
   <div class="divider-thin"></div>
 
-  <div class="doc-title">INVOICE</div>
+  <div class="doc-title">{{ $invoice->is_opening_balance ? 'SALDO AWAL (OPENING BALANCE)' : 'INVOICE' }}</div>
 
   <!-- Info Box -->
   <div class="info-container">
@@ -229,7 +255,73 @@
     </table>
   </div>
 
-  <!-- Items -->
+  @if($invoice->is_opening_balance)
+  {{-- ======== OPENING BALANCE: Rincian Invoice Asal ======== --}}
+  <div class="ob-section-title">Rincian Invoice Asal</div>
+
+  @php $obDetails = $invoice->openingBalanceDetails ?? collect(); @endphp
+
+  @if($obDetails->isEmpty())
+  {{-- Lump-sum tanpa detail --}}
+  <table class="ob-detail-table">
+    <thead>
+      <tr>
+        <th class="ob-detail-no text-center">No</th>
+        <th class="ob-detail-desc text-left" colspan="3">Keterangan</th>
+        <th class="ob-detail-sisa text-right">Saldo Awal</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="ob-detail-no text-center" style="color:#777;">1</td>
+        <td colspan="3">
+          <span class="font-bold">{{ $invoice->keterangan ?: 'Opening Balance' }}</span>
+        </td>
+        <td class="text-right font-bold">Rp {{ number_format((float)$invoice->subtotal, 0, ',', '.') }}</td>
+      </tr>
+    </tbody>
+  </table>
+
+  @else
+  {{-- Detail per invoice asal --}}
+  <table class="ob-detail-table">
+    <thead>
+      <tr>
+        <th class="ob-detail-no text-center">No</th>
+        <th class="ob-detail-invoice text-left">No. Invoice Asal</th>
+        <th class="ob-detail-date text-center">Tanggal</th>
+        <th class="ob-detail-desc text-left">Deskripsi</th>
+        <th class="ob-detail-jumlah text-right">Jumlah Tagihan</th>
+        <th class="ob-detail-sisa text-right">Sisa Tagihan</th>
+      </tr>
+    </thead>
+    <tbody>
+      @foreach($obDetails as $di => $detail)
+      <tr class="{{ $detail->items->isNotEmpty() ? '' : '' }}">
+        <td class="ob-detail-no text-center" style="color:#777;">{{ $di + 1 }}</td>
+        <td class="ob-detail-invoice font-bold" style="color:#b71c1c;">{{ $detail->no_invoice_asal }}</td>
+        <td class="ob-detail-date text-center" style="color:#555;">{{ \Carbon\Carbon::parse($detail->tanggal_invoice_asal)->isoFormat('D MMM YYYY') }}</td>
+        <td class="ob-detail-desc">
+          <span>{{ $detail->deskripsi }}</span>
+          @if($detail->keterangan)<span class="item-desc">{{ $detail->keterangan }}</span>@endif
+
+        </td>
+        <td class="ob-detail-jumlah text-right" style="color:#555;">Rp {{ number_format((float)$detail->jumlah_tagihan_asal, 0, ',', '.') }}</td>
+        <td class="ob-detail-sisa text-right font-bold">Rp {{ number_format((float)$detail->sisa_tagihan_asal, 0, ',', '.') }}</td>
+      </tr>
+      @endforeach
+    </tbody>
+    <tfoot>
+      <tr class="ob-grand-row">
+        <td colspan="5" class="text-right">TOTAL SALDO AWAL</td>
+        <td class="text-right">Rp {{ number_format((float)$invoice->subtotal, 0, ',', '.') }}</td>
+      </tr>
+    </tfoot>
+  </table>
+  @endif
+
+  @else
+  {{-- ======== INVOICE BIASA: Item Barang ======== --}}
   <table class="items-table">
     <thead>
       <tr>
@@ -263,6 +355,7 @@
       @endforelse
     </tbody>
   </table>
+  @endif
 
   <!-- Summary -->
   <table>
