@@ -37,6 +37,12 @@ class KlienArResource extends JsonResource
                 'id'         => $this->resto->id,
                 'kode_resto' => $this->resto->kode_resto,
                 'nama_resto' => $this->resto->nama_resto,
+                'investor'   => $this->resto->relationLoaded('investor') && $this->resto->investor ? [
+                    'id'              => $this->resto->investor->id,
+                    'nama_investor'   => $this->resto->investor->nama_investor,
+                    'pengelola'       => $this->resto->investor->pengelola,
+                    'no_hp_pengelola' => $this->resto->investor->no_hp_pengelola,
+                ] : null,
             ] : null),
             'status'          => $this->status,
             'created_by'      => $this->created_by,

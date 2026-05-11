@@ -4,6 +4,7 @@ namespace App\Domain\Finance\KlienAr\Services;
 
 use App\Domain\Finance\KlienAr\DTO\KlienArDTO;
 use App\Domain\Finance\KlienAr\Repositories\KlienArRepository;
+use App\Models\Karyawan;
 use App\Models\KlienAr;
 use Illuminate\Pagination\LengthAwarePaginator;
 
@@ -11,9 +12,9 @@ class KlienArService
 {
     public function __construct(private readonly KlienArRepository $repository) {}
 
-    public function generateKodeKlien(string $tipeKlien): string
+    public function generateKodeKlien(?string $tipeKlien = 'MITRA'): string
     {
-        $segment = $this->resolveKodeSegment($tipeKlien);
+        $segment = $this->resolveKodeSegment($tipeKlien ?? 'MITRA');
         $prefix  = "AR-{$segment}";
         $count   = KlienAr::withTrashed()
             ->where('kode_klien', 'like', $prefix . '-%')
@@ -42,6 +43,9 @@ class KlienArService
 
     public function create(KlienArDTO $dto): KlienAr
     {
+        $perusahaanId = $dto->perusahaan_id
+            ?? Karyawan::find($dto->karyawan_ar_id)?->perusahaan_id;
+
         return $this->repository->create([
             'kode_klien'    => $this->generateKodeKlien($dto->tipe_klien),
             'nama_klien'    => $dto->nama_klien,
@@ -50,7 +54,7 @@ class KlienArService
             'tipe_outlet'   => $dto->tipe_outlet,
             'stokis_area'   => $dto->stokis_area,
             'no_npwp'       => $dto->no_npwp,
-            'perusahaan_id' => $dto->perusahaan_id,
+            'perusahaan_id' => $perusahaanId,
             'karyawan_ar_id'=> $dto->karyawan_ar_id,
             'resto_id'      => $dto->resto_id,
             'status'        => $dto->status,
@@ -60,6 +64,10 @@ class KlienArService
 
     public function update(KlienAr $klien, KlienArDTO $dto): KlienAr
     {
+        $perusahaanId = $dto->perusahaan_id
+            ?? $klien->perusahaan_id
+            ?? Karyawan::find($dto->karyawan_ar_id)?->perusahaan_id;
+
         return $this->repository->update($klien, [
             // Keep historical client codes stable for existing records.
             'kode_klien'    => $klien->kode_klien,
@@ -69,7 +77,7 @@ class KlienArService
             'tipe_outlet'   => $dto->tipe_outlet,
             'stokis_area'   => $dto->stokis_area,
             'no_npwp'       => $dto->no_npwp,
-            'perusahaan_id' => $dto->perusahaan_id,
+            'perusahaan_id' => $perusahaanId,
             'karyawan_ar_id'=> $dto->karyawan_ar_id,
             'resto_id'      => $dto->resto_id,
             'status'        => $dto->status,
@@ -89,7 +97,7 @@ class KlienArService
 
     private function resolveKodeSegment(string $tipeKlien): string
     {
-        return strtoupper($tipeKlien) === 'RESTO' ? 'B2C' : 'B2B';
+        return in_array(strtoupper($tipeKlien), ['RESTO', 'MITRA']) ? 'B2C' : 'B2B';
     }
 
 }

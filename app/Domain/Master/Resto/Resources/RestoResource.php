@@ -15,8 +15,10 @@ class RestoResource extends JsonResource
             'nama_resto'     => $this->nama_resto,
             'investor_id'    => $this->investor_id,
             'investor'       => $this->whenLoaded('investor', fn() => $this->investor ? [
-                'id'           => $this->investor->id,
-                'nama_investor' => $this->investor->nama_investor,
+                'id'              => $this->investor->id,
+                'nama_investor'   => $this->investor->nama_investor,
+                'pengelola'       => $this->investor->pengelola,
+                'no_hp_pengelola' => $this->investor->no_hp_pengelola,
             ] : null),
             'perusahaan_id'  => $this->perusahaan_id,
             'perusahaan'     => $this->whenLoaded('perusahaan', fn() => $this->perusahaan ? [

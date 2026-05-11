@@ -29,6 +29,7 @@ class InvoiceRepository
         return Invoice::with([
             'klienAr.perusahaan',
             'klienAr.karyawanAr',
+            'klienAr.resto.investor',
             'perusahaan',
             'karyawan',
             'items.barang',

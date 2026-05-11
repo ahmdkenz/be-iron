@@ -129,7 +129,8 @@ class InvoiceService
         }
 
         return $invoice->load([
-            'klienAr',
+            'klienAr.karyawanAr',
+            'klienAr.resto.investor',
             'perusahaan',
             'karyawan',
             'items.barang',
@@ -361,7 +362,7 @@ class InvoiceService
             ]);
         }
 
-        return $invoice->fresh(['klienAr', 'perusahaan', 'karyawan', 'items.barang', 'pembayarans']);
+        return $invoice->fresh(['klienAr.karyawanAr', 'klienAr.resto.investor', 'perusahaan', 'karyawan', 'items.barang', 'pembayarans']);
     }
 
     public function changeStatus(Invoice $invoice, string $status): Invoice
@@ -459,6 +460,6 @@ class InvoiceService
 
     private function resolveInvoiceSegment(KlienAr $klien): string
     {
-        return strtoupper($klien->tipe_klien) === 'RESTO' ? 'B2C' : 'B2B';
+        return in_array(strtoupper($klien->tipe_klien ?? ''), ['RESTO', 'MITRA']) ? 'B2C' : 'B2B';
     }
 }

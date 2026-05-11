@@ -43,11 +43,11 @@ class KlienArController extends Controller
     public function previewKode(Request $request): JsonResponse
     {
         $payload = $request->validate([
-            'tipe_klien' => ['required', 'in:PT,RESTO,STOKIS,MITRA'],
+            'tipe_klien' => ['nullable', 'in:PT,RESTO,STOKIS,MITRA'],
         ]);
 
         return $this->successResponse([
-            'kode_klien' => $this->service->generateKodeKlien($payload['tipe_klien']),
+            'kode_klien' => $this->service->generateKodeKlien($payload['tipe_klien'] ?? 'MITRA'),
         ]);
     }
 
