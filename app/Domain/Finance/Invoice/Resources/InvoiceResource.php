@@ -6,6 +6,7 @@ use App\Models\User;
 use App\Support\Helpers\RoleHelper;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
+use App\Domain\Finance\Invoice\Resources\OpeningBalanceDetailResource;
 
 class InvoiceResource extends JsonResource
 {
@@ -68,6 +69,10 @@ class InvoiceResource extends JsonResource
             'keterangan'                 => $this->keterangan,
             'items'                      => $this->whenLoaded('items', fn() =>
                 InvoiceItemResource::collection($this->items)
+            ),
+            'opening_balance_details'    => $this->when(
+                $this->is_opening_balance && $this->relationLoaded('openingBalanceDetails'),
+                fn() => OpeningBalanceDetailResource::collection($this->openingBalanceDetails)
             ),
             'pembayarans'                => $this->whenLoaded('pembayarans', fn() =>
                 $this->pembayarans->map(fn($p) => [

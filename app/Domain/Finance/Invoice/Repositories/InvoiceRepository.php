@@ -32,6 +32,7 @@ class InvoiceRepository
             'perusahaan',
             'karyawan',
             'items.barang',
+            'openingBalanceDetails.items.barang',
             'pembayarans.createdBy',
             'createdBy',
             'submittedBy',

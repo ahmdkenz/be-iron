@@ -77,6 +77,12 @@ class Invoice extends Model
         return $this->hasMany(InvoiceItem::class, 'invoice_id');
     }
 
+    public function openingBalanceDetails()
+    {
+        return $this->hasMany(OpeningBalanceDetail::class, 'invoice_id')
+                    ->orderBy('tanggal_invoice_asal');
+    }
+
     public function pembayarans()
     {
         return $this->hasMany(PembayaranAr::class, 'invoice_id');

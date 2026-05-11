@@ -70,6 +70,7 @@ Route::prefix('opening-balance')->group(function () {
     Route::get('/summary', [OpeningBalanceController::class, 'summary']);
     Route::post('/', [OpeningBalanceController::class, 'store']);
     Route::put('/{invoice}', [OpeningBalanceController::class, 'update']);
+    Route::get('/{invoice}/details', [OpeningBalanceController::class, 'details']);
     Route::patch('/{invoice}/approve', [OpeningBalanceController::class, 'approve'])->middleware('role:DIREKTUR');
     Route::patch('/{invoice}/reject', [OpeningBalanceController::class, 'reject'])->middleware('role:DIREKTUR');
     Route::patch('/{invoice}/resubmit', [OpeningBalanceController::class, 'resubmit']);

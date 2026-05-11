@@ -3,7 +3,6 @@
 namespace App\Domain\Finance\AgingReport\Services;
 
 use App\Models\Invoice;
-use App\Models\KlienAr;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 
@@ -15,60 +14,74 @@ class AgingReportService
             ? Carbon::parse($filters['as_of_date'])->startOfDay()
             : Carbon::today();
 
-        $query = Invoice::query()
+        $regularInvoices = Invoice::query()
             ->with(['klienAr.perusahaan'])
-            ->whereNotIn('status', ['LUNAS'])
             ->where('is_opening_balance', false)
-            ->orWhere(function ($q) {
-                $q->where('is_opening_balance', true)
-                  ->where('approval_status', 'APPROVED')
-                  ->whereNotIn('status', ['LUNAS']);
-            });
-
-        // Re-scope: combine both conditions properly
-        $query = Invoice::query()
-            ->with(['klienAr.perusahaan'])
-            ->where(function ($q) {
-                $q->where('is_opening_balance', false)
-                  ->orWhere(function ($inner) {
-                      $inner->where('is_opening_balance', true)
-                            ->where('approval_status', 'APPROVED');
-                  });
-            })
             ->whereNotIn('status', ['LUNAS'])
             ->when($filters['klien_ar_id'] ?? null, fn($q, $v) => $q->where('klien_ar_id', $v))
-            ->when($filters['perusahaan_id'] ?? null, fn($q, $v) => $q->where('perusahaan_id', $v));
+            ->when($filters['perusahaan_id'] ?? null, fn($q, $v) => $q->where('perusahaan_id', $v))
+            ->get();
 
-        $invoices = $query->get();
+        $obInvoices = Invoice::query()
+            ->with(['klienAr.perusahaan', 'openingBalanceDetails'])
+            ->where('is_opening_balance', true)
+            ->where('approval_status', 'APPROVED')
+            ->whereNotIn('status', ['LUNAS'])
+            ->when($filters['klien_ar_id'] ?? null, fn($q, $v) => $q->where('klien_ar_id', $v))
+            ->when($filters['perusahaan_id'] ?? null, fn($q, $v) => $q->where('perusahaan_id', $v))
+            ->get();
 
-        $grouped = $invoices->groupBy('klien_ar_id');
+        $lines = collect();
+
+        foreach ($regularInvoices as $inv) {
+            $lines->push([
+                'klien_ar_id'   => $inv->klien_ar_id,
+                'klien'         => $inv->klienAr,
+                'tanggal_anchor'=> $inv->tanggal_invoice,
+                'sisa'          => (float) $inv->sisa_tagihan,
+            ]);
+        }
+
+        foreach ($obInvoices as $ob) {
+            if ($ob->openingBalanceDetails->isNotEmpty()) {
+                foreach ($ob->openingBalanceDetails as $detail) {
+                    $lines->push([
+                        'klien_ar_id'   => $ob->klien_ar_id,
+                        'klien'         => $ob->klienAr,
+                        'tanggal_anchor'=> $detail->tanggal_invoice_asal,
+                        'sisa'          => (float) $detail->sisa_tagihan_asal,
+                    ]);
+                }
+            } else {
+                $lines->push([
+                    'klien_ar_id'   => $ob->klien_ar_id,
+                    'klien'         => $ob->klienAr,
+                    'tanggal_anchor'=> $ob->tanggal_invoice,
+                    'sisa'          => (float) $ob->sisa_tagihan,
+                ]);
+            }
+        }
+
+        $grouped = $lines->groupBy('klien_ar_id');
 
         $rows = $grouped->map(function (Collection $group) use ($asOf) {
-            $first   = $group->first();
-            $klien   = $first->klienAr;
+            $klien   = $group->first()['klien'];
             $buckets = ['current' => 0, 'hari_1_30' => 0, 'hari_31_60' => 0, 'hari_61_90' => 0, 'hari_91_plus' => 0];
 
-            foreach ($group as $invoice) {
-                $sisa = (float) $invoice->sisa_tagihan;
+            foreach ($group as $line) {
+                $anchor      = Carbon::parse($line['tanggal_anchor'])->startOfDay();
+                $ageDays     = $anchor->diffInDays($asOf, false);
 
-                if (!$invoice->tanggal_jatuh_tempo) {
-                    $buckets['current'] += $sisa;
-                    continue;
-                }
-
-                $dueDate      = Carbon::parse($invoice->tanggal_jatuh_tempo)->startOfDay();
-                $overdueDays  = $dueDate->diffInDays($asOf, false);
-
-                if ($overdueDays <= 0) {
-                    $buckets['current'] += $sisa;
-                } elseif ($overdueDays <= 30) {
-                    $buckets['hari_1_30'] += $sisa;
-                } elseif ($overdueDays <= 60) {
-                    $buckets['hari_31_60'] += $sisa;
-                } elseif ($overdueDays <= 90) {
-                    $buckets['hari_61_90'] += $sisa;
+                if ($ageDays <= 0) {
+                    $buckets['current'] += $line['sisa'];
+                } elseif ($ageDays <= 30) {
+                    $buckets['hari_1_30'] += $line['sisa'];
+                } elseif ($ageDays <= 60) {
+                    $buckets['hari_31_60'] += $line['sisa'];
+                } elseif ($ageDays <= 90) {
+                    $buckets['hari_61_90'] += $line['sisa'];
                 } else {
-                    $buckets['hari_91_plus'] += $sisa;
+                    $buckets['hari_91_plus'] += $line['sisa'];
                 }
             }
 

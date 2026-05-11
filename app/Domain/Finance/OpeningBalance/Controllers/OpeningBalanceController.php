@@ -3,6 +3,7 @@
 namespace App\Domain\Finance\OpeningBalance\Controllers;
 
 use App\Domain\Finance\Invoice\Resources\InvoiceResource;
+use App\Domain\Finance\Invoice\Resources\OpeningBalanceDetailResource;
 use App\Domain\Finance\Invoice\Services\InvoiceService;
 use App\Domain\Finance\OpeningBalance\Requests\StoreOpeningBalanceRequest;
 use App\Http\Controllers\Controller;
@@ -114,6 +115,19 @@ class OpeningBalanceController extends Controller
         return $this->successResponse(
             new InvoiceResource($updated),
             'Opening balance berhasil ditolak'
+        );
+    }
+
+    public function details(int $id): JsonResponse
+    {
+        $this->authorizeViewOpeningBalance();
+
+        $invoice = $this->findOpeningBalanceOrFail($id);
+
+        return $this->successResponse(
+            OpeningBalanceDetailResource::collection(
+                $invoice->openingBalanceDetails()->orderBy('tanggal_invoice_asal')->get()
+            )
         );
     }
 

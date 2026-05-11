@@ -7,6 +7,7 @@ use App\Domain\Finance\Invoice\Repositories\InvoiceRepository;
 use App\Models\Invoice;
 use App\Models\InvoiceApprovalLog;
 use App\Models\KlienAr;
+use App\Models\OpeningBalanceDetail;
 use Carbon\Carbon;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
@@ -170,6 +171,10 @@ class InvoiceService
 
             $this->createApprovalLog($invoice, 'SUBMITTED');
 
+            if (!empty($data['details'])) {
+                $this->syncOpeningBalanceDetails($invoice, $data['details']);
+            }
+
             return $this->findOrFail($invoice->id);
         });
     }
@@ -199,7 +204,45 @@ class InvoiceService
             'updated_by'                 => auth()->id(),
         ]);
 
+        $invoice->openingBalanceDetails()->delete();
+        if (!empty($data['details'])) {
+            $this->syncOpeningBalanceDetails($invoice, $data['details']);
+        }
+
         return $this->findOrFail($invoice->id);
+    }
+
+    private function syncOpeningBalanceDetails(Invoice $invoice, array $details): void
+    {
+        foreach ($details as $detail) {
+            $items = $detail['items'] ?? [];
+
+            $jumlahTagihan = !empty($items)
+                ? collect($items)->sum('subtotal')
+                : ($detail['jumlah_tagihan_asal'] ?? 0);
+
+            $obDetail = $invoice->openingBalanceDetails()->create([
+                'no_invoice_asal'      => $detail['no_invoice_asal'],
+                'tanggal_invoice_asal' => $detail['tanggal_invoice_asal'],
+                'deskripsi'            => $detail['deskripsi'],
+                'jumlah_tagihan_asal'  => $jumlahTagihan,
+                'sisa_tagihan_asal'    => $detail['sisa_tagihan_asal'],
+                'keterangan'           => $detail['keterangan'] ?? null,
+                'created_by'           => auth()->id(),
+            ]);
+
+            foreach ($items as $item) {
+                $obDetail->items()->create([
+                    'barang_id'    => $item['barang_id'] ?? null,
+                    'nama_barang'  => $item['nama_barang'],
+                    'qty'          => $item['qty'],
+                    'satuan'       => $item['satuan'] ?? null,
+                    'harga_satuan' => $item['harga_satuan'],
+                    'subtotal'     => $item['subtotal'],
+                    'keterangan'   => $item['keterangan'] ?? null,
+                ]);
+            }
+        }
     }
 
     public function resubmitOpeningBalance(Invoice $invoice, ?string $note = null): Invoice
