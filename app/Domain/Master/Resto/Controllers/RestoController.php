@@ -17,6 +17,16 @@ use App\Support\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
+use PhpOffice\PhpSpreadsheet\Cell\DataType;
+use PhpOffice\PhpSpreadsheet\IOFactory;
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Style\Alignment;
+use PhpOffice\PhpSpreadsheet\Style\Border;
+use PhpOffice\PhpSpreadsheet\Style\Fill;
+use PhpOffice\PhpSpreadsheet\Style\NumberFormat;
+use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx as XlsxWriter;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class RestoController extends Controller
@@ -114,28 +124,23 @@ class RestoController extends Controller
         ]);
     }
 
-    public function importTemplate(): StreamedResponse
+    public function importTemplate(): BinaryFileResponse
     {
-        return response()->streamDownload(function () {
-            $handle = fopen('php://output', 'w');
-            fprintf($handle, chr(0xEF) . chr(0xBB) . chr(0xBF));
+        $spreadsheet = new Spreadsheet();
 
-            fputcsv($handle, [
-                'nama_resto', 'nama_investor', 'nama_perusahaan', 'nama_brand',
-                'nama_pic', 'area', 'kota', 'alamat', 'no_telp',
-                'tgl_aktif', 'keterangan', 'status',
-            ]);
+        $this->buildDataSheet($spreadsheet->getActiveSheet());
+        $this->buildInstructionSheet($spreadsheet->createSheet());
 
-            fputcsv($handle, [
-                'Resto Contoh', 'Nama Investor', 'Nama Perusahaan', 'Nama Brand',
-                'Nama Karyawan PIC', 'Jakarta Pusat', 'Jakarta',
-                'Jl. Contoh No. 1', '02112345678', '2026-01-01', '', '1',
-            ]);
+        $spreadsheet->setActiveSheetIndex(0);
 
-            fclose($handle);
-        }, 'template-resto.csv', [
-            'Content-Type' => 'text/csv; charset=UTF-8',
-        ]);
+        $temp = tempnam(sys_get_temp_dir(), 'tpl_resto_') . '.xlsx';
+        (new XlsxWriter($spreadsheet))->save($temp);
+
+        return response()
+            ->download($temp, 'template-resto.xlsx', [
+                'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            ])
+            ->deleteFileAfterSend(true);
     }
 
     public function import(Request $request): JsonResponse
@@ -143,28 +148,38 @@ class RestoController extends Controller
         $this->forbidReadOnlyMutation();
 
         $request->validate([
-            'file' => ['required', 'file', 'mimes:csv,txt', 'max:2048'],
+            'file' => ['required', 'file', 'mimes:csv,txt,xlsx,xls', 'max:2048'],
         ]);
 
-        $path   = $request->file('file')->getRealPath();
-        $handle = fopen($path, 'r');
+        $file      = $request->file('file');
+        $extension = strtolower($file->getClientOriginalExtension());
+        $path      = $file->getRealPath();
+
+        $rows = in_array($extension, ['xlsx', 'xls'])
+            ? $this->parseXlsx($path)
+            : $this->parseCsv($path);
 
         $insertedCount = 0;
         $updatedCount  = 0;
         $totalData     = 0;
         $errors        = [];
         $lineNumber    = 0;
+        $headerSkipped = false;
 
-        while (($row = fgetcsv($handle)) !== false) {
+        foreach ($rows as $row) {
             $lineNumber++;
+            $firstCell = trim((string) ($row[0] ?? ''));
 
-            if ($lineNumber === 1) {
-                continue; // skip header
+            if (str_starts_with($firstCell, '#')) continue;
+
+            if (!$headerSkipped) {
+                $headerSkipped = true;
+                continue;
             }
 
-            if (count($row) < 1 || ($row[0] === '' && count(array_filter($row)) === 0)) {
-                continue; // skip empty rows
-            }
+            if (str_starts_with($firstCell, '[CONTOH]')) continue;
+
+            if ($firstCell === '' && count(array_filter(array_map('strval', $row))) === 0) continue;
 
             $totalData++;
 
@@ -173,16 +188,16 @@ class RestoController extends Controller
                 break;
             }
 
-            $namaInvestor  = trim($row[1] ?? '');
-            $namaPerusahaan = trim($row[2] ?? '');
-            $namaBrand     = trim($row[3] ?? '');
-            $namaPic       = trim($row[4] ?? '');
+            $namaInvestor   = $this->importValue($row[1] ?? '') ?? '';
+            $namaPerusahaan = $this->importValue($row[2] ?? '') ?? '';
+            $namaBrand      = $this->importValue($row[3] ?? '') ?? '';
+            $namaPic        = $this->importValue($row[4] ?? '') ?? '';
 
-            $investorId  = null;
+            $investorId   = null;
             $perusahaanId = null;
-            $brandId     = null;
-            $karyawanId  = null;
-            $rowErrors   = [];
+            $brandId      = null;
+            $karyawanId   = null;
+            $rowErrors    = [];
 
             if ($namaInvestor) {
                 $investor = Investor::where('nama_investor', $namaInvestor)->first();
@@ -228,18 +243,18 @@ class RestoController extends Controller
             }
 
             $data = [
-                'nama_resto'    => trim($row[0] ?? ''),
+                'nama_resto'    => $firstCell,
                 'investor_id'   => $investorId,
                 'perusahaan_id' => $perusahaanId,
                 'brand_id'      => $brandId,
                 'karyawan_id'   => $karyawanId,
-                'area'          => trim($row[5] ?? '') ?: null,
-                'kota'          => trim($row[6] ?? '') ?: null,
-                'alamat'        => trim($row[7] ?? '') ?: null,
-                'no_telp'       => trim($row[8] ?? '') ?: null,
-                'tgl_aktif'     => trim($row[9] ?? '') ?: null,
-                'keterangan'    => trim($row[10] ?? '') ?: null,
-                'status'        => isset($row[11]) && trim($row[11]) !== '' ? (bool)(int)$row[11] : true,
+                'area'          => $this->importValue($row[5] ?? ''),
+                'kota'          => $this->importValue($row[6] ?? ''),
+                'alamat'        => $this->importValue($row[7] ?? ''),
+                'no_telp'       => $this->importValue($row[8] ?? ''),
+                'tgl_aktif'     => $this->importDate($row[9] ?? ''),
+                'keterangan'    => $this->importValue($row[10] ?? ''),
+                'status'        => isset($row[11]) && trim((string) $row[11]) !== '' ? (bool) (int) $row[11] : true,
             ];
 
             $validator = Validator::make($data, [
@@ -258,10 +273,7 @@ class RestoController extends Controller
             ]);
 
             if ($validator->fails()) {
-                $errors[] = [
-                    'row'     => $lineNumber,
-                    'message' => implode('; ', $validator->errors()->all()),
-                ];
+                $errors[] = ['row' => $lineNumber, 'message' => implode('; ', $validator->errors()->all())];
                 continue;
             }
 
@@ -276,8 +288,6 @@ class RestoController extends Controller
             }
         }
 
-        fclose($handle);
-
         $failed = $totalData - $insertedCount - $updatedCount;
 
         return $this->successResponse([
@@ -287,6 +297,339 @@ class RestoController extends Controller
             'failed'   => $failed,
             'errors'   => $errors,
         ], "Import selesai. {$insertedCount} ditambahkan, {$updatedCount} diperbarui, {$failed} gagal.");
+    }
+
+    private function parseXlsx(string $path): array
+    {
+        $spreadsheet = IOFactory::load($path);
+        $sheet       = $spreadsheet->getActiveSheet();
+        $rows        = [];
+        $headerFound = false;
+
+        foreach ($sheet->getRowIterator() as $rowObj) {
+            $cellIter = $rowObj->getCellIterator();
+            $cellIter->setIterateOnlyExistingCells(false);
+
+            $cells = [];
+            foreach ($cellIter as $cell) {
+                $cells[] = $this->xlsxCellToString($cell);
+            }
+
+            $cells     = array_slice($cells, 0, 12);
+            $firstCell = trim($cells[0] ?? '');
+
+            if (!$headerFound) {
+                if (strtolower($firstCell) === 'nama_resto') {
+                    $headerFound = true;
+                    $rows[]      = $cells;
+                }
+                continue;
+            }
+
+            $rows[] = $cells;
+        }
+
+        return $rows;
+    }
+
+    private function parseCsv(string $path): array
+    {
+        $rows   = [];
+        $handle = fopen($path, 'r');
+
+        $bom = fread($handle, 3);
+        if ($bom !== "\xEF\xBB\xBF") {
+            rewind($handle);
+        }
+
+        while (($row = fgetcsv($handle)) !== false) {
+            $rows[] = $row;
+        }
+        fclose($handle);
+        return $rows;
+    }
+
+    private function xlsxCellToString(\PhpOffice\PhpSpreadsheet\Cell\Cell $cell): string
+    {
+        $value = $cell->getValue();
+
+        if ($value === null) return '';
+        if (is_bool($value)) return $value ? '1' : '0';
+        if (is_int($value)) return (string) $value;
+        if (is_float($value)) {
+            return fmod($value, 1.0) === 0.0
+                ? sprintf('%.0f', $value)
+                : (string) $value;
+        }
+        return trim((string) $value);
+    }
+
+    private function buildDataSheet(Worksheet $sheet): void
+    {
+        $sheet->setTitle('Data Resto');
+
+        $cols = [
+            'A' => ['nama_resto',       28],
+            'B' => ['nama_investor',    26],
+            'C' => ['nama_perusahaan',  26],
+            'D' => ['nama_brand',       20],
+            'E' => ['nama_pic',         26],
+            'F' => ['area',             18],
+            'G' => ['kota',             18],
+            'H' => ['alamat',           35],
+            'I' => ['no_telp',          18],
+            'J' => ['tgl_aktif',        16],
+            'K' => ['keterangan',       25],
+            'L' => ['status',           10],
+        ];
+
+        $lastCol = 'L';
+
+        // Row 1 — Title
+        $sheet->mergeCells("A1:{$lastCol}1");
+        $sheet->setCellValue('A1', 'TEMPLATE IMPORT DATA RESTO');
+        $sheet->getStyle('A1')->applyFromArray([
+            'font'      => ['bold' => true, 'size' => 14, 'color' => ['argb' => 'FFFFFFFF']],
+            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF1565C0']],
+            'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
+        ]);
+        $sheet->getRowDimension(1)->setRowHeight(36);
+
+        // Row 2 — Subtitle
+        $sheet->mergeCells("A2:{$lastCol}2");
+        $sheet->setCellValue('A2', 'Isi data resto di bawah ini. Hapus baris [CONTOH] sebelum import. Lihat sheet "Petunjuk Pengisian" untuk panduan lengkap.');
+        $sheet->getStyle('A2')->applyFromArray([
+            'font'      => ['italic' => true, 'size' => 9, 'color' => ['argb' => 'FF37474F']],
+            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFE3F2FD']],
+            'alignment' => ['horizontal' => Alignment::HORIZONTAL_LEFT, 'vertical' => Alignment::VERTICAL_CENTER, 'wrapText' => true],
+        ]);
+        $sheet->getRowDimension(2)->setRowHeight(28);
+
+        // Row 3 — Spacer
+        $sheet->getRowDimension(3)->setRowHeight(8);
+
+        // Row 4 — Column headers
+        foreach ($cols as $col => [$name, $width]) {
+            $sheet->setCellValue("{$col}4", $name);
+            $sheet->getColumnDimension($col)->setWidth($width);
+        }
+        $sheet->getStyle("A4:{$lastCol}4")->applyFromArray([
+            'font'      => ['bold' => true, 'size' => 10, 'color' => ['argb' => 'FFFFFFFF']],
+            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF1976D2']],
+            'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
+            'borders'   => ['allBorders' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FF0D47A1']]],
+        ]);
+        $sheet->getRowDimension(4)->setRowHeight(24);
+
+        // Row 5 — Example row
+        $example = [
+            'A' => '[CONTOH] Resto Contoh',
+            'B' => 'Nama Investor',
+            'C' => 'Nama Perusahaan',
+            'D' => 'Nama Brand',
+            'E' => 'Nama Karyawan PIC',
+            'F' => 'Jakarta Pusat',
+            'G' => 'Jakarta',
+            'H' => 'Jl. Contoh No. 1',
+            'I' => '02112345678',
+            'J' => '01-01-2026',
+            'K' => 'Catatan opsional',
+            'L' => '1',
+        ];
+        // Set text format for numeric-sensitive columns BEFORE writing values to prevent Excel auto-conversion
+        $sheet->getStyle('I5')->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
+        $sheet->getStyle('J5')->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
+
+        foreach ($example as $col => $val) {
+            $sheet->getCell("{$col}5")->setValueExplicit($val, DataType::TYPE_STRING);
+        }
+        $sheet->getStyle("A5:{$lastCol}5")->applyFromArray([
+            'font'      => ['italic' => true, 'size' => 9, 'color' => ['argb' => 'FFE65100']],
+            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFFFF9C4']],
+            'alignment' => ['vertical' => Alignment::VERTICAL_CENTER],
+            'borders'   => ['allBorders' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FFFFECB3']]],
+        ]);
+        $sheet->getRowDimension(5)->setRowHeight(20);
+
+        // Rows 6–55 — Empty data rows
+        for ($row = 6; $row <= 55; $row++) {
+            $bg = $row % 2 === 0 ? 'FFF5F5F5' : 'FFFFFFFF';
+            $sheet->getStyle("A{$row}:{$lastCol}{$row}")->applyFromArray([
+                'fill'    => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => $bg]],
+                'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_HAIR, 'color' => ['argb' => 'FFE0E0E0']]],
+            ]);
+            // Format no_telp & tgl_aktif as text to prevent auto-conversion
+            $sheet->getStyle("I{$row}")->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
+            $sheet->getStyle("J{$row}")->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
+            $sheet->getRowDimension($row)->setRowHeight(18);
+        }
+
+        $sheet->freezePane('A5');
+        $sheet->setAutoFilter("A4:{$lastCol}4");
+    }
+
+    private function buildInstructionSheet(Worksheet $sheet): void
+    {
+        $sheet->setTitle('Petunjuk Pengisian');
+        $sheet->getColumnDimension('A')->setWidth(22);
+        $sheet->getColumnDimension('B')->setWidth(55);
+        $sheet->getColumnDimension('C')->setWidth(14);
+        $sheet->getColumnDimension('D')->setWidth(42);
+
+        $row = 1;
+
+        // Title
+        $sheet->mergeCells("A{$row}:D{$row}");
+        $sheet->setCellValue("A{$row}", 'PETUNJUK PENGISIAN — TEMPLATE IMPORT DATA RESTO');
+        $sheet->getStyle("A{$row}")->applyFromArray([
+            'font'      => ['bold' => true, 'size' => 13, 'color' => ['argb' => 'FFFFFFFF']],
+            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF1565C0']],
+            'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
+        ]);
+        $sheet->getRowDimension($row)->setRowHeight(34);
+        $row += 2;
+
+        // ─── Section: Cara Pengisian ───────────────────────────────────────────
+        $sheet->mergeCells("A{$row}:D{$row}");
+        $sheet->setCellValue("A{$row}", '  CARA PENGISIAN');
+        $sheet->getStyle("A{$row}")->applyFromArray([
+            'font'      => ['bold' => true, 'size' => 10, 'color' => ['argb' => 'FFFFFFFF']],
+            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF1976D2']],
+            'alignment' => ['vertical' => Alignment::VERTICAL_CENTER],
+        ]);
+        $sheet->getRowDimension($row)->setRowHeight(22);
+        $row++;
+
+        $steps = [
+            '1. Jangan ubah nama atau urutan kolom pada baris header (berwarna biru).',
+            '2. Hapus baris [CONTOH] sebelum melakukan import data.',
+            '3. Isi data mulai dari baris kosong di bawah baris [CONTOH].',
+            '4. Kolom nama_investor, nama_perusahaan, nama_brand, nama_pic HARUS persis sama dengan data yang ada di sistem (case-sensitive).',
+            '5. Kolom tgl_aktif gunakan format DD-MM-YYYY. Contoh: 15-01-2026.',
+            '6. Kolom no_telp — format sel Excel harus TEXT agar angka panjang tidak berubah ke notasi ilmiah.',
+            '7. Kolom opsional dapat dikosongkan atau diisi tanda \'-\' (strip) — sistem akan memperlakukan keduanya sebagai tidak ada nilai.',
+            '8. Maksimal 500 baris data per file.',
+            '9. Simpan file sebagai .xlsx atau .csv sebelum diupload ke sistem.',
+        ];
+
+        foreach ($steps as $i => $step) {
+            $sheet->mergeCells("A{$row}:D{$row}");
+            $sheet->setCellValue("A{$row}", "  {$step}");
+            $bg = $i % 2 === 0 ? 'FFFFFFFF' : 'FFF8F9FA';
+            $sheet->getStyle("A{$row}")->applyFromArray([
+                'font'      => ['size' => 9],
+                'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => $bg]],
+                'alignment' => ['vertical' => Alignment::VERTICAL_CENTER, 'wrapText' => true],
+                'borders'   => ['bottom' => ['borderStyle' => Border::BORDER_HAIR, 'color' => ['argb' => 'FFE0E0E0']]],
+            ]);
+            $sheet->getRowDimension($row)->setRowHeight(20);
+            $row++;
+        }
+        $row++;
+
+        // ─── Section: Keterangan Kolom ────────────────────────────────────────
+        $sheet->mergeCells("A{$row}:D{$row}");
+        $sheet->setCellValue("A{$row}", '  KETERANGAN KOLOM');
+        $sheet->getStyle("A{$row}")->applyFromArray([
+            'font'      => ['bold' => true, 'size' => 10, 'color' => ['argb' => 'FFFFFFFF']],
+            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF1976D2']],
+            'alignment' => ['vertical' => Alignment::VERTICAL_CENTER],
+        ]);
+        $sheet->getRowDimension($row)->setRowHeight(22);
+        $row++;
+
+        foreach (['A' => 'Kolom', 'B' => 'Keterangan', 'C' => 'Wajib', 'D' => 'Format / Contoh'] as $col => $label) {
+            $sheet->setCellValue("{$col}{$row}", $label);
+        }
+        $sheet->getStyle("A{$row}:D{$row}")->applyFromArray([
+            'font'      => ['bold' => true, 'size' => 9, 'color' => ['argb' => 'FFFFFFFF']],
+            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF42A5F5']],
+            'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
+            'borders'   => ['allBorders' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FF1976D2']]],
+        ]);
+        $sheet->getRowDimension($row)->setRowHeight(20);
+        $row++;
+
+        $colInfos = [
+            ['nama_resto',       'Nama lengkap restoran',                         'Ya',       'Teks, maks 150 karakter. Contoh: Resto Maju Jaya'],
+            ['nama_investor',    'Nama investor pemilik resto',                   'Opsional', 'Harus SAMA PERSIS dengan nama investor di sistem'],
+            ['nama_perusahaan',  'Nama atau singkatan perusahaan pengelola',      'Opsional', 'Boleh nama lengkap atau singkatan. Contoh: PT Maju Jaya'],
+            ['nama_brand',       'Nama brand / merek resto',                      'Opsional', 'Harus SAMA PERSIS dengan nama brand di sistem'],
+            ['nama_pic',         'Nama karyawan sebagai PIC (penanggung jawab)',  'Opsional', 'Harus SAMA PERSIS dengan nama karyawan di sistem'],
+            ['area',             'Area wilayah lokasi resto',                     'Opsional', 'Teks, maks 100 karakter. Contoh: Jakarta Pusat'],
+            ['kota',             'Nama kota lokasi resto',                        'Opsional', 'Teks, maks 100 karakter. Contoh: Jakarta'],
+            ['alamat',           'Alamat lengkap resto',                          'Opsional', 'Teks bebas. Contoh: Jl. Sudirman No. 1, Jakarta'],
+            ['no_telp',          'Nomor telepon resto',                           'Opsional', 'Format sel harus TEXT. Contoh: 02112345678'],
+            ['tgl_aktif',        'Tanggal mulai aktif beroperasi',                'Opsional', 'Format: DD-MM-YYYY. Contoh: 15-01-2026'],
+            ['keterangan',       'Catatan atau keterangan tambahan',              'Opsional', 'Teks bebas'],
+            ['status',           'Status aktif resto',                            'Opsional', '1 = Aktif (default), 0 = Tidak Aktif'],
+        ];
+
+        foreach ($colInfos as $i => [$colName, $desc, $req, $fmt]) {
+            foreach (['A' => $colName, 'B' => $desc, 'C' => $req, 'D' => $fmt] as $cellCol => $val) {
+                $sheet->setCellValue("{$cellCol}{$row}", $val);
+            }
+            $bg = $i % 2 === 0 ? 'FFFFFFFF' : 'FFF5F5F5';
+            $sheet->getStyle("A{$row}:D{$row}")->applyFromArray([
+                'font'      => ['size' => 9],
+                'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => $bg]],
+                'borders'   => ['allBorders' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FFE0E0E0']]],
+                'alignment' => ['vertical' => Alignment::VERTICAL_CENTER, 'wrapText' => true],
+            ]);
+            $sheet->getRowDimension($row)->setRowHeight(18);
+            $row++;
+        }
+        $row++;
+
+        // ─── Section: Catatan Penting ─────────────────────────────────────────
+        $sheet->mergeCells("A{$row}:D{$row}");
+        $sheet->setCellValue("A{$row}", '  CATATAN PENTING');
+        $sheet->getStyle("A{$row}")->applyFromArray([
+            'font'      => ['bold' => true, 'size' => 10, 'color' => ['argb' => 'FFFFFFFF']],
+            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFC62828']],
+            'alignment' => ['vertical' => Alignment::VERTICAL_CENTER],
+        ]);
+        $sheet->getRowDimension($row)->setRowHeight(22);
+        $row++;
+
+        $notes = [
+            '• Jika nama_resto SUDAH ADA di sistem, data akan DIPERBARUI (update).',
+            '• Jika nama_resto BELUM ADA di sistem, data baru akan DITAMBAHKAN (insert).',
+            '• Kolom referensi (nama_investor, nama_perusahaan, nama_brand, nama_pic) yang tidak ditemukan di sistem akan menyebabkan baris tersebut GAGAL diimport.',
+            '• Kolom referensi yang dikosongkan akan diabaikan (tidak wajib diisi).',
+        ];
+
+        foreach ($notes as $note) {
+            $sheet->mergeCells("A{$row}:D{$row}");
+            $sheet->setCellValue("A{$row}", "  {$note}");
+            $sheet->getStyle("A{$row}")->applyFromArray([
+                'font'      => ['size' => 9, 'color' => ['argb' => 'FFC62828']],
+                'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFFFEBEE']],
+                'alignment' => ['vertical' => Alignment::VERTICAL_CENTER, 'wrapText' => true],
+                'borders'   => ['allBorders' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FFFFCDD2']]],
+            ]);
+            $sheet->getRowDimension($row)->setRowHeight(18);
+            $row++;
+        }
+    }
+
+    private function importValue(mixed $val): ?string
+    {
+        $s = trim((string) $val);
+        return ($s === '' || $s === '-') ? null : $s;
+    }
+
+    private function importDate(mixed $val): ?string
+    {
+        $s = trim((string) $val);
+        if ($s === '' || $s === '-') return null;
+
+        // DD-MM-YYYY → Y-m-d
+        if (preg_match('/^(\d{1,2})-(\d{1,2})-(\d{4})$/', $s, $m)) {
+            return sprintf('%04d-%02d-%02d', (int) $m[3], (int) $m[2], (int) $m[1]);
+        }
+
+        return $s; // pass through, let validator catch invalid formats
     }
 
     private function forbidReadOnlyMutation(): void

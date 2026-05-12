@@ -176,13 +176,13 @@ class InvestorController extends Controller
 
             $data = [
                 'nama_investor'   => trim((string) ($row[0] ?? '')),
-                'ktp'             => trim((string) ($row[1] ?? '')) ?: null,
-                'npwp'            => trim((string) ($row[2] ?? '')) ?: null,
-                'no_hp'           => trim((string) ($row[3] ?? '')) ?: null,
-                'pengelola'       => trim((string) ($row[4] ?? '')) ?: null,
-                'no_hp_pengelola' => trim((string) ($row[5] ?? '')) ?: null,
-                'alamat'          => trim((string) ($row[6] ?? '')) ?: null,
-                'keterangan'      => trim((string) ($row[7] ?? '')) ?: null,
+                'ktp'             => $this->importValue($row[1] ?? ''),
+                'npwp'            => $this->importValue($row[2] ?? ''),
+                'no_hp'           => $this->importValue($row[3] ?? ''),
+                'pengelola'       => $this->importValue($row[4] ?? ''),
+                'no_hp_pengelola' => $this->importValue($row[5] ?? ''),
+                'alamat'          => $this->importValue($row[6] ?? ''),
+                'keterangan'      => $this->importValue($row[7] ?? ''),
                 'status'          => isset($row[8]) && trim((string) $row[8]) !== '' ? (bool) (int) $row[8] : true,
             ];
 
@@ -427,9 +427,10 @@ class InvestorController extends Controller
             '1. Jangan ubah nama atau urutan kolom pada baris header (berwarna biru).',
             '2. Hapus baris [CONTOH] sebelum melakukan import data.',
             '3. Isi data mulai dari baris kosong di bawah baris [CONTOH].',
-            '4. Maksimal 500 baris data per file.',
-            '5. Kolom KTP, No. HP, dan No. HP Pengelola — format sel Excel harus TEXT agar angka panjang tidak berubah ke notasi ilmiah (misal: 3.27E+15).',
-            '6. Simpan file sebagai .xlsx atau .csv sebelum diupload ke sistem.',
+            '4. Kolom opsional dapat dikosongkan atau diisi tanda \'-\' (strip) — sistem akan memperlakukan keduanya sebagai tidak ada nilai.',
+            '5. Maksimal 500 baris data per file.',
+            '6. Kolom KTP, No. HP, dan No. HP Pengelola — format sel Excel harus TEXT agar angka panjang tidak berubah ke notasi ilmiah (misal: 3.27E+15).',
+            '7. Simpan file sebagai .xlsx atau .csv sebelum diupload ke sistem.',
         ];
 
         foreach ($steps as $i => $step) {
@@ -529,6 +530,12 @@ class InvestorController extends Controller
             $sheet->getRowDimension($row)->setRowHeight(18);
             $row++;
         }
+    }
+
+    private function importValue(mixed $val): ?string
+    {
+        $s = trim((string) $val);
+        return ($s === '' || $s === '-') ? null : $s;
     }
 
     private function forbidReadOnlyMutation(): void
