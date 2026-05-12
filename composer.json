@@ -12,6 +12,7 @@
         "laravel/framework": "^12.0",
         "laravel/sanctum": "*",
         "laravel/tinker": "^3.0",
+        "phpoffice/phpspreadsheet": "^5.7",
         "picqer/php-barcode-generator": "^3.2",
         "spatie/laravel-permission": "*"
     },
