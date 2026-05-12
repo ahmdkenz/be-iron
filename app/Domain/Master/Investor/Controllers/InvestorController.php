@@ -24,7 +24,6 @@ use PhpOffice\PhpSpreadsheet\Style\NumberFormat;
 use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx as XlsxWriter;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
-use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class InvestorController extends Controller
 {
@@ -75,39 +74,119 @@ class InvestorController extends Controller
         return $this->successResponse(null, 'Investor berhasil dihapus');
     }
 
-    public function export(Request $request): StreamedResponse
+    public function export(Request $request): BinaryFileResponse
     {
         $filters   = $request->only(['search', 'status']);
         $investors = $this->service->getAllForExport($filters);
 
-        $headers = [
-            'Nama Investor', 'KTP', 'NPWP', 'No. HP',
-            'Nama Pengelola', 'No. HP Pengelola', 'Alamat', 'Keterangan', 'Status',
+        $spreadsheet = new Spreadsheet();
+        $sheet       = $spreadsheet->getActiveSheet();
+        $sheet->setTitle('Data Investor');
+
+        $cols = [
+            'A' => ['Nama Investor',       35],
+            'B' => ['No. KTP',             22],
+            'C' => ['NPWP',                24],
+            'D' => ['No. HP',              18],
+            'E' => ['Nama Pengelola',       28],
+            'F' => ['No. HP Pengelola',     20],
+            'G' => ['Alamat',              40],
+            'H' => ['Keterangan',          28],
+            'I' => ['Status',              14],
         ];
+        $lastCol = 'I';
 
-        return response()->streamDownload(function () use ($investors, $headers) {
-            $handle = fopen('php://output', 'w');
-            fprintf($handle, chr(0xEF) . chr(0xBB) . chr(0xBF));
-            fputcsv($handle, $headers);
+        // Row 1 — Title
+        $sheet->mergeCells("A1:{$lastCol}1");
+        $sheet->setCellValue('A1', 'DATA INVESTOR');
+        $sheet->getStyle('A1')->applyFromArray([
+            'font'      => ['bold' => true, 'size' => 14, 'color' => ['argb' => 'FFFFFFFF']],
+            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF1B5E20']],
+            'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
+        ]);
+        $sheet->getRowDimension(1)->setRowHeight(36);
 
-            foreach ($investors as $inv) {
-                fputcsv($handle, [
-                    $inv->nama_investor,
-                    $inv->ktp,
-                    $inv->npwp,
-                    $inv->no_hp,
-                    $inv->pengelola,
-                    $inv->no_hp_pengelola,
-                    $inv->alamat,
-                    $inv->keterangan,
-                    $inv->status ? 1 : 0,
-                ]);
+        // Row 2 — Subtitle (date + total)
+        $sheet->mergeCells("A2:{$lastCol}2");
+        $sheet->setCellValue('A2', 'Diekspor pada: ' . now()->format('d-m-Y H:i') . '   |   Total data: ' . $investors->count() . ' investor');
+        $sheet->getStyle('A2')->applyFromArray([
+            'font'      => ['italic' => true, 'size' => 9, 'color' => ['argb' => 'FF33691E']],
+            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFF1F8E9']],
+            'alignment' => ['horizontal' => Alignment::HORIZONTAL_LEFT, 'vertical' => Alignment::VERTICAL_CENTER],
+        ]);
+        $sheet->getRowDimension(2)->setRowHeight(22);
+
+        // Row 3 — Spacer
+        $sheet->getRowDimension(3)->setRowHeight(6);
+
+        // Row 4 — Column headers
+        foreach ($cols as $col => [$label, $width]) {
+            $sheet->setCellValue("{$col}4", $label);
+            $sheet->getColumnDimension($col)->setWidth($width);
+        }
+        $sheet->getStyle("A4:{$lastCol}4")->applyFromArray([
+            'font'      => ['bold' => true, 'size' => 10, 'color' => ['argb' => 'FFFFFFFF']],
+            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF2E7D32']],
+            'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
+            'borders'   => ['allBorders' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FF1B5E20']]],
+        ]);
+        $sheet->getRowDimension(4)->setRowHeight(22);
+
+        // Rows 5+ — Data
+        $rowNum = 5;
+        foreach ($investors as $inv) {
+            $bg = $rowNum % 2 === 0 ? 'FFF1F8E9' : 'FFFFFFFF';
+
+            $rowData = [
+                'A' => [$inv->nama_investor,    DataType::TYPE_STRING],
+                'B' => [$inv->ktp ?? '-',        DataType::TYPE_STRING],
+                'C' => [$inv->npwp ?? '-',       DataType::TYPE_STRING],
+                'D' => [$inv->no_hp ?? '-',      DataType::TYPE_STRING],
+                'E' => [$inv->pengelola ?? '-',  DataType::TYPE_STRING],
+                'F' => [$inv->no_hp_pengelola ?? '-', DataType::TYPE_STRING],
+                'G' => [$inv->alamat ?? '-',     DataType::TYPE_STRING],
+                'H' => [$inv->keterangan ?? '-', DataType::TYPE_STRING],
+                'I' => [$inv->status ? 'Aktif' : 'Tidak Aktif', DataType::TYPE_STRING],
+            ];
+
+            foreach ($rowData as $col => [$val, $type]) {
+                $sheet->getCell("{$col}{$rowNum}")->setValueExplicit($val, $type);
             }
 
-            fclose($handle);
-        }, 'investor-' . now()->format('Ymd-His') . '.csv', [
-            'Content-Type' => 'text/csv; charset=UTF-8',
-        ]);
+            $sheet->getStyle("A{$rowNum}:{$lastCol}{$rowNum}")->applyFromArray([
+                'fill'    => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => $bg]],
+                'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_HAIR, 'color' => ['argb' => 'FFCFD8DC']]],
+                'alignment' => ['vertical' => Alignment::VERTICAL_CENTER, 'wrapText' => false],
+            ]);
+
+            // Status column: color based on value
+            $statusColor = $inv->status ? 'FF2E7D32' : 'FFAF2018';
+            $sheet->getStyle("I{$rowNum}")->getFont()->setColor(
+                new \PhpOffice\PhpSpreadsheet\Style\Color($statusColor)
+            );
+            $sheet->getStyle("I{$rowNum}")->getFont()->setBold(true);
+
+            $sheet->getRowDimension($rowNum)->setRowHeight(18);
+            $rowNum++;
+        }
+
+        // Outer border around data area
+        if ($rowNum > 5) {
+            $sheet->getStyle("A4:{$lastCol}" . ($rowNum - 1))->applyFromArray([
+                'borders' => ['outline' => ['borderStyle' => Border::BORDER_MEDIUM, 'color' => ['argb' => 'FF2E7D32']]],
+            ]);
+        }
+
+        $sheet->freezePane('A5');
+
+        $temp = tempnam(sys_get_temp_dir(), 'export_investor_') . '.xlsx';
+        (new XlsxWriter($spreadsheet))->save($temp);
+
+        return response()
+            ->download($temp, 'investor-' . now()->format('Ymd-His') . '.xlsx', [
+                'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            ])
+            ->deleteFileAfterSend(true);
     }
 
     public function importTemplate(): BinaryFileResponse

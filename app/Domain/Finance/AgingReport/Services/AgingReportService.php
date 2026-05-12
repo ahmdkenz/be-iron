@@ -14,12 +14,15 @@ class AgingReportService
             ? Carbon::parse($filters['as_of_date'])->startOfDay()
             : Carbon::today();
 
+        $segmentTypes = $this->resolveSegmentTypes($filters['segment'] ?? null);
+
         $regularInvoices = Invoice::query()
             ->with(['klienAr.perusahaan'])
             ->where('is_opening_balance', false)
             ->whereNotIn('status', ['LUNAS'])
             ->when($filters['klien_ar_id'] ?? null, fn($q, $v) => $q->where('klien_ar_id', $v))
             ->when($filters['perusahaan_id'] ?? null, fn($q, $v) => $q->where('perusahaan_id', $v))
+            ->when($segmentTypes, fn($q) => $q->whereHas('klienAr', fn($q) => $q->whereIn('tipe_klien', $segmentTypes)))
             ->get();
 
         $obInvoices = Invoice::query()
@@ -29,6 +32,7 @@ class AgingReportService
             ->whereNotIn('status', ['LUNAS'])
             ->when($filters['klien_ar_id'] ?? null, fn($q, $v) => $q->where('klien_ar_id', $v))
             ->when($filters['perusahaan_id'] ?? null, fn($q, $v) => $q->where('perusahaan_id', $v))
+            ->when($segmentTypes, fn($q) => $q->whereHas('klienAr', fn($q) => $q->whereIn('tipe_klien', $segmentTypes)))
             ->get();
 
         $lines = collect();
@@ -115,5 +119,14 @@ class AgingReportService
             'summary'    => $summary,
             'rows'       => $rows,
         ];
+    }
+
+    private function resolveSegmentTypes(?string $segment): ?array
+    {
+        return match(strtoupper($segment ?? '')) {
+            'B2B'   => ['PT', 'STOKIS'],
+            'B2C'   => ['RESTO', 'MITRA'],
+            default => null,
+        };
     }
 }

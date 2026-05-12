@@ -18,13 +18,16 @@ class RekapPembayaranService
             ? Carbon::parse($filters['tanggal_sampai'])->endOfDay()
             : Carbon::now()->endOfMonth();
 
+        $segmentTypes = $this->resolveSegmentTypes($filters['segment'] ?? null);
+
         $query = PembayaranAr::query()
             ->join('tb_invoice', 'tb_pembayaran_ar.invoice_id', '=', 'tb_invoice.id')
             ->join('tb_klien_ar', 'tb_invoice.klien_ar_id', '=', 'tb_klien_ar.id')
             ->leftJoin('tb_perusahaan', 'tb_invoice.perusahaan_id', '=', 'tb_perusahaan.id')
             ->whereBetween('tb_pembayaran_ar.tanggal_pembayaran', [$from->toDateString(), $to->toDateString()])
             ->when($filters['klien_ar_id'] ?? null, fn($q, $v) => $q->where('tb_invoice.klien_ar_id', $v))
-            ->when($filters['metode_pembayaran'] ?? null, fn($q, $v) => $q->where('tb_pembayaran_ar.metode_pembayaran', $v));
+            ->when($filters['metode_pembayaran'] ?? null, fn($q, $v) => $q->where('tb_pembayaran_ar.metode_pembayaran', $v))
+            ->when($segmentTypes, fn($q) => $q->whereIn('tb_klien_ar.tipe_klien', $segmentTypes));
 
         // Rekap per metode
         $perMetode = (clone $query)
@@ -77,5 +80,14 @@ class RekapPembayaranService
             'summary'         => $summary,
             'rows'            => $rows,
         ];
+    }
+
+    private function resolveSegmentTypes(?string $segment): ?array
+    {
+        return match(strtoupper($segment ?? '')) {
+            'B2B'   => ['PT', 'STOKIS'],
+            'B2C'   => ['RESTO', 'MITRA'],
+            default => null,
+        };
     }
 }

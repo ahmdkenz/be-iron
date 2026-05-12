@@ -150,6 +150,18 @@ class InvoiceRepository
             )
             ->when($filters['periode_tahun'] ?? null, fn($q, $v) =>
                 $q->whereYear('tanggal_invoice', $v)
+            )
+            ->when($filters['segment'] ?? null, fn($q, $v) =>
+                $q->whereHas('klienAr', fn($q) => $q->whereIn('tipe_klien', $this->resolveSegmentTypes($v)))
             );
+    }
+
+    private function resolveSegmentTypes(string $segment): array
+    {
+        return match(strtoupper($segment)) {
+            'B2B'   => ['PT', 'STOKIS'],
+            'B2C'   => ['RESTO', 'MITRA'],
+            default => ['PT', 'STOKIS', 'RESTO', 'MITRA'],
+        };
     }
 }

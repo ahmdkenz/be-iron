@@ -21,7 +21,8 @@ class MutasiPiutangService
             ? Carbon::parse($filters['periode_akhir'])->endOfDay()
             : Carbon::now()->endOfMonth();
 
-        $klienFilter = $filters['klien_ar_id'] ?? null;
+        $klienFilter  = $filters['klien_ar_id'] ?? null;
+        $segmentTypes = $this->resolveSegmentTypes($filters['segment'] ?? null);
 
         // Invoice masuk dalam periode (per klien)
         $invoiceMasukQuery = Invoice::query()
@@ -32,15 +33,18 @@ class MutasiPiutangService
                 ->orWhere(fn($q2) => $q2->where('is_opening_balance', true)->where('approval_status', 'APPROVED'))
             )
             ->when($klienFilter, fn($q) => $q->where('klien_ar_id', $klienFilter))
+            ->when($segmentTypes, fn($q) => $q->whereHas('klienAr', fn($q) => $q->whereIn('tipe_klien', $segmentTypes)))
             ->groupBy('klien_ar_id')
             ->pluck('invoice_masuk', 'klien_ar_id');
 
         // Pembayaran dalam periode (per klien via join invoice)
         $pembayaranQuery = PembayaranAr::query()
             ->join('tb_invoice', 'tb_pembayaran_ar.invoice_id', '=', 'tb_invoice.id')
+            ->join('tb_klien_ar', 'tb_invoice.klien_ar_id', '=', 'tb_klien_ar.id')
             ->select('tb_invoice.klien_ar_id', DB::raw('SUM(tb_pembayaran_ar.jumlah_pembayaran) as pembayaran'))
             ->whereBetween('tb_pembayaran_ar.tanggal_pembayaran', [$from->toDateString(), $to->toDateString()])
             ->when($klienFilter, fn($q) => $q->where('tb_invoice.klien_ar_id', $klienFilter))
+            ->when($segmentTypes, fn($q) => $q->whereIn('tb_klien_ar.tipe_klien', $segmentTypes))
             ->groupBy('tb_invoice.klien_ar_id')
             ->pluck('pembayaran', 'klien_ar_id');
 
@@ -53,15 +57,18 @@ class MutasiPiutangService
                 ->orWhere(fn($q2) => $q2->where('is_opening_balance', true)->where('approval_status', 'APPROVED'))
             )
             ->when($klienFilter, fn($q) => $q->where('klien_ar_id', $klienFilter))
+            ->when($segmentTypes, fn($q) => $q->whereHas('klienAr', fn($q) => $q->whereIn('tipe_klien', $segmentTypes)))
             ->groupBy('klien_ar_id')
             ->pluck('total_tagihan', 'klien_ar_id');
 
         // Total pembayaran sebelum periode (saldo awal part 2)
         $pembayaranSebelumQuery = PembayaranAr::query()
             ->join('tb_invoice', 'tb_pembayaran_ar.invoice_id', '=', 'tb_invoice.id')
+            ->join('tb_klien_ar', 'tb_invoice.klien_ar_id', '=', 'tb_klien_ar.id')
             ->select('tb_invoice.klien_ar_id', DB::raw('SUM(tb_pembayaran_ar.jumlah_pembayaran) as pembayaran'))
             ->where('tb_pembayaran_ar.tanggal_pembayaran', '<', $from->toDateString())
             ->when($klienFilter, fn($q) => $q->where('tb_invoice.klien_ar_id', $klienFilter))
+            ->when($segmentTypes, fn($q) => $q->whereIn('tb_klien_ar.tipe_klien', $segmentTypes))
             ->groupBy('tb_invoice.klien_ar_id')
             ->pluck('pembayaran', 'klien_ar_id');
 
@@ -126,5 +133,14 @@ class MutasiPiutangService
             'summary'       => $summary,
             'rows'          => $rows,
         ];
+    }
+
+    private function resolveSegmentTypes(?string $segment): ?array
+    {
+        return match(strtoupper($segment ?? '')) {
+            'B2B'   => ['PT', 'STOKIS'],
+            'B2C'   => ['RESTO', 'MITRA'],
+            default => null,
+        };
     }
 }

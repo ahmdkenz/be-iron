@@ -12,6 +12,8 @@ class JatuhTempoService
         $today = Carbon::today();
         $days  = (int) ($filters['days'] ?? 30);
 
+        $segmentTypes = $this->resolveSegmentTypes($filters['segment'] ?? null);
+
         $query = Invoice::query()
             ->with(['klienAr.perusahaan', 'klienAr.karyawanAr'])
             ->whereIn('status', ['TERKIRIM', 'SEBAGIAN'])
@@ -21,7 +23,8 @@ class JatuhTempoService
                 ->orWhere(fn($q2) => $q2->where('is_opening_balance', true)->where('approval_status', 'APPROVED'))
             )
             ->when($filters['klien_ar_id'] ?? null, fn($q, $v) => $q->where('klien_ar_id', $v))
-            ->when($filters['karyawan_ar_id'] ?? null, fn($q, $v) => $q->whereHas('klienAr', fn($kq) => $kq->where('karyawan_ar_id', $v)));
+            ->when($filters['karyawan_ar_id'] ?? null, fn($q, $v) => $q->whereHas('klienAr', fn($kq) => $kq->where('karyawan_ar_id', $v)))
+            ->when($segmentTypes, fn($q) => $q->whereHas('klienAr', fn($q) => $q->whereIn('tipe_klien', $segmentTypes)));
 
         // Filter by rentang jatuh tempo
         if (($filters['filter_type'] ?? 'upcoming') === 'overdue') {
@@ -74,5 +77,14 @@ class JatuhTempoService
             'summary'    => $summary,
             'rows'       => $rows,
         ];
+    }
+
+    private function resolveSegmentTypes(?string $segment): ?array
+    {
+        return match(strtoupper($segment ?? '')) {
+            'B2B'   => ['PT', 'STOKIS'],
+            'B2C'   => ['RESTO', 'MITRA'],
+            default => null,
+        };
     }
 }

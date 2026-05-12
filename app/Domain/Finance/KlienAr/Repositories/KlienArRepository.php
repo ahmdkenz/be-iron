@@ -17,6 +17,7 @@ class KlienArRepository
             ->when($filters['perusahaan_id'] ?? null, fn($q, $v) => $q->where('perusahaan_id', $v))
             ->when($filters['karyawan_ar_id'] ?? null, fn($q, $v) => $q->where('karyawan_ar_id', $v))
             ->when(isset($filters['status']), fn($q) => $q->where('status', $filters['status']))
+            ->when($filters['segment'] ?? null, fn($q, $v) => $q->whereIn('tipe_klien', $this->resolveSegmentTypes($v)))
             ->latest()
             ->paginate($perPage);
     }
@@ -26,9 +27,19 @@ class KlienArRepository
         return KlienAr::with(['perusahaan', 'karyawanAr', 'resto.investor'])
             ->when($filters['perusahaan_id'] ?? null, fn($q, $v) => $q->where('perusahaan_id', $v))
             ->when($filters['karyawan_ar_id'] ?? null, fn($q, $v) => $q->where('karyawan_ar_id', $v))
+            ->when($filters['segment'] ?? null, fn($q, $v) => $q->whereIn('tipe_klien', $this->resolveSegmentTypes($v)))
             ->where('status', true)
             ->orderBy('nama_klien')
             ->get();
+    }
+
+    private function resolveSegmentTypes(string $segment): array
+    {
+        return match(strtoupper($segment)) {
+            'B2B'   => ['PT', 'STOKIS'],
+            'B2C'   => ['RESTO', 'MITRA'],
+            default => ['PT', 'STOKIS', 'RESTO', 'MITRA'],
+        };
     }
 
     public function findById(int $id): ?KlienAr

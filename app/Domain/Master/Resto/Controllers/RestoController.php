@@ -27,7 +27,6 @@ use PhpOffice\PhpSpreadsheet\Style\NumberFormat;
 use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx as XlsxWriter;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
-use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class RestoController extends Controller
 {
@@ -84,44 +83,137 @@ class RestoController extends Controller
         return $this->successResponse(null, 'Resto berhasil dihapus');
     }
 
-    public function export(Request $request): StreamedResponse
+    public function export(Request $request): BinaryFileResponse
     {
         $filters = $request->only(['search', 'status']);
         $restos  = $this->service->getAllForExport($filters);
 
-        $headers = [
-            'Kode Resto', 'Nama Resto', 'Nama Investor', 'Nama Perusahaan',
-            'Nama Brand', 'PIC', 'Area', 'Kota', 'Alamat',
-            'No. Telp', 'Tanggal Aktif', 'Keterangan', 'Status',
+        $spreadsheet = new Spreadsheet();
+        $sheet       = $spreadsheet->getActiveSheet();
+        $sheet->setTitle('Data Resto');
+
+        $lastCol = 'M';
+        $columns = [
+            'A' => ['Kode Resto',       14],
+            'B' => ['Nama Resto',        28],
+            'C' => ['Nama Investor',     24],
+            'D' => ['Nama Perusahaan',   22],
+            'E' => ['Nama Brand',        18],
+            'F' => ['PIC',               20],
+            'G' => ['Area',              18],
+            'H' => ['Kota',              16],
+            'I' => ['Alamat',            35],
+            'J' => ['No. Telp',          16],
+            'K' => ['Tanggal Aktif',     16],
+            'L' => ['Keterangan',        25],
+            'M' => ['Status',            12],
         ];
 
-        return response()->streamDownload(function () use ($restos, $headers) {
-            $handle = fopen('php://output', 'w');
-            fprintf($handle, chr(0xEF) . chr(0xBB) . chr(0xBF));
-            fputcsv($handle, $headers);
+        // Row 1 — Title
+        $sheet->mergeCells("A1:{$lastCol}1");
+        $sheet->setCellValue('A1', 'DATA RESTO');
+        $sheet->getStyle('A1')->applyFromArray([
+            'font'      => ['bold' => true, 'size' => 14, 'color' => ['argb' => 'FFFFFFFF']],
+            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF1B5E20']],
+            'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
+        ]);
+        $sheet->getRowDimension(1)->setRowHeight(36);
 
-            foreach ($restos as $r) {
-                fputcsv($handle, [
-                    $r->kode_resto,
-                    $r->nama_resto,
-                    $r->investor?->nama_investor,
-                    $r->perusahaan?->nama_perusahaan,
-                    $r->brand?->nama_brand,
-                    $r->pic?->nama_karyawan,
-                    $r->area,
-                    $r->kota,
-                    $r->alamat,
-                    $r->no_telp,
-                    $r->tgl_aktif?->format('Y-m-d'),
-                    $r->keterangan,
-                    $r->status ? 1 : 0,
-                ]);
+        // Row 2 — Subtitle
+        $sheet->mergeCells("A2:{$lastCol}2");
+        $sheet->setCellValue('A2', 'Diekspor pada: ' . now()->format('d-m-Y H:i:s') . ' | Total data: ' . count($restos) . ' resto');
+        $sheet->getStyle('A2')->applyFromArray([
+            'font'      => ['italic' => true, 'size' => 9, 'color' => ['argb' => 'FF1B5E20']],
+            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFF1F8E9']],
+            'alignment' => ['horizontal' => Alignment::HORIZONTAL_LEFT, 'vertical' => Alignment::VERTICAL_CENTER],
+        ]);
+        $sheet->getRowDimension(2)->setRowHeight(20);
+
+        // Row 3 — Spacer
+        $sheet->getRowDimension(3)->setRowHeight(6);
+
+        // Row 4 — Column headers
+        foreach ($columns as $col => [$label, $width]) {
+            $sheet->setCellValue("{$col}4", $label);
+            $sheet->getColumnDimension($col)->setWidth($width);
+        }
+        $sheet->getStyle("A4:{$lastCol}4")->applyFromArray([
+            'font'      => ['bold' => true, 'size' => 10, 'color' => ['argb' => 'FFFFFFFF']],
+            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF2E7D32']],
+            'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
+            'borders'   => ['allBorders' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FF1B5E20']]],
+        ]);
+        $sheet->getRowDimension(4)->setRowHeight(24);
+
+        // Rows 5+ — Data
+        $dataStartRow = 5;
+        $rowNum       = $dataStartRow;
+
+        foreach ($restos as $r) {
+            $bg = ($rowNum % 2 === 0) ? 'FFF1F8E9' : 'FFFFFFFF';
+
+            $tglAktif = $r->tgl_aktif?->format('d-m-Y') ?? '-';
+            $status   = $r->status ? 'Aktif' : 'Tidak Aktif';
+
+            $rowData = [
+                'A' => $r->kode_resto                  ?? '-',
+                'B' => $r->nama_resto                  ?? '-',
+                'C' => $r->investor?->nama_investor     ?? '-',
+                'D' => $r->perusahaan?->nama_perusahaan ?? '-',
+                'E' => $r->brand?->nama_brand           ?? '-',
+                'F' => $r->pic?->nama_karyawan          ?? '-',
+                'G' => $r->area                         ?? '-',
+                'H' => $r->kota                         ?? '-',
+                'I' => $r->alamat                       ?? '-',
+                'J' => $r->no_telp                      ?? '-',
+                'K' => $tglAktif,
+                'L' => $r->keterangan                   ?? '-',
+                'M' => $status,
+            ];
+
+            // Force text format for Kode Resto, No. Telp, and Tanggal Aktif columns
+            foreach (['A', 'J', 'K'] as $textCol) {
+                $sheet->getStyle("{$textCol}{$rowNum}")->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
             }
 
-            fclose($handle);
-        }, 'resto-' . now()->format('Ymd-His') . '.csv', [
-            'Content-Type' => 'text/csv; charset=UTF-8',
-        ]);
+            foreach ($rowData as $col => $val) {
+                $sheet->getCell("{$col}{$rowNum}")->setValueExplicit($val, DataType::TYPE_STRING);
+            }
+
+            $sheet->getStyle("A{$rowNum}:{$lastCol}{$rowNum}")->applyFromArray([
+                'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => $bg]],
+                'borders'   => ['allBorders' => ['borderStyle' => Border::BORDER_HAIR, 'color' => ['argb' => 'FFBDBDBD']]],
+                'alignment' => ['vertical' => Alignment::VERTICAL_CENTER],
+            ]);
+
+            // Color the status cell
+            $statusColor = $r->status ? ['argb' => 'FF1B5E20'] : ['argb' => 'FFB71C1C'];
+            $sheet->getStyle("M{$rowNum}")->applyFromArray([
+                'font'      => ['bold' => true, 'color' => $statusColor],
+                'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER],
+            ]);
+
+            $sheet->getRowDimension($rowNum)->setRowHeight(18);
+            $rowNum++;
+        }
+
+        // Outer border around data area
+        if ($rowNum > $dataStartRow) {
+            $sheet->getStyle("A4:{$lastCol}" . ($rowNum - 1))->applyFromArray([
+                'borders' => ['outline' => ['borderStyle' => Border::BORDER_MEDIUM, 'color' => ['argb' => 'FF2E7D32']]],
+            ]);
+        }
+
+        $sheet->freezePane('A5');
+
+        $temp = tempnam(sys_get_temp_dir(), 'exp_resto_') . '.xlsx';
+        (new XlsxWriter($spreadsheet))->save($temp);
+
+        return response()
+            ->download($temp, 'resto-' . now()->format('Ymd-His') . '.xlsx', [
+                'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            ])
+            ->deleteFileAfterSend(true);
     }
 
     public function importTemplate(): BinaryFileResponse

@@ -20,6 +20,8 @@ class KinerjaArService
             ? Carbon::parse($filters['periode_akhir'])->endOfDay()
             : Carbon::now()->endOfMonth();
 
+        $segmentTypes = $this->resolveSegmentTypes($filters['segment'] ?? null);
+
         // Agregasi invoice per AR officer (via klien_ar.karyawan_ar_id)
         $invoiceStats = Invoice::query()
             ->join('tb_klien_ar', 'tb_invoice.klien_ar_id', '=', 'tb_klien_ar.id')
@@ -38,6 +40,7 @@ class KinerjaArService
                 ->orWhere(fn($q2) => $q2->where('tb_invoice.is_opening_balance', true)->where('tb_invoice.approval_status', 'APPROVED'))
             )
             ->when($filters['karyawan_ar_id'] ?? null, fn($q, $v) => $q->where('tb_klien_ar.karyawan_ar_id', $v))
+            ->when($segmentTypes, fn($q) => $q->whereIn('tb_klien_ar.tipe_klien', $segmentTypes))
             ->groupBy('tb_klien_ar.karyawan_ar_id')
             ->get()
             ->keyBy('karyawan_ar_id');
@@ -100,5 +103,14 @@ class KinerjaArService
             'summary'       => $summary,
             'rows'          => $rows,
         ];
+    }
+
+    private function resolveSegmentTypes(?string $segment): ?array
+    {
+        return match(strtoupper($segment ?? '')) {
+            'B2B'   => ['PT', 'STOKIS'],
+            'B2C'   => ['RESTO', 'MITRA'],
+            default => null,
+        };
     }
 }
