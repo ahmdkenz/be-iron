@@ -49,10 +49,7 @@ class KlienArService
         return $this->repository->create([
             'kode_klien'    => $this->generateKodeKlien($dto->tipe_klien),
             'nama_klien'    => $dto->nama_klien,
-            'alias'         => $dto->alias,
             'tipe_klien'    => $dto->tipe_klien,
-            'tipe_outlet'   => $dto->tipe_outlet,
-            'stokis_area'   => $dto->stokis_area,
             'no_npwp'       => $dto->no_npwp,
             'perusahaan_id' => $perusahaanId,
             'karyawan_ar_id'=> $dto->karyawan_ar_id,
@@ -72,10 +69,7 @@ class KlienArService
             // Keep historical client codes stable for existing records.
             'kode_klien'    => $klien->kode_klien,
             'nama_klien'    => $dto->nama_klien,
-            'alias'         => $dto->alias,
             'tipe_klien'    => $dto->tipe_klien,
-            'tipe_outlet'   => $dto->tipe_outlet,
-            'stokis_area'   => $dto->stokis_area,
             'no_npwp'       => $dto->no_npwp,
             'perusahaan_id' => $perusahaanId,
             'karyawan_ar_id'=> $dto->karyawan_ar_id,

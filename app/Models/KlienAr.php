@@ -15,10 +15,7 @@ class KlienAr extends Model
     protected $fillable = [
         'kode_klien',
         'nama_klien',
-        'alias',
         'tipe_klien',
-        'tipe_outlet',
-        'stokis_area',
         'no_npwp',
         'no_wa',
         'perusahaan_id',

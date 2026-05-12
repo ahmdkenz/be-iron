@@ -13,7 +13,6 @@ class KlienArRepository
             ->when($filters['search'] ?? null, fn($q, $v) => $q->where(fn($q) => $q
                 ->where('nama_klien', 'like', "%{$v}%")
                 ->orWhere('kode_klien', 'like', "%{$v}%")
-                ->orWhere('alias', 'like', "%{$v}%")
             ))
             ->when($filters['perusahaan_id'] ?? null, fn($q, $v) => $q->where('perusahaan_id', $v))
             ->when($filters['karyawan_ar_id'] ?? null, fn($q, $v) => $q->where('karyawan_ar_id', $v))
