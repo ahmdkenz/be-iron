@@ -19,9 +19,9 @@ class Investor extends Model
         'no_hp',
         'pengelola',
         'no_hp_pengelola',
-        'alamat',
+        'kode_cabang',
+        'id_cabang',
         'status',
-        'keterangan',
         'created_by',
         'updated_by',
     ];

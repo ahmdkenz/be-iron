@@ -19,8 +19,8 @@ class UpdateInvestorRequest extends FormRequest
             'no_hp'           => ['nullable', 'string', 'max:20'],
             'pengelola'       => ['nullable', 'string', 'max:150'],
             'no_hp_pengelola' => ['nullable', 'string', 'max:20'],
-            'alamat'          => ['nullable', 'string'],
-            'keterangan'      => ['nullable', 'string'],
+            'kode_cabang'     => ['nullable', 'string', 'max:50'],
+            'id_cabang'       => ['nullable', 'string', 'max:50'],
             'status'          => ['nullable', 'boolean'],
         ];
     }

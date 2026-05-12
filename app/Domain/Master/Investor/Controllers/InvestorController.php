@@ -90,8 +90,8 @@ class InvestorController extends Controller
             'D' => ['No. HP',              18],
             'E' => ['Nama Pengelola',       28],
             'F' => ['No. HP Pengelola',     20],
-            'G' => ['Alamat',              40],
-            'H' => ['Keterangan',          28],
+            'G' => ['Kode Cabang',         24],
+            'H' => ['ID Cabang',           24],
             'I' => ['Status',              14],
         ];
         $lastCol = 'I';
@@ -144,8 +144,8 @@ class InvestorController extends Controller
                 'D' => [$inv->no_hp ?? '-',      DataType::TYPE_STRING],
                 'E' => [$inv->pengelola ?? '-',  DataType::TYPE_STRING],
                 'F' => [$inv->no_hp_pengelola ?? '-', DataType::TYPE_STRING],
-                'G' => [$inv->alamat ?? '-',     DataType::TYPE_STRING],
-                'H' => [$inv->keterangan ?? '-', DataType::TYPE_STRING],
+                'G' => [$inv->kode_cabang ?? '-', DataType::TYPE_STRING],
+                'H' => [$inv->id_cabang ?? '-',  DataType::TYPE_STRING],
                 'I' => [$inv->status ? 'Aktif' : 'Tidak Aktif', DataType::TYPE_STRING],
             ];
 
@@ -248,11 +248,6 @@ class InvestorController extends Controller
 
             $totalData++;
 
-            if ($totalData > 500) {
-                $errors[] = ['row' => $lineNumber, 'message' => 'Batas maksimum 500 baris per file tercapai.'];
-                break;
-            }
-
             $data = [
                 'nama_investor'   => trim((string) ($row[0] ?? '')),
                 'ktp'             => $this->importValue($row[1] ?? ''),
@@ -260,8 +255,8 @@ class InvestorController extends Controller
                 'no_hp'           => $this->importValue($row[3] ?? ''),
                 'pengelola'       => $this->importValue($row[4] ?? ''),
                 'no_hp_pengelola' => $this->importValue($row[5] ?? ''),
-                'alamat'          => $this->importValue($row[6] ?? ''),
-                'keterangan'      => $this->importValue($row[7] ?? ''),
+                'kode_cabang'     => $this->importValue($row[6] ?? ''),
+                'id_cabang'       => $this->importValue($row[7] ?? ''),
                 'status'          => isset($row[8]) && trim((string) $row[8]) !== '' ? (bool) (int) $row[8] : true,
             ];
 
@@ -281,8 +276,8 @@ class InvestorController extends Controller
                 'no_hp'           => ['nullable', 'string', 'max:20'],
                 'pengelola'       => ['nullable', 'string', 'max:150'],
                 'no_hp_pengelola' => ['nullable', 'string', 'max:20'],
-                'alamat'          => ['nullable', 'string'],
-                'keterangan'      => ['nullable', 'string'],
+                'kode_cabang'     => ['nullable', 'string', 'max:50'],
+                'id_cabang'       => ['nullable', 'string', 'max:50'],
                 'status'          => ['nullable', 'boolean'],
             ]);
 
@@ -389,8 +384,8 @@ class InvestorController extends Controller
             'D' => ['no_hp',           16],
             'E' => ['pengelola',       24],
             'F' => ['no_hp_pengelola', 20],
-            'G' => ['alamat',          35],
-            'H' => ['keterangan',      24],
+            'G' => ['kode_cabang',     22],
+            'H' => ['id_cabang',       22],
             'I' => ['status',          10],
         ];
 
@@ -438,8 +433,8 @@ class InvestorController extends Controller
             'D' => '08123456789',
             'E' => 'Nama Pengelola',
             'F' => '08198765432',
-            'G' => 'Jl. Contoh No. 1 Jakarta',
-            'H' => 'Catatan opsional',
+            'G' => 'CB-001',
+            'H' => 'ID-CB-001',
             'I' => '1',
         ];
         foreach ($example as $col => $val) {
@@ -507,9 +502,8 @@ class InvestorController extends Controller
             '2. Hapus baris [CONTOH] sebelum melakukan import data.',
             '3. Isi data mulai dari baris kosong di bawah baris [CONTOH].',
             '4. Kolom opsional dapat dikosongkan atau diisi tanda \'-\' (strip) — sistem akan memperlakukan keduanya sebagai tidak ada nilai.',
-            '5. Maksimal 500 baris data per file.',
-            '6. Kolom KTP, No. HP, dan No. HP Pengelola — format sel Excel harus TEXT agar angka panjang tidak berubah ke notasi ilmiah (misal: 3.27E+15).',
-            '7. Simpan file sebagai .xlsx atau .csv sebelum diupload ke sistem.',
+            '5. Kolom KTP, No. HP, dan No. HP Pengelola — format sel Excel harus TEXT agar angka panjang tidak berubah ke notasi ilmiah (misal: 3.27E+15).',
+            '6. Simpan file sebagai .xlsx atau .csv sebelum diupload ke sistem.',
         ];
 
         foreach ($steps as $i => $step) {
@@ -558,8 +552,8 @@ class InvestorController extends Controller
             ['no_hp',           'Nomor handphone investor',          'Opsional', 'Awali dengan 0. Contoh: 08123456789'],
             ['pengelola',       'Nama pengelola investasi',          'Opsional', 'Teks, maks 150 karakter'],
             ['no_hp_pengelola', 'Nomor handphone pengelola',         'Opsional', 'Awali dengan 0. Contoh: 08198765432'],
-            ['alamat',          'Alamat lengkap investor',           'Opsional', 'Teks bebas. Contoh: Jl. Contoh No. 1, Jakarta'],
-            ['keterangan',      'Catatan atau keterangan tambahan',  'Opsional', 'Teks bebas'],
+            ['kode_cabang',     'Kode cabang investor',              'Opsional', 'Teks, maks 50 karakter. Contoh: CB-001'],
+            ['id_cabang',       'ID cabang investor',                'Opsional', 'Teks, maks 50 karakter. Contoh: ID-CB-001'],
             ['status',          'Status aktif investor',             'Opsional', '1 = Aktif (default), 0 = Tidak Aktif'],
         ];
 

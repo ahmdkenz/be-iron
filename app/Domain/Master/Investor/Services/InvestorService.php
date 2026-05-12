@@ -38,8 +38,8 @@ class InvestorService
             'no_hp'           => $dto->no_hp,
             'pengelola'       => $dto->pengelola,
             'no_hp_pengelola' => $dto->no_hp_pengelola,
-            'alamat'          => $dto->alamat,
-            'keterangan'      => $dto->keterangan,
+            'kode_cabang'     => $dto->kode_cabang,
+            'id_cabang'       => $dto->id_cabang,
             'status'          => $dto->status,
         ]);
     }
@@ -53,8 +53,8 @@ class InvestorService
             'no_hp'           => $dto->no_hp,
             'pengelola'       => $dto->pengelola,
             'no_hp_pengelola' => $dto->no_hp_pengelola,
-            'alamat'          => $dto->alamat,
-            'keterangan'      => $dto->keterangan,
+            'kode_cabang'     => $dto->kode_cabang,
+            'id_cabang'       => $dto->id_cabang,
             'status'          => $dto->status,
         ]);
     }

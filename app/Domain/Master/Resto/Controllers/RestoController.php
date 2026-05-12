@@ -92,7 +92,7 @@ class RestoController extends Controller
         $sheet       = $spreadsheet->getActiveSheet();
         $sheet->setTitle('Data Resto');
 
-        $lastCol = 'M';
+        $lastCol = 'P';
         $columns = [
             'A' => ['Kode Resto',       14],
             'B' => ['Nama Resto',        28],
@@ -100,13 +100,16 @@ class RestoController extends Controller
             'D' => ['Nama Perusahaan',   22],
             'E' => ['Nama Brand',        18],
             'F' => ['PIC',               20],
-            'G' => ['Area',              18],
-            'H' => ['Kota',              16],
-            'I' => ['Alamat',            35],
-            'J' => ['No. Telp',          16],
-            'K' => ['Tanggal Aktif',     16],
-            'L' => ['Keterangan',        25],
-            'M' => ['Status',            12],
+            'G' => ['Supervisor',        24],
+            'H' => ['No. HP SPV',        18],
+            'I' => ['STOKIS',            20],
+            'J' => ['Area',              18],
+            'K' => ['Kota',              16],
+            'L' => ['Alamat',            35],
+            'M' => ['No. Telp',          16],
+            'N' => ['Tanggal Aktif',     16],
+            'O' => ['Keterangan',        25],
+            'P' => ['Status',            12],
         ];
 
         // Row 1 — Title
@@ -162,17 +165,20 @@ class RestoController extends Controller
                 'D' => $r->perusahaan?->nama_perusahaan ?? '-',
                 'E' => $r->brand?->nama_brand           ?? '-',
                 'F' => $r->pic?->nama_karyawan          ?? '-',
-                'G' => $r->area                         ?? '-',
-                'H' => $r->kota                         ?? '-',
-                'I' => $r->alamat                       ?? '-',
-                'J' => $r->no_telp                      ?? '-',
-                'K' => $tglAktif,
-                'L' => $r->keterangan                   ?? '-',
-                'M' => $status,
+                'G' => $r->supervisor                   ?? '-',
+                'H' => $r->no_hp_supervisor             ?? '-',
+                'I' => $r->stokis                       ?? '-',
+                'J' => $r->area                         ?? '-',
+                'K' => $r->kota                         ?? '-',
+                'L' => $r->alamat                       ?? '-',
+                'M' => $r->no_telp                      ?? '-',
+                'N' => $tglAktif,
+                'O' => $r->keterangan                   ?? '-',
+                'P' => $status,
             ];
 
             // Force text format for Kode Resto, No. Telp, and Tanggal Aktif columns
-            foreach (['A', 'J', 'K'] as $textCol) {
+            foreach (['A', 'H', 'M', 'N'] as $textCol) {
                 $sheet->getStyle("{$textCol}{$rowNum}")->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
             }
 
@@ -188,7 +194,7 @@ class RestoController extends Controller
 
             // Color the status cell
             $statusColor = $r->status ? ['argb' => 'FF1B5E20'] : ['argb' => 'FFB71C1C'];
-            $sheet->getStyle("M{$rowNum}")->applyFromArray([
+            $sheet->getStyle("P{$rowNum}")->applyFromArray([
                 'font'      => ['bold' => true, 'color' => $statusColor],
                 'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER],
             ]);
@@ -275,15 +281,11 @@ class RestoController extends Controller
 
             $totalData++;
 
-            if ($totalData > 500) {
-                $errors[] = ['row' => $lineNumber, 'message' => 'Batas maksimum 500 baris per file tercapai.'];
-                break;
-            }
-
             $namaInvestor   = $this->importValue($row[1] ?? '') ?? '';
             $namaPerusahaan = $this->importValue($row[2] ?? '') ?? '';
             $namaBrand      = $this->importValue($row[3] ?? '') ?? '';
             $namaPic        = $this->importValue($row[4] ?? '') ?? '';
+            // cols 5,6,7 = supervisor, no_hp_supervisor, stokis (no lookup needed)
 
             $investorId   = null;
             $perusahaanId = null;
@@ -335,33 +337,39 @@ class RestoController extends Controller
             }
 
             $data = [
-                'nama_resto'    => $firstCell,
-                'investor_id'   => $investorId,
-                'perusahaan_id' => $perusahaanId,
-                'brand_id'      => $brandId,
-                'karyawan_id'   => $karyawanId,
-                'area'          => $this->importValue($row[5] ?? ''),
-                'kota'          => $this->importValue($row[6] ?? ''),
-                'alamat'        => $this->importValue($row[7] ?? ''),
-                'no_telp'       => $this->importValue($row[8] ?? ''),
-                'tgl_aktif'     => $this->importDate($row[9] ?? ''),
-                'keterangan'    => $this->importValue($row[10] ?? ''),
-                'status'        => isset($row[11]) && trim((string) $row[11]) !== '' ? (bool) (int) $row[11] : true,
+                'nama_resto'       => $firstCell,
+                'investor_id'      => $investorId,
+                'perusahaan_id'    => $perusahaanId,
+                'brand_id'         => $brandId,
+                'karyawan_id'      => $karyawanId,
+                'supervisor'       => $this->importValue($row[5] ?? ''),
+                'no_hp_supervisor' => $this->importValue($row[6] ?? ''),
+                'stokis'           => $this->importValue($row[7] ?? ''),
+                'area'             => $this->importValue($row[8] ?? ''),
+                'kota'             => $this->importValue($row[9] ?? ''),
+                'alamat'           => $this->importValue($row[10] ?? ''),
+                'no_telp'          => $this->importValue($row[11] ?? ''),
+                'tgl_aktif'        => $this->importDate($row[12] ?? ''),
+                'keterangan'       => $this->importValue($row[13] ?? ''),
+                'status'           => isset($row[14]) && trim((string) $row[14]) !== '' ? (bool) (int) $row[14] : true,
             ];
 
             $validator = Validator::make($data, [
-                'nama_resto'    => ['required', 'string', 'max:150'],
-                'investor_id'   => ['nullable', 'integer'],
-                'perusahaan_id' => ['nullable', 'integer'],
-                'brand_id'      => ['nullable', 'integer'],
-                'karyawan_id'   => ['nullable', 'integer'],
-                'area'          => ['nullable', 'string', 'max:100'],
-                'kota'          => ['nullable', 'string', 'max:100'],
-                'alamat'        => ['nullable', 'string'],
-                'no_telp'       => ['nullable', 'string', 'max:20'],
-                'tgl_aktif'     => ['nullable', 'date'],
-                'keterangan'    => ['nullable', 'string'],
-                'status'        => ['nullable', 'boolean'],
+                'nama_resto'       => ['required', 'string', 'max:150'],
+                'investor_id'      => ['nullable', 'integer'],
+                'perusahaan_id'    => ['nullable', 'integer'],
+                'brand_id'         => ['nullable', 'integer'],
+                'karyawan_id'      => ['nullable', 'integer'],
+                'supervisor'       => ['nullable', 'string', 'max:150'],
+                'no_hp_supervisor' => ['nullable', 'string', 'max:20'],
+                'stokis'           => ['nullable', 'string', 'max:150'],
+                'area'             => ['nullable', 'string', 'max:100'],
+                'kota'             => ['nullable', 'string', 'max:100'],
+                'alamat'           => ['nullable', 'string'],
+                'no_telp'          => ['nullable', 'string', 'max:20'],
+                'tgl_aktif'        => ['nullable', 'date'],
+                'keterangan'       => ['nullable', 'string'],
+                'status'           => ['nullable', 'boolean'],
             ]);
 
             if ($validator->fails()) {
@@ -407,7 +415,7 @@ class RestoController extends Controller
                 $cells[] = $this->xlsxCellToString($cell);
             }
 
-            $cells     = array_slice($cells, 0, 12);
+            $cells     = array_slice($cells, 0, 15);
             $firstCell = trim($cells[0] ?? '');
 
             if (!$headerFound) {
@@ -461,21 +469,24 @@ class RestoController extends Controller
         $sheet->setTitle('Data Resto');
 
         $cols = [
-            'A' => ['nama_resto',       28],
-            'B' => ['nama_investor',    26],
-            'C' => ['nama_perusahaan',  26],
-            'D' => ['nama_brand',       20],
-            'E' => ['nama_pic',         26],
-            'F' => ['area',             18],
-            'G' => ['kota',             18],
-            'H' => ['alamat',           35],
-            'I' => ['no_telp',          18],
-            'J' => ['tgl_aktif',        16],
-            'K' => ['keterangan',       25],
-            'L' => ['status',           10],
+            'A' => ['nama_resto',        28],
+            'B' => ['nama_investor',     26],
+            'C' => ['nama_perusahaan',   26],
+            'D' => ['nama_brand',        20],
+            'E' => ['nama_pic',          26],
+            'F' => ['supervisor',        24],
+            'G' => ['no_hp_supervisor',  18],
+            'H' => ['stokis',            20],
+            'I' => ['area',              18],
+            'J' => ['kota',              18],
+            'K' => ['alamat',            35],
+            'L' => ['no_telp',           18],
+            'M' => ['tgl_aktif',         16],
+            'N' => ['keterangan',        25],
+            'O' => ['status',            10],
         ];
 
-        $lastCol = 'L';
+        $lastCol = 'O';
 
         // Row 1 — Title
         $sheet->mergeCells("A1:{$lastCol}1");
@@ -520,17 +531,21 @@ class RestoController extends Controller
             'C' => 'Nama Perusahaan',
             'D' => 'Nama Brand',
             'E' => 'Nama Karyawan PIC',
-            'F' => 'Jakarta Pusat',
-            'G' => 'Jakarta',
-            'H' => 'Jl. Contoh No. 1',
-            'I' => '02112345678',
-            'J' => '01-01-2026',
-            'K' => 'Catatan opsional',
-            'L' => '1',
+            'F' => 'Nama Supervisor',
+            'G' => '08123456789',
+            'H' => 'STOKIS-001',
+            'I' => 'Jakarta Pusat',
+            'J' => 'Jakarta',
+            'K' => 'Jl. Contoh No. 1',
+            'L' => '02112345678',
+            'M' => '01-01-2026',
+            'N' => 'Catatan opsional',
+            'O' => '1',
         ];
         // Set text format for numeric-sensitive columns BEFORE writing values to prevent Excel auto-conversion
-        $sheet->getStyle('I5')->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
-        $sheet->getStyle('J5')->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
+        $sheet->getStyle('G5')->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
+        $sheet->getStyle('L5')->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
+        $sheet->getStyle('M5')->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
 
         foreach ($example as $col => $val) {
             $sheet->getCell("{$col}5")->setValueExplicit($val, DataType::TYPE_STRING);
@@ -550,9 +565,10 @@ class RestoController extends Controller
                 'fill'    => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => $bg]],
                 'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_HAIR, 'color' => ['argb' => 'FFE0E0E0']]],
             ]);
-            // Format no_telp & tgl_aktif as text to prevent auto-conversion
-            $sheet->getStyle("I{$row}")->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
-            $sheet->getStyle("J{$row}")->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
+            // Format no_hp_supervisor, no_telp & tgl_aktif as text to prevent auto-conversion
+            $sheet->getStyle("G{$row}")->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
+            $sheet->getStyle("L{$row}")->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
+            $sheet->getStyle("M{$row}")->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
             $sheet->getRowDimension($row)->setRowHeight(18);
         }
 
@@ -600,8 +616,7 @@ class RestoController extends Controller
             '5. Kolom tgl_aktif gunakan format DD-MM-YYYY. Contoh: 15-01-2026.',
             '6. Kolom no_telp — format sel Excel harus TEXT agar angka panjang tidak berubah ke notasi ilmiah.',
             '7. Kolom opsional dapat dikosongkan atau diisi tanda \'-\' (strip) — sistem akan memperlakukan keduanya sebagai tidak ada nilai.',
-            '8. Maksimal 500 baris data per file.',
-            '9. Simpan file sebagai .xlsx atau .csv sebelum diupload ke sistem.',
+            '8. Simpan file sebagai .xlsx atau .csv sebelum diupload ke sistem.',
         ];
 
         foreach ($steps as $i => $step) {
@@ -643,18 +658,21 @@ class RestoController extends Controller
         $row++;
 
         $colInfos = [
-            ['nama_resto',       'Nama lengkap restoran',                         'Ya',       'Teks, maks 150 karakter. Contoh: Resto Maju Jaya'],
-            ['nama_investor',    'Nama investor pemilik resto',                   'Opsional', 'Harus SAMA PERSIS dengan nama investor di sistem'],
-            ['nama_perusahaan',  'Nama atau singkatan perusahaan pengelola',      'Opsional', 'Boleh nama lengkap atau singkatan. Contoh: PT Maju Jaya'],
-            ['nama_brand',       'Nama brand / merek resto',                      'Opsional', 'Harus SAMA PERSIS dengan nama brand di sistem'],
-            ['nama_pic',         'Nama karyawan sebagai PIC (penanggung jawab)',  'Opsional', 'Harus SAMA PERSIS dengan nama karyawan di sistem'],
-            ['area',             'Area wilayah lokasi resto',                     'Opsional', 'Teks, maks 100 karakter. Contoh: Jakarta Pusat'],
-            ['kota',             'Nama kota lokasi resto',                        'Opsional', 'Teks, maks 100 karakter. Contoh: Jakarta'],
-            ['alamat',           'Alamat lengkap resto',                          'Opsional', 'Teks bebas. Contoh: Jl. Sudirman No. 1, Jakarta'],
-            ['no_telp',          'Nomor telepon resto',                           'Opsional', 'Format sel harus TEXT. Contoh: 02112345678'],
-            ['tgl_aktif',        'Tanggal mulai aktif beroperasi',                'Opsional', 'Format: DD-MM-YYYY. Contoh: 15-01-2026'],
-            ['keterangan',       'Catatan atau keterangan tambahan',              'Opsional', 'Teks bebas'],
-            ['status',           'Status aktif resto',                            'Opsional', '1 = Aktif (default), 0 = Tidak Aktif'],
+            ['nama_resto',        'Nama lengkap restoran',                         'Ya',       'Teks, maks 150 karakter. Contoh: Resto Maju Jaya'],
+            ['nama_investor',     'Nama investor pemilik resto',                   'Opsional', 'Harus SAMA PERSIS dengan nama investor di sistem'],
+            ['nama_perusahaan',   'Nama atau singkatan perusahaan pengelola',      'Opsional', 'Boleh nama lengkap atau singkatan. Contoh: PT Maju Jaya'],
+            ['nama_brand',        'Nama brand / merek resto',                      'Opsional', 'Harus SAMA PERSIS dengan nama brand di sistem'],
+            ['nama_pic',          'Nama karyawan sebagai PIC (penanggung jawab)',  'Opsional', 'Harus SAMA PERSIS dengan nama karyawan di sistem'],
+            ['supervisor',        'Nama supervisor resto',                         'Opsional', 'Teks, maks 150 karakter. Contoh: Budi Santoso'],
+            ['no_hp_supervisor',  'Nomor HP supervisor (No SPV)',                  'Opsional', 'Format sel harus TEXT. Contoh: 08123456789'],
+            ['stokis',            'Kode atau nama STOKIS',                        'Opsional', 'Teks, maks 150 karakter. Contoh: STOKIS-001'],
+            ['area',              'Area wilayah lokasi resto',                     'Opsional', 'Teks, maks 100 karakter. Contoh: Jakarta Pusat'],
+            ['kota',              'Nama kota lokasi resto',                        'Opsional', 'Teks, maks 100 karakter. Contoh: Jakarta'],
+            ['alamat',            'Alamat lengkap resto',                          'Opsional', 'Teks bebas. Contoh: Jl. Sudirman No. 1, Jakarta'],
+            ['no_telp',           'Nomor telepon resto',                           'Opsional', 'Format sel harus TEXT. Contoh: 02112345678'],
+            ['tgl_aktif',         'Tanggal mulai aktif beroperasi',                'Opsional', 'Format: DD-MM-YYYY. Contoh: 15-01-2026'],
+            ['keterangan',        'Catatan atau keterangan tambahan',              'Opsional', 'Teks bebas'],
+            ['status',            'Status aktif resto',                            'Opsional', '1 = Aktif (default), 0 = Tidak Aktif'],
         ];
 
         foreach ($colInfos as $i => [$colName, $desc, $req, $fmt]) {

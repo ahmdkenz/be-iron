@@ -33,8 +33,11 @@ class RestoResource extends JsonResource
                 'kode_brand' => $this->brand->kode_brand,
                 'nama_brand' => $this->brand->nama_brand,
             ] : null),
-            'karyawan_id'    => $this->karyawan_id,
-            'pic'            => $this->whenLoaded('pic', fn() => $this->pic ? [
+            'karyawan_id'      => $this->karyawan_id,
+            'supervisor'       => $this->supervisor,
+            'no_hp_supervisor' => $this->no_hp_supervisor,
+            'stokis'           => $this->stokis,
+            'pic'              => $this->whenLoaded('pic', fn() => $this->pic ? [
                 'id'           => $this->pic->id,
                 'nik'          => $this->pic->nik,
                 'nama_karyawan' => $this->pic->nama_karyawan,

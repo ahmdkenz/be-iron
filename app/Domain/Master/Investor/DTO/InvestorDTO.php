@@ -11,8 +11,8 @@ class InvestorDTO
         public readonly ?string $no_hp,
         public readonly ?string $pengelola,
         public readonly ?string $no_hp_pengelola,
-        public readonly ?string $alamat,
-        public readonly ?string $keterangan,
+        public readonly ?string $kode_cabang,
+        public readonly ?string $id_cabang,
         public readonly bool    $status = true,
     ) {}
 
@@ -25,8 +25,8 @@ class InvestorDTO
             no_hp:            $data['no_hp'] ?? null,
             pengelola:        $data['pengelola'] ?? null,
             no_hp_pengelola:  $data['no_hp_pengelola'] ?? null,
-            alamat:           $data['alamat'] ?? null,
-            keterangan:       $data['keterangan'] ?? null,
+            kode_cabang:      $data['kode_cabang'] ?? null,
+            id_cabang:        $data['id_cabang'] ?? null,
             status:           isset($data['status']) ? (bool) $data['status'] : true,
         );
     }
