@@ -34,6 +34,11 @@ class KlienArService
         return $this->repository->getAll($filters);
     }
 
+    public function getAllForExport(array $filters = []): \Illuminate\Database\Eloquent\Collection
+    {
+        return $this->repository->getAllForExport($filters);
+    }
+
     public function findOrFail(int $id): KlienAr
     {
         $klien = $this->repository->findById($id);

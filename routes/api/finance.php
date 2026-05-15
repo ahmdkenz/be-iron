@@ -19,6 +19,9 @@ Route::prefix('klien-ar')->group(function () {
     Route::get('/', [KlienArController::class, 'index']);
     Route::get('/all', [KlienArController::class, 'all']);
     Route::get('/preview-kode', [KlienArController::class, 'previewKode']);
+    Route::get('/export', [KlienArController::class, 'export']);
+    Route::get('/import-template', [KlienArController::class, 'importTemplate']);
+    Route::post('/import', [KlienArController::class, 'import']);
     Route::post('/', [KlienArController::class, 'store']);
     Route::get('/{klien_ar}', [KlienArController::class, 'show']);
     Route::put('/{klien_ar}', [KlienArController::class, 'update']);

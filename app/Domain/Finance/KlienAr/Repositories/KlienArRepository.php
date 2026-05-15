@@ -42,6 +42,19 @@ class KlienArRepository
         };
     }
 
+    public function getAllForExport(array $filters = []): \Illuminate\Database\Eloquent\Collection
+    {
+        return KlienAr::with(['karyawanAr', 'resto.investor'])
+            ->when($filters['search'] ?? null, fn($q, $v) => $q->where(fn($q) => $q
+                ->where('nama_klien', 'like', "%{$v}%")
+                ->orWhere('kode_klien', 'like', "%{$v}%")
+            ))
+            ->when(isset($filters['status']), fn($q) => $q->where('status', $filters['status']))
+            ->when($filters['segment'] ?? null, fn($q, $v) => $q->whereIn('tipe_klien', $this->resolveSegmentTypes($v)))
+            ->latest()
+            ->get();
+    }
+
     public function findById(int $id): ?KlienAr
     {
         return KlienAr::with(['perusahaan', 'karyawanAr', 'resto.investor', 'createdBy', 'updatedBy'])->find($id);
