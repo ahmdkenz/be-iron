@@ -7,6 +7,7 @@ use App\Domain\Finance\Invoice\Resources\OpeningBalanceDetailResource;
 use App\Domain\Finance\Invoice\Services\InvoiceService;
 use App\Domain\Finance\OpeningBalance\Requests\StoreOpeningBalanceRequest;
 use App\Http\Controllers\Controller;
+use App\Models\Barang;
 use App\Models\Invoice;
 use App\Models\KlienAr;
 use App\Models\OpeningBalanceDetail;
@@ -471,9 +472,13 @@ class OpeningBalanceController extends Controller
                     continue;
                 }
 
+                $barangId = Barang::whereRaw('LOWER(nama_barang) = ?', [strtolower($namaBarang)])
+                    ->value('id');
+
                 try {
                     OpeningBalanceDetailItem::create([
                         'ob_detail_id' => $detailId,
+                        'barang_id'    => $barangId,
                         'nama_barang'  => $namaBarang,
                         'qty'          => $qty,
                         'satuan'       => $satuan,
@@ -535,7 +540,7 @@ class OpeningBalanceController extends Controller
             'A' => ['No. Opening Balance',  28],
             'B' => ['Klien',                30],
             'C' => ['Kode Klien',           18],
-            'D' => ['Entitas',              18],
+            'D' => ['Entitas Penagih',       20],
             'E' => ['Tanggal OB',           16],
             'F' => ['Periode Awal',         16],
             'G' => ['Periode Akhir',        16],
