@@ -38,6 +38,12 @@ class KlienArController extends Controller
         $filters = $request->only(['search', 'status', 'perusahaan_id', 'karyawan_ar_id']);
         $this->applyPicArScope($filters);
 
+        if ($request->boolean('all')) {
+            $list = $this->service->getAll($filters);
+
+            return $this->successResponse(KlienArResource::collection($list));
+        }
+
         $list = $this->service->paginate($filters);
 
         return $this->paginatedResponse(

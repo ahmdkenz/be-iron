@@ -10,6 +10,7 @@ use App\Models\KlienAr;
 use App\Models\OpeningBalanceDetail;
 use Carbon\Carbon;
 use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -20,6 +21,11 @@ class InvoiceService
     public function paginate(array $filters = []): LengthAwarePaginator
     {
         return $this->repository->paginate($filters);
+    }
+
+    public function getAllForExport(array $filters = []): Collection
+    {
+        return $this->repository->getAll($filters);
     }
 
     public function findOrFail(int $id): Invoice

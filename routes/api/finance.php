@@ -71,6 +71,9 @@ Route::get('/kinerja-ar', [KinerjaArController::class, 'index']);
 Route::prefix('opening-balance')->group(function () {
     Route::get('/', [OpeningBalanceController::class, 'index']);
     Route::get('/summary', [OpeningBalanceController::class, 'summary']);
+    Route::get('/export', [OpeningBalanceController::class, 'export']);
+    Route::get('/import-template', [OpeningBalanceController::class, 'importTemplate']);
+    Route::post('/import', [OpeningBalanceController::class, 'import']);
     Route::post('/', [OpeningBalanceController::class, 'store']);
     Route::put('/{invoice}', [OpeningBalanceController::class, 'update']);
     Route::get('/{invoice}/details', [OpeningBalanceController::class, 'details']);

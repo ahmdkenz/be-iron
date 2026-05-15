@@ -5,6 +5,7 @@ namespace App\Domain\Finance\Invoice\Repositories;
 use App\Models\Invoice;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Collection;
 
 class InvoiceRepository
 {
@@ -22,6 +23,21 @@ class InvoiceRepository
         )
             ->latest('tanggal_invoice')
             ->paginate($perPage);
+    }
+
+    public function getAll(array $filters = []): Collection
+    {
+        return $this->applyFilters(
+            Invoice::with([
+                'klienAr',
+                'perusahaan',
+                'createdBy',
+                'openingBalanceDetails.items',
+            ]),
+            $filters
+        )
+            ->latest('tanggal_invoice')
+            ->get();
     }
 
     public function findById(int $id): ?Invoice
