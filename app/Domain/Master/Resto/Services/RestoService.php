@@ -12,9 +12,9 @@ class RestoService
 {
     public function __construct(private readonly RestoRepository $repository) {}
 
-    public function paginate(array $filters = []): LengthAwarePaginator
+    public function paginate(array $filters = [], int $perPage = 15): LengthAwarePaginator
     {
-        return $this->repository->paginate($filters);
+        return $this->repository->paginate($filters, $perPage);
     }
 
     public function getAllForExport(array $filters = []): EloquentCollection

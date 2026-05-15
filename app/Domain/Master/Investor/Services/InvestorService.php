@@ -12,9 +12,9 @@ class InvestorService
 {
     public function __construct(private readonly InvestorRepository $repository) {}
 
-    public function getAll(array $filters = [], bool $all = false): LengthAwarePaginator|EloquentCollection
+    public function getAll(array $filters = [], int $perPage = 15, bool $all = false): LengthAwarePaginator|EloquentCollection
     {
-        return $all ? $this->repository->all() : $this->repository->paginate($filters);
+        return $all ? $this->repository->all() : $this->repository->paginate($filters, $perPage);
     }
 
     public function getAllForExport(array $filters = []): EloquentCollection

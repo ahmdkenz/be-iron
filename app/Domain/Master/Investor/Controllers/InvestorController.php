@@ -38,7 +38,8 @@ class InvestorController extends Controller
             return $this->successResponse($list->map(fn($i) => new InvestorResource($i)));
         }
 
-        $list = $this->service->getAll($request->only(['search', 'status']));
+        $perPage = (int) $request->input('per_page', 15);
+        $list = $this->service->getAll($request->only(['search', 'status']), $perPage);
         return $this->paginatedResponse($list->through(fn($i) => new InvestorResource($i)));
     }
 
@@ -74,8 +75,12 @@ class InvestorController extends Controller
         return $this->successResponse(null, 'Investor berhasil dihapus');
     }
 
-    public function export(Request $request): BinaryFileResponse
+    public function export(Request $request): BinaryFileResponse|JsonResponse
     {
+        if (!class_exists('ZipArchive')) {
+            return $this->errorResponse('Ekstensi PHP "zip" tidak aktif. Aktifkan extension=zip pada php.ini lalu restart server.', 500);
+        }
+
         $filters   = $request->only(['search', 'status']);
         $investors = $this->service->getAllForExport($filters);
 
@@ -189,8 +194,12 @@ class InvestorController extends Controller
             ->deleteFileAfterSend(true);
     }
 
-    public function importTemplate(): BinaryFileResponse
+    public function importTemplate(): BinaryFileResponse|JsonResponse
     {
+        if (!class_exists('ZipArchive')) {
+            return $this->errorResponse('Ekstensi PHP "zip" tidak aktif. Aktifkan extension=zip pada php.ini lalu restart server.', 500);
+        }
+
         $spreadsheet = new Spreadsheet();
 
         $this->buildDataSheet($spreadsheet->getActiveSheet());
@@ -211,6 +220,10 @@ class InvestorController extends Controller
     public function import(Request $request): JsonResponse
     {
         $this->forbidReadOnlyMutation();
+
+        if (!class_exists('ZipArchive')) {
+            return $this->errorResponse('Ekstensi PHP "zip" tidak aktif. Aktifkan extension=zip pada php.ini lalu restart server.', 500);
+        }
 
         $request->validate([
             'file' => ['required', 'file', 'mimes:csv,txt,xlsx,xls', 'max:2048'],

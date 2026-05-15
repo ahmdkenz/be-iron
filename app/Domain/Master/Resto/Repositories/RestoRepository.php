@@ -15,6 +15,8 @@ class RestoRepository
 
     public function paginate(array $filters = [], int $perPage = 15): LengthAwarePaginator
     {
+        if ($perPage <= 0) $perPage = PHP_INT_MAX;
+
         return $this->baseQuery()
             ->when($filters['search'] ?? null, fn($q, $v) => $q->where(fn($q) => $q
                 ->where('kode_resto', 'like', "%{$v}%")

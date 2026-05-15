@@ -10,6 +10,8 @@ class InvestorRepository
 {
     public function paginate(array $filters = [], int $perPage = 15): LengthAwarePaginator
     {
+        if ($perPage <= 0) $perPage = PHP_INT_MAX;
+
         return Investor::with(['createdBy', 'updatedBy'])
             ->when($filters['search'] ?? null, fn($q, $v) => $q->where(fn($q) => $q
                 ->where('nama_investor', 'like', "%{$v}%")

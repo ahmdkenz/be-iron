@@ -36,7 +36,8 @@ class RestoController extends Controller
 
     public function index(Request $request): JsonResponse
     {
-        $list = $this->service->paginate($request->only(['search', 'status', 'perusahaan_id', 'karyawan_id']));
+        $perPage = $request->boolean('all') ? 0 : (int) $request->input('per_page', 15);
+        $list = $this->service->paginate($request->only(['search', 'status', 'perusahaan_id', 'karyawan_id']), $perPage);
         return $this->paginatedResponse($list->through(fn($r) => new RestoResource($r)));
     }
 
@@ -83,8 +84,12 @@ class RestoController extends Controller
         return $this->successResponse(null, 'Resto berhasil dihapus');
     }
 
-    public function export(Request $request): BinaryFileResponse
+    public function export(Request $request): BinaryFileResponse|JsonResponse
     {
+        if (!class_exists('ZipArchive')) {
+            return $this->errorResponse('Ekstensi PHP "zip" tidak aktif. Aktifkan extension=zip pada php.ini lalu restart server.', 500);
+        }
+
         $filters = $request->only(['search', 'status']);
         $restos  = $this->service->getAllForExport($filters);
 
@@ -222,8 +227,12 @@ class RestoController extends Controller
             ->deleteFileAfterSend(true);
     }
 
-    public function importTemplate(): BinaryFileResponse
+    public function importTemplate(): BinaryFileResponse|JsonResponse
     {
+        if (!class_exists('ZipArchive')) {
+            return $this->errorResponse('Ekstensi PHP "zip" tidak aktif. Aktifkan extension=zip pada php.ini lalu restart server.', 500);
+        }
+
         $spreadsheet = new Spreadsheet();
 
         $this->buildDataSheet($spreadsheet->getActiveSheet());
@@ -244,6 +253,10 @@ class RestoController extends Controller
     public function import(Request $request): JsonResponse
     {
         $this->forbidReadOnlyMutation();
+
+        if (!class_exists('ZipArchive')) {
+            return $this->errorResponse('Ekstensi PHP "zip" tidak aktif. Aktifkan extension=zip pada php.ini lalu restart server.', 500);
+        }
 
         $request->validate([
             'file' => ['required', 'file', 'mimes:csv,txt,xlsx,xls', 'max:2048'],
