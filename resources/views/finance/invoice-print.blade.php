@@ -297,18 +297,53 @@
     </thead>
     <tbody>
       @foreach($obDetails as $di => $detail)
-      <tr class="{{ $detail->items->isNotEmpty() ? '' : '' }}">
+      <tr>
         <td class="ob-detail-no text-center" style="color:#777;">{{ $di + 1 }}</td>
         <td class="ob-detail-invoice font-bold" style="color:#b71c1c;">{{ $detail->no_invoice_asal }}</td>
         <td class="ob-detail-date text-center" style="color:#555;">{{ \Carbon\Carbon::parse($detail->tanggal_invoice_asal)->isoFormat('D MMM YYYY') }}</td>
         <td class="ob-detail-desc">
           <span>{{ $detail->deskripsi }}</span>
           @if($detail->keterangan)<span class="item-desc">{{ $detail->keterangan }}</span>@endif
-
         </td>
         <td class="ob-detail-jumlah text-right" style="color:#555;">Rp {{ number_format((float)$detail->jumlah_tagihan_asal, 0, ',', '.') }}</td>
         <td class="ob-detail-sisa text-right font-bold">Rp {{ number_format((float)$detail->sisa_tagihan_asal, 0, ',', '.') }}</td>
       </tr>
+      @if($detail->items->isNotEmpty())
+      <tr>
+        <td colspan="6" style="padding: 0 8px 12px 32px; background: #fafafa; border-bottom: 1px solid #eee;">
+          <div class="ob-sub-items">
+            <span class="ob-sub-item-label">Item Invoice:</span>
+            <table class="ob-sub-table">
+              <thead>
+                <tr>
+                  <th style="width:5%; text-align:center;">No</th>
+                  <th style="width:40%; text-align:left;">Nama Barang</th>
+                  <th style="width:10%; text-align:center;">Qty</th>
+                  <th style="width:10%; text-align:center;">Satuan</th>
+                  <th style="width:17%; text-align:right;">Harga Satuan</th>
+                  <th style="width:18%; text-align:right;">Subtotal</th>
+                </tr>
+              </thead>
+              <tbody>
+                @foreach($detail->items as $ii => $item)
+                <tr>
+                  <td style="text-align:center; color:#777;">{{ $ii + 1 }}</td>
+                  <td>
+                    {{ $item->nama_barang }}
+                    @if($item->keterangan)<span class="ob-sub-item-label" style="display:block;">{{ $item->keterangan }}</span>@endif
+                  </td>
+                  <td style="text-align:center;">{{ rtrim(rtrim(number_format((float)$item->qty, 4, '.', ''), '0'), '.') }}</td>
+                  <td style="text-align:center; color:#555;">{{ $item->satuan }}</td>
+                  <td style="text-align:right;">Rp {{ number_format((float)$item->harga_satuan, 0, ',', '.') }}</td>
+                  <td style="text-align:right; font-weight:bold;">Rp {{ number_format((float)$item->subtotal, 0, ',', '.') }}</td>
+                </tr>
+                @endforeach
+              </tbody>
+            </table>
+          </div>
+        </td>
+      </tr>
+      @endif
       @endforeach
     </tbody>
     <tfoot>
