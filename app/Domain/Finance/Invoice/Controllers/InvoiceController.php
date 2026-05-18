@@ -3,6 +3,7 @@
 namespace App\Domain\Finance\Invoice\Controllers;
 
 use App\Domain\Finance\Invoice\DTO\InvoiceDTO;
+use App\Domain\Finance\Invoice\Jobs\UploadInvoiceToGDriveJob;
 use App\Domain\Finance\Invoice\Requests\StoreInvoiceRequest;
 use App\Domain\Finance\Invoice\Requests\UpdateInvoiceRequest;
 use App\Domain\Finance\Invoice\Resources\InvoiceResource;
@@ -109,6 +110,7 @@ class InvoiceController extends Controller
     public function store(StoreInvoiceRequest $request): JsonResponse
     {
         $invoice = $this->service->create(InvoiceDTO::fromRequest($request->validated()));
+        UploadInvoiceToGDriveJob::dispatch($invoice->id);
         return $this->createdResponse(new InvoiceResource($invoice), 'Invoice berhasil dibuat');
     }
 
@@ -524,6 +526,11 @@ class InvoiceController extends Controller
                 'sisa_tagihan'  => $totalTagihan,
                 'updated_by'    => auth()->id(),
             ]);
+        }
+
+        // Upload semua invoice yang berhasil dibuat ke Google Drive (setelah items selesai)
+        foreach ($invoiceMapping as $invoice) {
+            UploadInvoiceToGDriveJob::dispatch($invoice->id);
         }
 
         $failed = $totalData - $insertedCount;

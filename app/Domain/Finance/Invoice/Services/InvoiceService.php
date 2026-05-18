@@ -3,6 +3,7 @@
 namespace App\Domain\Finance\Invoice\Services;
 
 use App\Domain\Finance\Invoice\DTO\InvoiceDTO;
+use App\Domain\Finance\Invoice\Jobs\UploadInvoiceToGDriveJob;
 use App\Domain\Finance\Invoice\Repositories\InvoiceRepository;
 use App\Models\Invoice;
 use App\Models\InvoiceApprovalLog;
@@ -298,7 +299,12 @@ class InvoiceService
 
             $this->createApprovalLog($invoice, 'APPROVED', $note);
 
-            return $this->findOrFail($invoice->id);
+            $approved = $this->findOrFail($invoice->id);
+
+            // Dispatch di dalam transaksi: job hanya masuk queue jika transaksi commit
+            UploadInvoiceToGDriveJob::dispatch($approved->id);
+
+            return $approved;
         });
     }
 

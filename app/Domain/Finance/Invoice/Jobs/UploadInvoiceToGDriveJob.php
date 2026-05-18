@@ -1,0 +1,124 @@
+<?php
+
+namespace App\Domain\Finance\Invoice\Jobs;
+
+use App\Models\Invoice;
+use App\Support\Helpers\GoogleDriveService;
+use App\Support\Helpers\SignatureBarcodeHelper;
+use Barryvdh\DomPDF\Facade\Pdf;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Foundation\Queue\Queueable;
+use Illuminate\Queue\InteractsWithQueue;
+use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Log;
+use Throwable;
+
+class UploadInvoiceToGDriveJob implements ShouldQueue
+{
+    use Queueable, InteractsWithQueue, SerializesModels;
+
+    public int $tries = 3;
+    public int $backoff = 60;
+
+    public function __construct(private readonly int $invoiceId) {}
+
+    public function handle(GoogleDriveService $driveService): void
+    {
+        $invoice = Invoice::with([
+            'klienAr.karyawanAr',
+            'perusahaan',
+            'items',
+            'openingBalanceDetails.items',
+            'pembayarans',
+            'createdBy.karyawan',
+            'submittedBy.karyawan',
+            'approvedBy.karyawan',
+        ])->find($this->invoiceId);
+
+        if (!$invoice) {
+            Log::warning('UploadInvoiceToGDriveJob: invoice tidak ditemukan', ['id' => $this->invoiceId]);
+            return;
+        }
+
+        // Opening balance hanya diupload setelah diapprove
+        if ($invoice->requiresApproval() && !$invoice->isApprovedForFinanceFlow()) {
+            Log::warning('UploadInvoiceToGDriveJob: opening balance belum approved, skip upload', [
+                'invoice_id' => $invoice->id,
+            ]);
+            return;
+        }
+
+        try {
+            $pdfContent = $this->generatePdf($invoice);
+            $fileName   = 'Invoice-' . str_replace(['/', '\\', ' '], '-', $invoice->no_invoice) . '.pdf';
+            $clientName = $invoice->klienAr->nama_klien;
+            $rootId     = config('services.google_drive.root_folder_id');
+
+            $folderId = $driveService->findOrCreateClientFolder($rootId, $clientName);
+            $fileId   = $driveService->uploadPdf($folderId, $fileName, $pdfContent);
+
+            // updateQuietly agar tidak trigger event audit blameable
+            $invoice->updateQuietly([
+                'gdrive_file_id'   => $fileId,
+                'gdrive_folder_id' => $folderId,
+            ]);
+
+            Log::info('UploadInvoiceToGDriveJob: upload berhasil', [
+                'invoice_id' => $invoice->id,
+                'no_invoice' => $invoice->no_invoice,
+                'file_id'    => $fileId,
+                'folder_id'  => $folderId,
+            ]);
+        } catch (Throwable $e) {
+            Log::error('UploadInvoiceToGDriveJob: upload gagal', [
+                'invoice_id' => $invoice->id,
+                'error'      => $e->getMessage(),
+            ]);
+
+            throw $e; // Re-throw agar Laravel retry job sesuai $tries
+        }
+    }
+
+    private function generatePdf(Invoice $invoice): string
+    {
+        $signatureData = $this->buildSignatureData($invoice);
+
+        return Pdf::loadView('finance.invoice-print', compact('invoice', 'signatureData'))
+            ->setPaper('a4', 'portrait')
+            ->setOptions([
+                'isHtml5ParserEnabled' => true,
+                'isRemoteEnabled'      => false,
+                'defaultFont'          => 'Arial',
+                'dpi'                  => 150,
+            ])
+            ->output();
+    }
+
+    private function buildSignatureData(Invoice $invoice): array
+    {
+        if ($invoice->is_opening_balance) {
+            $preparedByUser = $invoice->submittedBy ?: $invoice->createdBy;
+            $preparedByName = $preparedByUser?->karyawan?->nama_karyawan
+                ?? $preparedByUser?->username
+                ?? '___________________';
+
+            $approvedByName = $invoice->approvedBy?->karyawan?->nama_karyawan
+                ?? $invoice->approvedBy?->username
+                ?? '___________________';
+        } else {
+            $preparedByName = $invoice->klienAr?->karyawanAr?->nama_karyawan ?? '___________________';
+            $approvedByName = 'Direktur';
+        }
+
+        return [
+            'prepared_by_name' => $preparedByName,
+            'prepared_qr_src'  => SignatureBarcodeHelper::generateDataUri(
+                SignatureBarcodeHelper::buildPreparedVerificationUrl($invoice), 150
+            ),
+            'approved_by_name' => $approvedByName,
+            'approved_qr_src'  => SignatureBarcodeHelper::generateDataUri(
+                SignatureBarcodeHelper::buildApprovedVerificationUrl($invoice), 150
+            ),
+        ];
+    }
+}
