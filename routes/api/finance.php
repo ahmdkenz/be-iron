@@ -7,6 +7,8 @@ use App\Domain\Finance\JatuhTempo\Controllers\JatuhTempoController;
 use App\Domain\Finance\KinerjaAr\Controllers\KinerjaArController;
 use App\Domain\Finance\KlienAr\Controllers\KlienArController;
 use App\Domain\Finance\MutasiPiutang\Controllers\MutasiPiutangController;
+use App\Domain\Finance\RekeningKoran\Controllers\RekeningKoranController;
+use App\Domain\Finance\RekonsiliasiBankStatement\Controllers\BankStatementController;
 use App\Domain\Finance\OpeningBalance\Controllers\OpeningBalanceController;
 use App\Domain\Finance\PembayaranAr\Controllers\PembayaranArController;
 use App\Domain\Finance\RekapPembayaran\Controllers\RekapPembayaranController;
@@ -61,6 +63,11 @@ Route::get('/aging-report', [AgingReportController::class, 'index']);
 // ─── Mutasi Piutang ───────────────────────────────────────────────
 Route::get('/mutasi-piutang', [MutasiPiutangController::class, 'index']);
 
+// ─── Rekening Koran ───────────────────────────────────────────────
+Route::get('/rekening-koran', [RekeningKoranController::class, 'index']);
+Route::get('/rekening-koran/export-excel', [RekeningKoranController::class, 'exportExcel']);
+Route::get('/rekening-koran/export-pdf', [RekeningKoranController::class, 'exportPdf']);
+
 // ─── Jatuh Tempo ──────────────────────────────────────────────────
 Route::get('/jatuh-tempo', [JatuhTempoController::class, 'index']);
 
@@ -69,6 +76,15 @@ Route::get('/rekap-pembayaran', [RekapPembayaranController::class, 'index']);
 
 // ─── Kinerja AR per PIC ───────────────────────────────────────────
 Route::get('/kinerja-ar', [KinerjaArController::class, 'index']);
+
+// ─── Rekonsiliasi Bank Statement ──────────────────────────────────
+Route::prefix('rekonsiliasi-bank')->group(function () {
+    Route::get('/',                                  [BankStatementController::class, 'index']);
+    Route::post('/upload',                           [BankStatementController::class, 'upload']);
+    Route::get('/{bankStatement}',                   [BankStatementController::class, 'show']);
+    Route::delete('/{bankStatement}',                [BankStatementController::class, 'destroy']);
+    Route::patch('/detail/{detail}/abaikan',         [BankStatementController::class, 'markDiabaikan']);
+});
 
 // ─── Opening Balance ──────────────────────────────────────────────
 Route::prefix('opening-balance')->group(function () {
