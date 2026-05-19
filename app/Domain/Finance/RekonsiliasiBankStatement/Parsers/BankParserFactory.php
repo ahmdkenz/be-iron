@@ -8,14 +8,13 @@ class BankParserFactory
 {
     public static function make(string $bankType): BankParserInterface
     {
-        return match (strtoupper($bankType)) {
-            'BCA'     => new BcaParser(),
-            'MANDIRI' => new MandiriParser(),
-            'BNI'     => new BniParser(),
-            'BRI'     => new BriParser(),
-            'CIMB'    => new CimbParser(),
-            'BSI'     => new BsiParser(),
-            default   => throw new InvalidArgumentException("Bank type tidak didukung: {$bankType}"),
+        $type = strtoupper($bankType);
+
+        return match (true) {
+            $type === 'BCA'                   => new BcaAdapter(),
+            $type === 'BSI'                   => new BsiAdapter(),
+            BankColumnMapping::has($type)     => new GenericBankParser(BankColumnMapping::get($type)),
+            default                           => throw new InvalidArgumentException("Bank type tidak didukung: {$bankType}"),
         };
     }
 }

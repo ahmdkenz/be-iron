@@ -2,6 +2,7 @@
 
 namespace App\Domain\Finance\RekonsiliasiBankStatement\Controllers;
 
+use App\Domain\Finance\RekonsiliasiBankStatement\BankTemplateGenerator;
 use App\Domain\Finance\RekonsiliasiBankStatement\Services\BankStatementService;
 use App\Http\Controllers\Controller;
 use App\Models\BankStatement;
@@ -9,6 +10,7 @@ use App\Models\BankStatementDetail;
 use App\Support\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 class BankStatementController extends Controller
 {
@@ -42,7 +44,7 @@ class BankStatementController extends Controller
     public function upload(Request $request): JsonResponse
     {
         $request->validate([
-            'bank_type' => ['required', 'in:BCA,MANDIRI,BNI,BRI,CIMB,BSI'],
+            'bank_type' => ['required', 'in:BCA,MANDIRI,CIMB,BSI'],
             'file'      => ['required', 'file', 'mimes:csv,xlsx,xls', 'max:10240'],
         ]);
 
@@ -84,5 +86,23 @@ class BankStatementController extends Controller
         $this->service->markDiabaikan($detail);
 
         return $this->successResponse(null, 'Transaksi ditandai diabaikan.');
+    }
+
+    public function downloadTemplate(string $bankType): BinaryFileResponse|JsonResponse
+    {
+        $bankType = strtoupper($bankType);
+
+        if (!in_array($bankType, BankTemplateGenerator::SUPPORTED)) {
+            return $this->errorResponse(
+                'Bank tidak didukung. Bank yang tersedia: ' . implode(', ', BankTemplateGenerator::SUPPORTED),
+                422
+            );
+        }
+
+        try {
+            return (new BankTemplateGenerator())->generate($bankType);
+        } catch (\RuntimeException $e) {
+            return $this->errorResponse($e->getMessage(), 500);
+        }
     }
 }

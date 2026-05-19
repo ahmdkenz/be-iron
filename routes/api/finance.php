@@ -81,6 +81,7 @@ Route::get('/kinerja-ar', [KinerjaArController::class, 'index']);
 Route::prefix('rekonsiliasi-bank')->group(function () {
     Route::get('/',                                  [BankStatementController::class, 'index']);
     Route::post('/upload',                           [BankStatementController::class, 'upload']);
+    Route::get('/template/{bankType}',               [BankStatementController::class, 'downloadTemplate']);
     Route::get('/{bankStatement}',                   [BankStatementController::class, 'show']);
     Route::delete('/{bankStatement}',                [BankStatementController::class, 'destroy']);
     Route::patch('/detail/{detail}/abaikan',         [BankStatementController::class, 'markDiabaikan']);
