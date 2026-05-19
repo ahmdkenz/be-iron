@@ -13,6 +13,8 @@ class BankParserFactory
             'MANDIRI' => new MandiriParser(),
             'BNI'     => new BniParser(),
             'BRI'     => new BriParser(),
+            'CIMB'    => new CimbParser(),
+            'BSI'     => new BsiParser(),
             default   => throw new InvalidArgumentException("Bank type tidak didukung: {$bankType}"),
         };
     }

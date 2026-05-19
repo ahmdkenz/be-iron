@@ -10,7 +10,7 @@ return new class extends Migration
     {
         Schema::create('tb_bank_statement', function (Blueprint $table) {
             $table->id();
-            $table->enum('bank_type', ['BCA', 'MANDIRI', 'BNI', 'BRI']);
+            $table->enum('bank_type', ['BCA', 'MANDIRI', 'BNI', 'BRI', 'CIMB', 'BSI']);
             $table->string('nama_file');
             $table->date('periode_awal')->nullable();
             $table->date('periode_akhir')->nullable();

@@ -42,7 +42,7 @@ class BankStatementController extends Controller
     public function upload(Request $request): JsonResponse
     {
         $request->validate([
-            'bank_type' => ['required', 'in:BCA,MANDIRI,BNI,BRI'],
+            'bank_type' => ['required', 'in:BCA,MANDIRI,BNI,BRI,CIMB,BSI'],
             'file'      => ['required', 'file', 'mimes:csv,xlsx,xls', 'max:10240'],
         ]);
 
