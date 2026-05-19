@@ -401,9 +401,9 @@ class InvoiceController extends Controller
             $totalData++;
             $noUrut       = $this->invoiceImportStr($row[0] ?? '');
             $namaKlien    = $this->invoiceImportStr($row[1] ?? '');
-            $tanggal      = $this->invoiceImportStr($row[2] ?? '');
-            $periodeAwal  = $this->invoiceImportStr($row[3] ?? '');
-            $periodeAkhir = $this->invoiceImportStr($row[4] ?? '');
+            $tanggal      = $this->invoiceImportDate($row[2] ?? '');
+            $periodeAwal  = $this->invoiceImportDate($row[3] ?? '');
+            $periodeAkhir = $this->invoiceImportDate($row[4] ?? '');
             $noSuratJalan = $this->invoiceImportStr($row[5] ?? '');
             $tagihanSblm  = $this->invoiceImportNum($row[6] ?? '');
             $keterangan   = $this->invoiceImportStr($row[7] ?? '');
@@ -971,6 +971,23 @@ class InvoiceController extends Controller
     {
         $s = trim((string) $val);
         return ($s === '' || $s === '-') ? null : $s;
+    }
+
+    private function invoiceImportDate(mixed $val): ?string
+    {
+        $s = trim((string) $val);
+        if ($s === '' || $s === '-') return null;
+
+        // Sudah format Y-m-d
+        if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $s)) return $s;
+
+        // Format DD/MM/YYYY atau DD-MM-YYYY (umum di Indonesia)
+        if (preg_match('/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/', $s, $m)) {
+            return sprintf('%04d-%02d-%02d', $m[3], $m[2], $m[1]);
+        }
+
+        // Fallback: biarkan validator menolak jika format tidak dikenali
+        return $s;
     }
 
     private function invoiceImportNum(mixed $val): float
