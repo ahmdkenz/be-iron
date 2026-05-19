@@ -13,7 +13,9 @@ abstract class AbstractBankParser implements BankParserInterface
     protected function loadXlsx(string $filePath): array
     {
         $spreadsheet = IOFactory::load($filePath);
-        return $spreadsheet->getActiveSheet()->toArray(null, true, true, false);
+        // formatData=false → nilai mentah (int/float/string) tanpa format locale.
+        // Menghindari ambiguitas "1,413,590.00" vs "1.413.590,00" dari locale Excel.
+        return $spreadsheet->getActiveSheet()->toArray(null, true, false, false);
     }
 
     // ── Header detection (scoring) ────────────────────────────────────
@@ -70,18 +72,21 @@ abstract class AbstractBankParser implements BankParserInterface
 
     protected function parseTanggal(string $raw): ?string
     {
-        $raw = trim($raw);
+        $raw = trim((string) $raw);
         if ($raw === '') return null;
 
-        foreach (['d/m/Y', 'd-m-Y', 'Y-m-d', 'd/m/y', 'd M Y', 'd-M-Y', 'd F Y', 'Y/m/d'] as $fmt) {
+        // Excel serial number (dari loadXlsx dengan formatData=false)
+        // Nilai valid: 1 (1 Jan 1900) s/d ~2.958.465 (31 Des 9999)
+        if (is_numeric($raw) && (float) $raw > 1 && (float) $raw < 2_958_466) {
             try {
-                return Carbon::createFromFormat($fmt, $raw)->format('Y-m-d');
+                return ExcelDate::excelToDateTimeObject((float) $raw)->format('Y-m-d');
             } catch (\Exception) {}
         }
 
-        if (is_numeric($raw)) {
+        // Coba format teks (CSV atau sel teks di XLSX)
+        foreach (['d/m/Y', 'd-m-Y', 'Y-m-d', 'd/m/y', 'd M Y', 'd-M-Y', 'd F Y', 'Y/m/d'] as $fmt) {
             try {
-                return ExcelDate::excelToDateTimeObject((float) $raw)->format('Y-m-d');
+                return Carbon::createFromFormat($fmt, $raw)->format('Y-m-d');
             } catch (\Exception) {}
         }
 
@@ -90,14 +95,32 @@ abstract class AbstractBankParser implements BankParserInterface
 
     protected function parseAngka(string $raw): float
     {
-        $clean = preg_replace('/[^\d,\.]/', '', trim($raw));
+        $raw = trim((string) $raw);
+        if ($raw === '') return 0.0;
 
-        // Format "1.234.567,89" — koma sebagai desimal
+        // Nilai numerik murni dari PhpSpreadsheet (formatData=false) atau CSV angka biasa.
+        // Contoh: "1413590", "1413590.5", "-500.25" — langsung konversi.
+        if (is_numeric($raw)) return (float) $raw;
+
+        // Hapus semua karakter selain digit, titik, koma, dan tanda minus
+        $clean = preg_replace('/[^\d,\.\-]/', '', $raw);
+        if ($clean === '' || $clean === '-') return 0.0;
+
+        // Format Indonesia: "1.234.567,89" — koma sebagai pemisah desimal
+        // Ciri: diakhiri koma lalu 1-2 digit
         if (preg_match('/,\d{1,2}$/', $clean)) {
             $clean = str_replace('.', '', $clean);
-            $clean = str_replace(',', '.', $clean);
+            return (float) str_replace(',', '.', $clean);
         }
 
-        return (float) $clean;
+        // Format US/Internasional: "1,234,567.89" — titik sebagai pemisah desimal
+        // Ciri: diakhiri titik lalu 1-2 digit DAN ada koma di bagian ribuan
+        if (preg_match('/\.\d{1,2}$/', $clean) && str_contains($clean, ',')) {
+            return (float) str_replace(',', '', $clean);
+        }
+
+        // Tanpa pemisah desimal eksplisit — hapus semua pemisah ribuan
+        // Contoh: "1.413.590" (ID), "1,413,590" (US), "1413590"
+        return (float) str_replace(['.', ','], '', $clean);
     }
 }
