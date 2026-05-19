@@ -13,11 +13,15 @@ class GoogleDriveService
 
     public function __construct()
     {
-        $credentialsPath = base_path(config('services.google_drive.credentials_path'));
-
         $client = new GoogleClient();
-        $client->setAuthConfig($credentialsPath);
+        $client->setClientId(config('services.google_drive.client_id'));
+        $client->setClientSecret(config('services.google_drive.client_secret'));
+        $client->setRedirectUri(config('services.google_drive.redirect_uri'));
+        $client->setAccessType('offline');
         $client->addScope(GoogleDrive::DRIVE);
+
+        // Gunakan refresh token untuk mendapatkan access token otomatis
+        $client->fetchAccessTokenWithRefreshToken(config('services.google_drive.refresh_token'));
 
         $this->drive = new GoogleDrive($client);
     }
@@ -80,6 +84,14 @@ class GoogleDriveService
         ]);
 
         return $file->getId();
+    }
+
+    /**
+     * Hapus file atau folder dari Google Drive berdasarkan ID.
+     */
+    public function deleteItem(string $fileId): void
+    {
+        $this->drive->files->delete($fileId);
     }
 
     /**
