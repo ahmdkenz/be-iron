@@ -27,6 +27,12 @@ class PembayaranArController extends Controller
     {
         $user = auth()->user()->load('karyawan');
 
+        $segmentTypes = match(strtoupper($request->segment ?? '')) {
+            'B2B'   => ['PT', 'STOKIS'],
+            'B2C'   => ['RESTO', 'MITRA'],
+            default => null,
+        };
+
         $query = PembayaranAr::with(['invoice.klienAr', 'invoice.perusahaan', 'createdBy'])
             ->when($request->klien_ar_id, fn($q, $v) =>
                 $q->whereHas('invoice', fn($q) => $q->where('klien_ar_id', $v))
@@ -36,7 +42,12 @@ class PembayaranArController extends Controller
             )
             ->when($request->metode_pembayaran, fn($q, $v) => $q->where('metode_pembayaran', $v))
             ->when($request->tanggal_dari, fn($q, $v) => $q->whereDate('tanggal_pembayaran', '>=', $v))
-            ->when($request->tanggal_sampai, fn($q, $v) => $q->whereDate('tanggal_pembayaran', '<=', $v));
+            ->when($request->tanggal_sampai, fn($q, $v) => $q->whereDate('tanggal_pembayaran', '<=', $v))
+            ->when($segmentTypes, fn($q) =>
+                $q->whereHas('invoice', fn($q) =>
+                    $q->whereHas('klienAr', fn($q) => $q->whereIn('tipe_klien', $segmentTypes))
+                )
+            );
 
         if ($user->karyawan && !RoleHelper::hasGlobalFinanceAccess($user)) {
             $query->whereHas('invoice', fn($q) =>
@@ -44,11 +55,21 @@ class PembayaranArController extends Controller
             );
         }
 
-        $list = $query->latest('tanggal_pembayaran')->paginate($request->per_page ?? 20);
+        $totalJumlah = (clone $query)->sum('jumlah_pembayaran');
+        $list        = $query->latest('tanggal_pembayaran')->paginate($request->per_page ?? 20);
 
-        return $this->paginatedResponse(
-            $list->through(fn($p) => new PembayaranArResource($p))
-        );
+        return response()->json([
+            'success' => true,
+            'message' => 'Success',
+            'data'    => $list->through(fn($p) => new PembayaranArResource($p))->items(),
+            'meta'    => [
+                'current_page' => $list->currentPage(),
+                'last_page'    => $list->lastPage(),
+                'per_page'     => $list->perPage(),
+                'total'        => $list->total(),
+                'total_jumlah' => $totalJumlah,
+            ],
+        ]);
     }
 
     public function store(StorePembayaranArRequest $request, int $invoiceId): JsonResponse
