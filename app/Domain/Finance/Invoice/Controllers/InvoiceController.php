@@ -689,6 +689,9 @@ class InvoiceController extends Controller
                 'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_HAIR, 'color' => ['argb' => 'FFE0E0E0']]],
             ]);
             $sheet->getStyle("G{$row}")->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
+            foreach (['C', 'D', 'E'] as $dateCol) {
+                $sheet->getStyle("{$dateCol}{$row}")->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
+            }
             $sheet->getRowDimension($row)->setRowHeight(18);
         }
 
@@ -947,6 +950,16 @@ class InvoiceController extends Controller
         $value = $cell->getValue();
         if ($value === null) return '';
         if (is_bool($value)) return $value ? '1' : '0';
+
+        // Jika cell berformat tanggal Excel, konversi serial number → Y-m-d
+        if (is_numeric($value)) {
+            $formatCode = $cell->getStyle()->getNumberFormat()->getFormatCode();
+            if (\PhpOffice\PhpSpreadsheet\Shared\Date::isDateTimeFormatCode($formatCode)) {
+                return \PhpOffice\PhpSpreadsheet\Shared\Date::excelToDateTimeObject((float) $value)
+                    ->format('Y-m-d');
+            }
+        }
+
         if (is_int($value)) return (string) $value;
         if (is_float($value)) {
             return fmod($value, 1.0) === 0.0 ? sprintf('%.0f', $value) : (string) $value;
