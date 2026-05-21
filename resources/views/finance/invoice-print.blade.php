@@ -317,17 +317,19 @@
               <thead>
                 <tr>
                   <th style="width:5%; text-align:center;">No</th>
-                  <th style="width:40%; text-align:left;">Nama Barang</th>
-                  <th style="width:10%; text-align:center;">Qty</th>
-                  <th style="width:10%; text-align:center;">Satuan</th>
-                  <th style="width:17%; text-align:right;">Harga Satuan</th>
-                  <th style="width:18%; text-align:right;">Subtotal</th>
+                  <th style="width:13%; text-align:left;">Kode Barang</th>
+                  <th style="width:27%; text-align:left;">Nama Barang</th>
+                  <th style="width:9%; text-align:center;">Qty</th>
+                  <th style="width:9%; text-align:center;">Satuan</th>
+                  <th style="width:18%; text-align:right;">Harga Satuan</th>
+                  <th style="width:19%; text-align:right;">Subtotal</th>
                 </tr>
               </thead>
               <tbody>
                 @foreach($detail->items as $ii => $item)
                 <tr>
                   <td style="text-align:center; color:#777;">{{ $ii + 1 }}</td>
+                  <td style="color:#555;">{{ $item->barang?->kode_barang ?? '-' }}</td>
                   <td>
                     {{ $item->nama_barang }}
                     @if($item->keterangan)<span class="ob-sub-item-label" style="display:block;">{{ $item->keterangan }}</span>@endif

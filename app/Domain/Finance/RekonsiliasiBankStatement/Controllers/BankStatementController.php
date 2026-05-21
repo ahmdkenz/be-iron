@@ -88,6 +88,50 @@ class BankStatementController extends Controller
         return $this->successResponse(null, 'Transaksi ditandai diabaikan.');
     }
 
+    public function kandidat(BankStatementDetail $detail): JsonResponse
+    {
+        $list = $this->service->getKandidat($detail);
+
+        return $this->successResponse($list);
+    }
+
+    public function matchDetail(Request $request, BankStatementDetail $detail): JsonResponse
+    {
+        $request->validate([
+            'pembayaran_ar_id' => ['required', 'integer', 'exists:tb_pembayaran_ar,id'],
+        ]);
+
+        try {
+            $updated = $this->service->manualMatch($detail, $request->integer('pembayaran_ar_id'));
+
+            return $this->successResponse([
+                'id'           => $updated->id,
+                'status_cocok' => $updated->status_cocok,
+                'pembayaran'   => $updated->pembayaranAr ? [
+                    'id'                 => $updated->pembayaranAr->id,
+                    'no_referensi'       => $updated->pembayaranAr->no_referensi,
+                    'tanggal_pembayaran' => $updated->pembayaranAr->tanggal_pembayaran?->toDateString(),
+                    'jumlah_pembayaran'  => $updated->pembayaranAr->jumlah_pembayaran,
+                    'metode_pembayaran'  => $updated->pembayaranAr->metode_pembayaran,
+                    'klien'              => $updated->pembayaranAr->invoice?->klienAr?->nama_klien,
+                ] : null,
+            ], 'Transaksi berhasil dicocokkan.');
+        } catch (\Symfony\Component\HttpKernel\Exception\HttpException $e) {
+            return $this->errorResponse($e->getMessage(), $e->getStatusCode());
+        }
+    }
+
+    public function unmatchDetail(BankStatementDetail $detail): JsonResponse
+    {
+        try {
+            $this->service->unmatch($detail);
+
+            return $this->successResponse(null, 'Cocok transaksi berhasil dibatalkan.');
+        } catch (\Symfony\Component\HttpKernel\Exception\HttpException $e) {
+            return $this->errorResponse($e->getMessage(), $e->getStatusCode());
+        }
+    }
+
     public function downloadTemplate(string $bankType): BinaryFileResponse|JsonResponse
     {
         $bankType = strtoupper($bankType);

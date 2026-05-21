@@ -85,6 +85,9 @@ Route::prefix('rekonsiliasi-bank')->group(function () {
     Route::get('/{bankStatement}',                   [BankStatementController::class, 'show']);
     Route::delete('/{bankStatement}',                [BankStatementController::class, 'destroy']);
     Route::patch('/detail/{detail}/abaikan',         [BankStatementController::class, 'markDiabaikan']);
+    Route::get('/detail/{detail}/kandidat',          [BankStatementController::class, 'kandidat']);
+    Route::patch('/detail/{detail}/match',           [BankStatementController::class, 'matchDetail']);
+    Route::patch('/detail/{detail}/unmatch',         [BankStatementController::class, 'unmatchDetail']);
 });
 
 // ─── Opening Balance ──────────────────────────────────────────────

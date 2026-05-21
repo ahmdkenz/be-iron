@@ -427,7 +427,7 @@ class OpeningBalanceController extends Controller
 
         // ── Pass 3: Item Invoice Asal (Sheet 3, XLSX only) ───────────────────
         if (!$isCsv) {
-            $sheet3Rows    = $this->parseObSheetRows($file->getRealPath(), 2, 'no_urut_ob', 8);
+            $sheet3Rows    = $this->parseObSheetRows($file->getRealPath(), 2, 'no_urut_ob', 9);
             $lineNumber    = 0;
             $headerSkipped = false;
 
@@ -455,12 +455,13 @@ class OpeningBalanceController extends Controller
                 }
 
                 $detailId    = $detailMap[$mapKey];
-                $namaBarang  = trim((string) ($row[2] ?? ''));
-                $qty         = (float) str_replace(',', '.', trim((string) ($row[3] ?? '')));
-                $satuan      = $this->importObValue($row[4] ?? '') ?? 'pcs';
-                $hargaSatuan = (float) str_replace(['.', ','], ['', '.'], trim((string) ($row[5] ?? '')));
+                $kodeBarang  = $this->importObValue($row[2] ?? '');
+                $namaBarang  = trim((string) ($row[3] ?? ''));
+                $qty         = (float) str_replace(',', '.', trim((string) ($row[4] ?? '')));
+                $satuan      = $this->importObValue($row[5] ?? '') ?? 'pcs';
+                $hargaSatuan = (float) str_replace(['.', ','], ['', '.'], trim((string) ($row[6] ?? '')));
                 $subtotal    = round($qty * $hargaSatuan, 2);
-                $keterangan  = $this->importObValue($row[7] ?? '');
+                $keterangan  = $this->importObValue($row[8] ?? '');
 
                 if (!$namaBarang) {
                     $errors[] = ['sheet' => 'Sheet 3', 'row' => $lineNumber, 'message' => 'Kolom nama_barang wajib diisi.'];
@@ -472,8 +473,13 @@ class OpeningBalanceController extends Controller
                     continue;
                 }
 
-                $barangId = Barang::whereRaw('LOWER(nama_barang) = ?', [strtolower($namaBarang)])
-                    ->value('id');
+                $barangId = null;
+                if ($kodeBarang) {
+                    $barangId = Barang::whereRaw('LOWER(kode_barang) = ?', [strtolower($kodeBarang)])->value('id');
+                }
+                if (!$barangId) {
+                    $barangId = Barang::whereRaw('LOWER(nama_barang) = ?', [strtolower($namaBarang)])->value('id');
+                }
 
                 try {
                     OpeningBalanceDetailItem::create([
@@ -737,14 +743,15 @@ class OpeningBalanceController extends Controller
         $cols = [
             'A' => ['No. Opening Balance',  28],
             'B' => ['No. Invoice Asal',     24],
-            'C' => ['Nama Barang',          30],
-            'D' => ['Qty',                  10],
-            'E' => ['Satuan',               12],
-            'F' => ['Harga Satuan',         20],
-            'G' => ['Subtotal',             20],
-            'H' => ['Keterangan',           30],
+            'C' => ['Kode Barang',          18],
+            'D' => ['Nama Barang',          30],
+            'E' => ['Qty',                  10],
+            'F' => ['Satuan',               12],
+            'G' => ['Harga Satuan',         20],
+            'H' => ['Subtotal',             20],
+            'I' => ['Keterangan',           30],
         ];
-        $lastCol = 'H';
+        $lastCol = 'I';
 
         $sheet->mergeCells("A1:{$lastCol}1");
         $sheet->setCellValue('A1', 'ITEM INVOICE ASAL');
@@ -777,21 +784,22 @@ class OpeningBalanceController extends Controller
                     $bg = $rowNum % 2 === 0 ? 'FFF1F8E9' : 'FFFFFFFF';
 
                     $rowData = [
-                        'A' => [$inv->no_invoice,          DataType::TYPE_STRING],
-                        'B' => [$detail->no_invoice_asal,  DataType::TYPE_STRING],
-                        'C' => [$item->nama_barang,        DataType::TYPE_STRING],
-                        'D' => [(float) $item->qty,        DataType::TYPE_NUMERIC],
-                        'E' => [$item->satuan ?? '-',      DataType::TYPE_STRING],
-                        'F' => [(float) $item->harga_satuan, DataType::TYPE_NUMERIC],
-                        'G' => [(float) $item->subtotal,   DataType::TYPE_NUMERIC],
-                        'H' => [$item->keterangan ?? '-',  DataType::TYPE_STRING],
+                        'A' => [$inv->no_invoice,                        DataType::TYPE_STRING],
+                        'B' => [$detail->no_invoice_asal,                DataType::TYPE_STRING],
+                        'C' => [$item->barang?->kode_barang ?? '-',      DataType::TYPE_STRING],
+                        'D' => [$item->nama_barang,                      DataType::TYPE_STRING],
+                        'E' => [(float) $item->qty,                      DataType::TYPE_NUMERIC],
+                        'F' => [$item->satuan ?? '-',                    DataType::TYPE_STRING],
+                        'G' => [(float) $item->harga_satuan,             DataType::TYPE_NUMERIC],
+                        'H' => [(float) $item->subtotal,                 DataType::TYPE_NUMERIC],
+                        'I' => [$item->keterangan ?? '-',                DataType::TYPE_STRING],
                     ];
 
                     foreach ($rowData as $col => [$val, $type]) {
                         $sheet->getCell("{$col}{$rowNum}")->setValueExplicit($val, $type);
                     }
 
-                    foreach (['F', 'G'] as $numCol) {
+                    foreach (['G', 'H'] as $numCol) {
                         $sheet->getStyle("{$numCol}{$rowNum}")->getNumberFormat()->setFormatCode($numFmt);
                     }
 
@@ -1022,17 +1030,18 @@ class OpeningBalanceController extends Controller
         $sheet->setTitle('Item Invoice Asal');
 
         $cols = [
-            'A' => ['no_urut_ob',    14],
-            'B' => ['no_invoice_asal',24],
-            'C' => ['nama_barang',   30],
-            'D' => ['qty',           10],
-            'E' => ['satuan',        12],
-            'F' => ['harga_satuan',  20],
-            'G' => ['subtotal',      20],
-            'H' => ['keterangan',    30],
+            'A' => ['no_urut_ob',      14],
+            'B' => ['no_invoice_asal', 24],
+            'C' => ['kode_barang',     18],
+            'D' => ['nama_barang',     30],
+            'E' => ['qty',             10],
+            'F' => ['satuan',          12],
+            'G' => ['harga_satuan',    20],
+            'H' => ['subtotal',        20],
+            'I' => ['keterangan',      30],
         ];
 
-        $sheet->mergeCells('A1:H1');
+        $sheet->mergeCells('A1:I1');
         $sheet->setCellValue('A1', 'TEMPLATE IMPORT — Sheet 3: Item Invoice Asal');
         $sheet->getStyle('A1')->applyFromArray([
             'font'      => ['bold' => true, 'size' => 13, 'color' => ['argb' => 'FFFFFFFF']],
@@ -1041,8 +1050,8 @@ class OpeningBalanceController extends Controller
         ]);
         $sheet->getRowDimension(1)->setRowHeight(36);
 
-        $sheet->mergeCells('A2:H2');
-        $sheet->setCellValue('A2', 'Isi item/barang per Invoice Asal. Kolom subtotal (G) boleh dikosongkan — dihitung otomatis dari qty × harga_satuan. Opsional — dikosongkan jika tidak ada item.');
+        $sheet->mergeCells('A2:I2');
+        $sheet->setCellValue('A2', 'Isi item/barang per Invoice Asal. Kolom kode_barang (C) opsional. Kolom subtotal (H) boleh dikosongkan — dihitung otomatis dari qty × harga_satuan. Opsional — dikosongkan jika tidak ada item.');
         $sheet->getStyle('A2')->applyFromArray([
             'font'      => ['italic' => true, 'size' => 9, 'color' => ['argb' => 'FF37474F']],
             'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFF3E5F5']],
@@ -1055,7 +1064,7 @@ class OpeningBalanceController extends Controller
             $sheet->setCellValue("{$col}4", $name);
             $sheet->getColumnDimension($col)->setWidth($width);
         }
-        $sheet->getStyle('A4:H4')->applyFromArray([
+        $sheet->getStyle('A4:I4')->applyFromArray([
             'font'      => ['bold' => true, 'size' => 10, 'color' => ['argb' => 'FFFFFFFF']],
             'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF7B1FA2']],
             'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
@@ -1066,17 +1075,18 @@ class OpeningBalanceController extends Controller
         $example = [
             'A' => '1',
             'B' => '[CONTOH] INV-2024-001',
-            'C' => 'Minyak Goreng 5L',
-            'D' => '100',
-            'E' => 'botol',
-            'F' => '50000',
-            'G' => '5000000',
-            'H' => 'Kualitas premium',
+            'C' => 'BRG-001',
+            'D' => 'Minyak Goreng 5L',
+            'E' => '100',
+            'F' => 'botol',
+            'G' => '50000',
+            'H' => '5000000',
+            'I' => 'Kualitas premium',
         ];
         foreach ($example as $col => $val) {
             $sheet->getCell("{$col}5")->setValueExplicit($val, DataType::TYPE_STRING);
         }
-        $sheet->getStyle('A5:H5')->applyFromArray([
+        $sheet->getStyle('A5:I5')->applyFromArray([
             'font'      => ['italic' => true, 'size' => 9, 'color' => ['argb' => 'FFE65100']],
             'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFFFF9C4']],
             'alignment' => ['vertical' => Alignment::VERTICAL_CENTER],
@@ -1086,11 +1096,11 @@ class OpeningBalanceController extends Controller
 
         for ($row = 6; $row <= 205; $row++) {
             $bg = $row % 2 === 0 ? 'FFF5F5F5' : 'FFFFFFFF';
-            $sheet->getStyle("A{$row}:H{$row}")->applyFromArray([
+            $sheet->getStyle("A{$row}:I{$row}")->applyFromArray([
                 'fill'    => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => $bg]],
                 'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_HAIR, 'color' => ['argb' => 'FFE0E0E0']]],
             ]);
-            foreach (['A', 'D', 'F', 'G'] as $col) {
+            foreach (['A', 'E', 'G', 'H'] as $col) {
                 $sheet->getStyle("{$col}{$row}")->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
             }
             $sheet->getRowDimension($row)->setRowHeight(18);
