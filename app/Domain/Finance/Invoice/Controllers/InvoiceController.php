@@ -420,7 +420,7 @@ class InvoiceController extends Controller
                 ],
                 [
                     'no_urut'         => ['required'],
-                    'no_invoice'      => ['required', 'string', 'unique:tb_invoices,no_invoice'],
+                    'no_invoice'      => ['required', 'string', 'unique:tb_invoice,no_invoice'],
                     'nama_klien'      => ['required'],
                     'tanggal_invoice' => ['required', 'date'],
                     'periode_awal'    => ['required', 'date'],
@@ -484,10 +484,11 @@ class InvoiceController extends Controller
             if ($firstCell === '' && count(array_filter(array_map('strval', $row))) === 0) continue;
 
             $noUrutInvoice = $this->invoiceImportStr($row[0] ?? '');
-            $namaBarang    = $this->invoiceImportStr($row[1] ?? '');
-            $qty           = $this->invoiceImportNum($row[2] ?? '');
-            $satuan        = $this->invoiceImportStr($row[3] ?? '');
-            $hargaSatuan   = $this->invoiceImportNum($row[4] ?? '');
+            $kodeBarang    = $this->invoiceImportStr($row[1] ?? '');
+            $namaBarang    = $this->invoiceImportStr($row[2] ?? '');
+            $qty           = $this->invoiceImportNum($row[3] ?? '');
+            $satuan        = $this->invoiceImportStr($row[4] ?? '');
+            $hargaSatuan   = $this->invoiceImportNum($row[5] ?? '');
 
             if (!$noUrutInvoice) {
                 $errors[] = ['sheet' => 'Item Invoice', 'row' => $lineNumber, 'message' => 'no_urut_invoice wajib diisi'];
@@ -506,8 +507,19 @@ class InvoiceController extends Controller
                 continue;
             }
 
+            $barangId = null;
+            if ($kodeBarang) {
+                $barang = \App\Models\Barang::where('kode_barang', $kodeBarang)->first();
+                if ($barang) {
+                    $barangId = $barang->id;
+                } else {
+                    $errors[] = ['sheet' => 'Item Invoice', 'row' => $lineNumber, 'message' => "Kode barang '{$kodeBarang}' tidak ditemukan di master barang (item tetap disimpan tanpa referensi barang)"];
+                }
+            }
+
             $invoice = $invoiceMapping[$noUrutInvoice];
             $invoice->items()->create([
+                'barang_id'    => $barangId,
                 'nama_barang'  => $namaBarang,
                 'qty'          => $qty,
                 'satuan'       => $satuan,
@@ -556,7 +568,7 @@ class InvoiceController extends Controller
         $invoice->load([
             'klienAr.karyawanAr',
             'perusahaan',
-            'items',
+            'items.barang',
             'pembayarans',
             'createdBy.karyawan',
             'submittedBy.karyawan',
@@ -589,7 +601,7 @@ class InvoiceController extends Controller
         $invoice->load([
             'klienAr.karyawanAr',
             'perusahaan',
-            'items',
+            'items.barang',
             'openingBalanceDetails.items.barang',
             'pembayarans',
             'createdBy.karyawan',
@@ -707,12 +719,13 @@ class InvoiceController extends Controller
         $sheet->setTitle('Item Invoice');
         $cols = [
             'A' => ['no_urut_invoice', 18],
-            'B' => ['nama_barang',     32],
-            'C' => ['qty',             12],
-            'D' => ['satuan',          14],
-            'E' => ['harga_satuan',    20],
+            'B' => ['kode_barang',     20],
+            'C' => ['nama_barang',     32],
+            'D' => ['qty',             12],
+            'E' => ['satuan',          14],
+            'F' => ['harga_satuan',    20],
         ];
-        $lastCol = 'E';
+        $lastCol = 'F';
 
         $sheet->mergeCells("A1:{$lastCol}1");
         $sheet->setCellValue('A1', 'TEMPLATE IMPORT INVOICE AR — SHEET 2: ITEM INVOICE');
@@ -747,10 +760,11 @@ class InvoiceController extends Controller
 
         $example = [
             'A' => '[CONTOH] 1',
-            'B' => 'Jasa Pelayanan',
-            'C' => '1',
-            'D' => 'Paket',
-            'E' => '500000',
+            'B' => 'BRG-001',
+            'C' => 'Jasa Pelayanan',
+            'D' => '1',
+            'E' => 'Paket',
+            'F' => '500000',
         ];
         foreach ($example as $col => $val) {
             $sheet->getCell("{$col}5")->setValueExplicit($val, DataType::TYPE_STRING);
@@ -769,7 +783,7 @@ class InvoiceController extends Controller
                 'fill'    => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => $bg]],
                 'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_HAIR, 'color' => ['argb' => 'FFE0E0E0']]],
             ]);
-            $sheet->getStyle("E{$row}")->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
+            $sheet->getStyle("F{$row}")->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
             $sheet->getRowDimension($row)->setRowHeight(18);
         }
 
@@ -897,6 +911,7 @@ class InvoiceController extends Controller
     {
         return [
             ['no_urut_invoice', 'Nomor urut invoice dari Sheet "Invoice" (kolom no_urut)', 'Ya',       'Harus sesuai no_urut di Sheet Invoice. Contoh: 1'],
+            ['kode_barang',     'Kode barang dari master barang',                           'Opsional', 'Jika diisi, barang akan dihubungkan ke master. Contoh: BRG-001'],
             ['nama_barang',     'Nama barang atau jasa yang ditagihkan',                    'Ya',       'Teks bebas. Contoh: Jasa Pelayanan Bulan Juni'],
             ['qty',             'Jumlah / kuantitas',                                       'Ya',       'Angka positif. Contoh: 1, 2.5'],
             ['satuan',          'Satuan barang atau jasa',                                  'Opsional', 'Contoh: Paket, Bulan, Unit, Kg'],

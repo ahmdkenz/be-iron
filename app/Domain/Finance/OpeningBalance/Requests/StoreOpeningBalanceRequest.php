@@ -17,8 +17,8 @@ class StoreOpeningBalanceRequest extends FormRequest
             'no_invoice'                     => [
                 'required', 'string', 'max:100',
                 $id
-                    ? Rule::unique('tb_invoices', 'no_invoice')->ignore($id)
-                    : 'unique:tb_invoices,no_invoice',
+                    ? Rule::unique('tb_invoice', 'no_invoice')->ignore($id)
+                    : 'unique:tb_invoice,no_invoice',
             ],
             'klien_ar_id'                    => ['required', 'integer', 'exists:tb_klien_ar,id'],
             'tanggal'                        => ['required', 'date'],

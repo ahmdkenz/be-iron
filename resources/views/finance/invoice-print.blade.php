@@ -69,12 +69,13 @@
     .items-table td { padding: 12px 8px; border-bottom: 1px solid #eee; font-size: 16px; }
     .item-desc { font-size: 14px; color: #666; font-style: italic; margin-top: 6px; display: block; }
 
-    .col-no { width: 5%; }
-    .col-desc { width: 35%; }
+    .col-no { width: 4%; }
+    .col-kode { width: 12%; }
+    .col-desc { width: 26%; }
     .col-qty { width: 8%; }
-    .col-sat { width: 7%; }
+    .col-sat { width: 8%; }
     .col-harga { width: 20%; }
-    .col-sub { width: 25%; }
+    .col-sub { width: 22%; }
 
     /* Opening Balance Detail Table */
     .ob-section-title { font-size: 14px; font-weight: bold; text-transform: uppercase; color: #b71c1c; letter-spacing: 1px; margin-bottom: 8px; margin-top: 4px; }
@@ -363,7 +364,8 @@
     <thead>
       <tr>
         <th class="col-no text-center">No</th>
-        <th class="col-desc text-left">Deskripsi Barang</th>
+        <th class="col-kode text-left">Kode Barang</th>
+        <th class="col-desc text-left">Nama Barang</th>
         <th class="col-qty text-center">Qty</th>
         <th class="col-sat text-center">Satuan</th>
         <th class="col-harga text-right">Harga Satuan</th>
@@ -374,6 +376,7 @@
       @forelse($invoice->items as $i => $item)
       <tr>
         <td class="col-no text-center" style="color:#777;">{{ $i + 1 }}</td>
+        <td class="col-kode" style="color:#555; font-size:14px;">{{ $item->barang?->kode_barang ?? '-' }}</td>
         <td class="col-desc">
           <span class="font-bold" style="color:#111;">{{ $item->nama_barang }}</span>
           @if($item->keterangan)<span class="item-desc">{{ $item->keterangan }}</span>@endif
@@ -385,7 +388,7 @@
       </tr>
       @empty
       <tr>
-        <td colspan="6" class="text-center" style="padding: 24px; color: #777; font-style: italic;">
+        <td colspan="7" class="text-center" style="padding: 24px; color: #777; font-style: italic;">
           Tidak ada data barang untuk invoice ini.
         </td>
       </tr>
