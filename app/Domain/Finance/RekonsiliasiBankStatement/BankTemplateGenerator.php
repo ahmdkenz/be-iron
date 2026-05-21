@@ -15,15 +15,16 @@ class BankTemplateGenerator
 
     const CONFIGS = [
         'BCA' => [
-            'label'       => 'BCA',
+            'label'        => 'BCA',
             'upload_format' => 'CSV',
-            'headers'     => ['Tanggal', 'Keterangan', 'Cabang', 'Jumlah', 'Saldo'],
-            'col_desc'    => [
-                'Tanggal'     => ['Tanggal transaksi', 'DD/MM/YYYY', '01/01/2025'],
-                'Keterangan'  => ['Deskripsi / uraian transaksi', 'Teks bebas', 'TRANSFER MASUK PT ABC'],
-                'Cabang'      => ['Nama cabang bank (boleh kosong)', 'Teks bebas', 'KCP JAKARTA SELATAN'],
-                'Jumlah'      => ['Nominal + " CR" (masuk) atau " DB" (keluar)', 'Angka + CR/DB', '1.500.000,00 CR'],
-                'Saldo'       => ['Saldo rekening setelah transaksi', 'Angka desimal', '10.500.000,00'],
+            'headers'      => ['Tanggal', 'Keterangan', 'No Referensi', 'Cabang', 'Jumlah', 'Saldo'],
+            'col_desc'     => [
+                'Tanggal'      => ['Tanggal transaksi', 'DD/MM/YYYY', '01/01/2025'],
+                'Keterangan'   => ['Deskripsi / uraian transaksi', 'Teks bebas', 'TRANSFER MASUK PT ABC'],
+                'No Referensi' => ['Nomor referensi transaksi dari bank (boleh kosong)', 'Teks/angka', 'FT2501010001'],
+                'Cabang'       => ['Nama cabang bank (boleh kosong)', 'Teks bebas', 'KCP JAKARTA SELATAN'],
+                'Jumlah'       => ['Nominal + " CR" (masuk) atau " DB" (keluar)', 'Angka + CR/DB', '1.500.000,00 CR'],
+                'Saldo'        => ['Saldo rekening setelah transaksi', 'Angka desimal', '10.500.000,00'],
             ],
             'special_note' => [
                 'Kolom "Jumlah" menggunakan format khusus BCA:',
@@ -32,18 +33,19 @@ class BankTemplateGenerator
             ],
             'upload_note'  => 'File yang diunggah ke sistem harus berformat CSV (.csv) yang diunduh langsung dari BCA e-banking / KlikBCA Bisnis. Template Excel ini hanya digunakan sebagai panduan format data.',
             'sample'       => [
-                ['01/01/2025', 'TRANSFER MASUK PT ABC', 'KCP JAKARTA SELATAN', '1.500.000,00 CR', '10.500.000,00'],
-                ['02/01/2025', 'BIAYA ADMINISTRASI', 'KCP JAKARTA SELATAN', '10.500,00 DB', '10.489.500,00'],
-                ['03/01/2025', 'SETORAN TUNAI CV XYZ', 'KCP JAKARTA SELATAN', '2.000.000,00 CR', '12.489.500,00'],
+                ['01/01/2025', 'TRANSFER MASUK PT ABC', 'FT2501010001', 'KCP JAKARTA SELATAN', '1.500.000,00 CR', '10.500.000,00'],
+                ['02/01/2025', 'BIAYA ADMINISTRASI', '', 'KCP JAKARTA SELATAN', '10.500,00 DB', '10.489.500,00'],
+                ['03/01/2025', 'SETORAN TUNAI CV XYZ', 'FT2501030002', 'KCP JAKARTA SELATAN', '2.000.000,00 CR', '12.489.500,00'],
             ],
         ],
         'MANDIRI' => [
             'label'         => 'Bank Mandiri',
             'upload_format' => 'XLSX',
-            'headers'       => ['Tanggal Transaksi', 'Deskripsi', 'Debet', 'Kredit', 'Saldo'],
+            'headers'       => ['Tanggal Transaksi', 'Deskripsi', 'No Referensi', 'Debet', 'Kredit', 'Saldo'],
             'col_desc'      => [
                 'Tanggal Transaksi' => ['Tanggal transaksi', 'DD/MM/YYYY', '01/01/2025'],
                 'Deskripsi'         => ['Deskripsi / keterangan transaksi', 'Teks bebas', 'TRANSFER MASUK PT ABC'],
+                'No Referensi'      => ['Nomor referensi transaksi dari bank (boleh kosong)', 'Teks/angka', '12345678901234'],
                 'Debet'             => ['Nominal dana keluar (kosongkan jika tidak ada)', 'Angka desimal', '10.500,00'],
                 'Kredit'            => ['Nominal dana masuk (kosongkan jika tidak ada)', 'Angka desimal', '1.500.000,00'],
                 'Saldo'             => ['Saldo rekening setelah transaksi', 'Angka desimal', '10.500.000,00'],
@@ -51,18 +53,19 @@ class BankTemplateGenerator
             'special_note'  => [],
             'upload_note'   => 'File dapat diunggah dalam format XLSX atau XLS yang diunduh langsung dari Mandiri Online Bisnis / Livin\' by Mandiri.',
             'sample'        => [
-                ['01/01/2025', 'TRANSFER MASUK PT ABC', '', '1.500.000,00', '10.500.000,00'],
-                ['02/01/2025', 'BIAYA ADM BULANAN', '10.500,00', '', '10.489.500,00'],
-                ['03/01/2025', 'TRANSFER MASUK CV XYZ', '', '2.000.000,00', '12.489.500,00'],
+                ['01/01/2025', 'TRANSFER MASUK PT ABC', '12345678901234', '', '1.500.000,00', '10.500.000,00'],
+                ['02/01/2025', 'BIAYA ADM BULANAN', '', '10.500,00', '', '10.489.500,00'],
+                ['03/01/2025', 'TRANSFER MASUK CV XYZ', '12345678905678', '', '2.000.000,00', '12.489.500,00'],
             ],
         ],
         'CIMB' => [
             'label'         => 'CIMB Niaga',
             'upload_format' => 'XLSX',
-            'headers'       => ['Tanggal Transaksi', 'Keterangan', 'Mutasi Debet', 'Mutasi Kredit', 'Saldo Akhir'],
+            'headers'       => ['Tanggal Transaksi', 'Keterangan', 'No Referensi', 'Mutasi Debet', 'Mutasi Kredit', 'Saldo Akhir'],
             'col_desc'      => [
                 'Tanggal Transaksi' => ['Tanggal transaksi', 'DD/MM/YYYY', '01/01/2025'],
                 'Keterangan'        => ['Keterangan / deskripsi transaksi', 'Teks bebas', 'TRANSFER MASUK PT ABC'],
+                'No Referensi'      => ['Nomor referensi transaksi dari bank (boleh kosong)', 'Teks/angka', 'CIMB20250101001'],
                 'Mutasi Debet'      => ['Nominal dana keluar (kosongkan jika tidak ada)', 'Angka desimal', '10.500,00'],
                 'Mutasi Kredit'     => ['Nominal dana masuk (kosongkan jika tidak ada)', 'Angka desimal', '1.500.000,00'],
                 'Saldo Akhir'       => ['Saldo rekening setelah transaksi', 'Angka desimal', '10.500.000,00'],
@@ -70,28 +73,29 @@ class BankTemplateGenerator
             'special_note'  => [],
             'upload_note'   => 'File dapat diunggah dalam format XLSX atau XLS yang diunduh langsung dari OCTO Business / CIMB Clicks.',
             'sample'        => [
-                ['01/01/2025', 'TRANSFER MASUK PT ABC', '', '1.500.000,00', '10.500.000,00'],
-                ['02/01/2025', 'BIAYA ADMINISTRASI', '10.500,00', '', '10.489.500,00'],
-                ['03/01/2025', 'TRANSFER MASUK CV XYZ', '', '2.000.000,00', '12.489.500,00'],
+                ['01/01/2025', 'TRANSFER MASUK PT ABC', 'CIMB20250101001', '', '1.500.000,00', '10.500.000,00'],
+                ['02/01/2025', 'BIAYA ADMINISTRASI', '', '10.500,00', '', '10.489.500,00'],
+                ['03/01/2025', 'TRANSFER MASUK CV XYZ', 'CIMB20250103002', '', '2.000.000,00', '12.489.500,00'],
             ],
         ],
         'BSI' => [
             'label'         => 'BSI (Bank Syariah Indonesia)',
             'upload_format' => 'XLSX / CSV',
-            'headers'       => ['Tanggal', 'Keterangan', 'Debit', 'Kredit', 'Saldo'],
+            'headers'       => ['Tanggal', 'Keterangan', 'No Referensi', 'Debit', 'Kredit', 'Saldo'],
             'col_desc'      => [
-                'Tanggal'     => ['Tanggal transaksi', 'DD/MM/YYYY', '01/01/2025'],
-                'Keterangan'  => ['Keterangan / deskripsi transaksi', 'Teks bebas', 'TRANSFER MASUK PT ABC'],
-                'Debit'       => ['Nominal dana keluar (kosongkan jika tidak ada)', 'Angka desimal', '10.500,00'],
-                'Kredit'      => ['Nominal dana masuk (kosongkan jika tidak ada)', 'Angka desimal', '1.500.000,00'],
-                'Saldo'       => ['Saldo rekening setelah transaksi', 'Angka desimal', '10.500.000,00'],
+                'Tanggal'      => ['Tanggal transaksi', 'DD/MM/YYYY', '01/01/2025'],
+                'Keterangan'   => ['Keterangan / deskripsi transaksi', 'Teks bebas', 'TRANSFER MASUK PT ABC'],
+                'No Referensi' => ['Nomor referensi transaksi dari bank (boleh kosong)', 'Teks/angka', 'BSI20250101001'],
+                'Debit'        => ['Nominal dana keluar (kosongkan jika tidak ada)', 'Angka desimal', '10.500,00'],
+                'Kredit'       => ['Nominal dana masuk (kosongkan jika tidak ada)', 'Angka desimal', '1.500.000,00'],
+                'Saldo'        => ['Saldo rekening setelah transaksi', 'Angka desimal', '10.500.000,00'],
             ],
             'special_note'  => [],
             'upload_note'   => 'File dapat diunggah dalam format XLSX, XLS, atau CSV yang diunduh dari BSI Mobile / BSI Net Banking Bisnis.',
             'sample'        => [
-                ['01/01/2025', 'TRANSFER MASUK PT ABC', '', '1.500.000,00', '10.500.000,00'],
-                ['02/01/2025', 'BIAYA ADMINISTRASI', '10.500,00', '', '10.489.500,00'],
-                ['03/01/2025', 'TRANSFER MASUK CV XYZ', '', '2.000.000,00', '12.489.500,00'],
+                ['01/01/2025', 'TRANSFER MASUK PT ABC', 'BSI20250101001', '', '1.500.000,00', '10.500.000,00'],
+                ['02/01/2025', 'BIAYA ADMINISTRASI', '', '10.500,00', '', '10.489.500,00'],
+                ['03/01/2025', 'TRANSFER MASUK CV XYZ', 'BSI20250103002', '', '2.000.000,00', '12.489.500,00'],
             ],
         ],
     ];
@@ -253,7 +257,7 @@ class BankTemplateGenerator
         // ── Keterangan kolom ────────────────────────────────────────
         $r = $this->writeSectionHeader($sheet, $r, 'KETERANGAN KOLOM', 3);
         $r = $this->writeTableHeader($sheet, $r, ['Nama Kolom', 'Keterangan', 'Contoh Isi']);
-        foreach ($config['col_desc'] as $colName => [$desc, $format, $example]) {
+        foreach ($config['col_desc'] as $colName => [$desc, , $example]) {
             $r = $this->writeTableRow($sheet, $r, [$colName, $desc, $example], $r % 2 === 0);
         }
         $r++;

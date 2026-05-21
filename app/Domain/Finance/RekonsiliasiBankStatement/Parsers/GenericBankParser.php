@@ -74,11 +74,12 @@ class GenericBankParser extends AbstractBankParser
         if ($debit == 0 && $kredit == 0) return null;
 
         return [
-            'tanggal'    => $tanggal,
-            'keterangan' => trim((string) ($row[$colMap['keterangan'] ?? -1] ?? '')),
-            'debit'      => $debit,
-            'kredit'     => $kredit,
-            'saldo'      => $this->parseAngka((string) ($row[$colMap['saldo'] ?? -1] ?? '0')),
+            'tanggal'      => $tanggal,
+            'keterangan'   => trim((string) ($row[$colMap['keterangan'] ?? -1] ?? '')),
+            'no_referensi' => isset($colMap['no_referensi']) ? (trim((string) ($row[$colMap['no_referensi']] ?? '')) ?: null) : null,
+            'debit'        => $debit,
+            'kredit'       => $kredit,
+            'saldo'        => $this->parseAngka((string) ($row[$colMap['saldo'] ?? -1] ?? '0')),
         ];
     }
 }

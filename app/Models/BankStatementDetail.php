@@ -4,7 +4,6 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class BankStatementDetail extends Model
 {
@@ -14,6 +13,7 @@ class BankStatementDetail extends Model
         'bank_statement_id',
         'tanggal',
         'keterangan',
+        'no_referensi',
         'debit',
         'kredit',
         'saldo',

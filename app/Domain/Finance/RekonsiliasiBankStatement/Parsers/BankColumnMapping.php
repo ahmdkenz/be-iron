@@ -8,18 +8,20 @@ class BankColumnMapping
     // Urutan array penting: keyword pertama = prioritas tertinggi
     const MAPS = [
         'MANDIRI' => [
-            'tanggal'    => ['tanggal transaksi', 'tanggal'],
-            'keterangan' => ['deskripsi', 'keterangan', 'uraian'],
-            'debit'      => ['debet', 'debit'],
-            'kredit'     => ['kredit'],
-            'saldo'      => ['saldo'],
+            'tanggal'      => ['tanggal transaksi', 'tanggal'],
+            'keterangan'   => ['deskripsi', 'keterangan', 'uraian'],
+            'no_referensi' => ['no referensi', 'nomor referensi', 'no. referensi', 'no ref', 'no transaksi'],
+            'debit'        => ['debet', 'debit'],
+            'kredit'       => ['kredit'],
+            'saldo'        => ['saldo'],
         ],
         'CIMB' => [
-            'tanggal'    => ['tanggal transaksi', 'tgl transaksi', 'tanggal'],
-            'keterangan' => ['keterangan', 'deskripsi'],
-            'debit'      => ['mutasi debet', 'debet', 'debit'],
-            'kredit'     => ['mutasi kredit', 'kredit'],
-            'saldo'      => ['saldo akhir', 'saldo'],
+            'tanggal'      => ['tanggal transaksi', 'tgl transaksi', 'tanggal'],
+            'keterangan'   => ['keterangan', 'deskripsi'],
+            'no_referensi' => ['no referensi', 'nomor referensi', 'no. referensi', 'no ref', 'no transaksi'],
+            'debit'        => ['mutasi debet', 'debet', 'debit'],
+            'kredit'       => ['mutasi kredit', 'kredit'],
+            'saldo'        => ['saldo akhir', 'saldo'],
         ],
     ];
 
