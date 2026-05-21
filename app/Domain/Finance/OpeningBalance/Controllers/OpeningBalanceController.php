@@ -282,7 +282,7 @@ class OpeningBalanceController extends Controller
         // ── Pass 1: Opening Balance utama ────────────────────────────────────
         $sheet1Rows = $isCsv
             ? $this->parseObCsv($file->getRealPath())
-            : $this->parseObSheetRows($file->getRealPath(), 0, 'nama_klien', 7);
+            : $this->parseObSheetRows($file->getRealPath(), 0, 'no_invoice', 8);
 
         $lineNumber    = 0;
         $headerSkipped = false;
@@ -298,27 +298,29 @@ class OpeningBalanceController extends Controller
 
             $totalOb++;
 
-            $namaKlien = $firstCell;
+            $noInvoice = $firstCell;
+            $namaKlien = $this->importObValue($row[1] ?? '');
             $klien     = KlienAr::where('nama_klien', $namaKlien)->latest()->first();
             if (!$klien) {
                 $errors[] = ['sheet' => 'Sheet 1', 'row' => $lineNumber, 'message' => "Klien '{$namaKlien}' tidak ditemukan di sistem."];
                 continue;
             }
 
-            $tanggal     = $this->parseObDate($row[1] ?? '');
-            $periodeAwal = $this->parseObDate($row[2] ?? '');
-            $periodeAkhir= $this->parseObDate($row[3] ?? '');
+            $tanggal     = $this->parseObDate($row[2] ?? '');
+            $periodeAwal = $this->parseObDate($row[3] ?? '');
+            $periodeAkhir= $this->parseObDate($row[4] ?? '');
 
             if (!$tanggal || !$periodeAwal || !$periodeAkhir) {
                 $errors[] = ['sheet' => 'Sheet 1', 'row' => $lineNumber, 'message' => 'Format tanggal tidak valid. Gunakan format YYYY-MM-DD atau DD-MM-YYYY.'];
                 continue;
             }
 
-            $saldoAwal  = (float) str_replace(['.', ','], ['', '.'], trim((string) ($row[4] ?? '')));
-            $keterangan = $this->importObValue($row[5] ?? '');
-            $noUrut     = trim((string) ($row[6] ?? ''));
+            $saldoAwal  = (float) str_replace(['.', ','], ['', '.'], trim((string) ($row[5] ?? '')));
+            $keterangan = $this->importObValue($row[6] ?? '');
+            $noUrut     = trim((string) ($row[7] ?? ''));
 
             $data = [
+                'no_invoice'   => $noInvoice,
                 'klien_ar_id'  => $klien->id,
                 'tanggal'      => $tanggal,
                 'periode_awal' => $periodeAwal,
@@ -328,6 +330,7 @@ class OpeningBalanceController extends Controller
             ];
 
             $validator = Validator::make($data, [
+                'no_invoice'   => ['required', 'string', 'unique:tb_invoices,no_invoice'],
                 'klien_ar_id'  => ['required', 'integer'],
                 'tanggal'      => ['required', 'date'],
                 'periode_awal' => ['required', 'date'],
@@ -868,16 +871,17 @@ class OpeningBalanceController extends Controller
         $sheet->setTitle('Data Opening Balance');
 
         $cols = [
-            'A' => ['nama_klien',   32],
-            'B' => ['tanggal',      16],
-            'C' => ['periode_awal', 16],
-            'D' => ['periode_akhir',16],
-            'E' => ['saldo_awal',   20],
-            'F' => ['keterangan',   36],
-            'G' => ['no_urut',      10],
+            'A' => ['no_invoice',   26],
+            'B' => ['nama_klien',   32],
+            'C' => ['tanggal',      16],
+            'D' => ['periode_awal', 16],
+            'E' => ['periode_akhir',16],
+            'F' => ['saldo_awal',   20],
+            'G' => ['keterangan',   36],
+            'H' => ['no_urut',      10],
         ];
 
-        $sheet->mergeCells('A1:G1');
+        $sheet->mergeCells('A1:H1');
         $sheet->setCellValue('A1', 'TEMPLATE IMPORT DATA OPENING BALANCE — Sheet 1: Data Utama');
         $sheet->getStyle('A1')->applyFromArray([
             'font'      => ['bold' => true, 'size' => 13, 'color' => ['argb' => 'FFFFFFFF']],
@@ -886,8 +890,8 @@ class OpeningBalanceController extends Controller
         ]);
         $sheet->getRowDimension(1)->setRowHeight(36);
 
-        $sheet->mergeCells('A2:G2');
-        $sheet->setCellValue('A2', 'Isi data Opening Balance di sini. Kolom no_urut (G) WAJIB diisi sebagai referensi untuk Sheet 2 dan 3. Lihat sheet "Petunjuk Pengisian" untuk panduan.');
+        $sheet->mergeCells('A2:H2');
+        $sheet->setCellValue('A2', 'Isi data Opening Balance di sini. Kolom no_invoice (B) WAJIB diisi secara manual. Kolom no_urut (H) WAJIB diisi sebagai referensi untuk Sheet 2 dan 3. Lihat sheet "Petunjuk Pengisian" untuk panduan.');
         $sheet->getStyle('A2')->applyFromArray([
             'font'      => ['italic' => true, 'size' => 9, 'color' => ['argb' => 'FF37474F']],
             'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFF1F8E9']],
@@ -900,7 +904,7 @@ class OpeningBalanceController extends Controller
             $sheet->setCellValue("{$col}4", $name);
             $sheet->getColumnDimension($col)->setWidth($width);
         }
-        $sheet->getStyle('A4:G4')->applyFromArray([
+        $sheet->getStyle('A4:H4')->applyFromArray([
             'font'      => ['bold' => true, 'size' => 10, 'color' => ['argb' => 'FFFFFFFF']],
             'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF2E7D32']],
             'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
@@ -910,18 +914,19 @@ class OpeningBalanceController extends Controller
 
         // Example row
         $example = [
-            'A' => '[CONTOH] Budi Santoso',
-            'B' => '2024-01-15',
-            'C' => '2024-01-01',
-            'D' => '2024-01-31',
-            'E' => '1500000',
-            'F' => 'Saldo piutang periode lalu',
-            'G' => '1',
+            'A' => '[CONTOH] OB-BUDI-15012024-001',
+            'B' => 'Budi Santoso',
+            'C' => '2024-01-15',
+            'D' => '2024-01-01',
+            'E' => '2024-01-31',
+            'F' => '1500000',
+            'G' => 'Saldo piutang periode lalu',
+            'H' => '1',
         ];
         foreach ($example as $col => $val) {
             $sheet->getCell("{$col}5")->setValueExplicit($val, DataType::TYPE_STRING);
         }
-        $sheet->getStyle('A5:G5')->applyFromArray([
+        $sheet->getStyle('A5:H5')->applyFromArray([
             'font'      => ['italic' => true, 'size' => 9, 'color' => ['argb' => 'FFE65100']],
             'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFFFF9C4']],
             'alignment' => ['vertical' => Alignment::VERTICAL_CENTER],
@@ -931,12 +936,12 @@ class OpeningBalanceController extends Controller
 
         for ($row = 6; $row <= 55; $row++) {
             $bg = $row % 2 === 0 ? 'FFF5F5F5' : 'FFFFFFFF';
-            $sheet->getStyle("A{$row}:G{$row}")->applyFromArray([
+            $sheet->getStyle("A{$row}:H{$row}")->applyFromArray([
                 'fill'    => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => $bg]],
                 'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_HAIR, 'color' => ['argb' => 'FFE0E0E0']]],
             ]);
             // Text format to prevent date/number auto-conversion
-            foreach (['B', 'C', 'D', 'E', 'G'] as $col) {
+            foreach (['C', 'D', 'E', 'F', 'H'] as $col) {
                 $sheet->getStyle("{$col}{$row}")->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
             }
             $sheet->getRowDimension($row)->setRowHeight(18);
@@ -1172,6 +1177,7 @@ class OpeningBalanceController extends Controller
         // Keterangan kolom per sheet
         $sheetInfos = [
             ['Sheet 1 — Data Opening Balance', 'FF2E7D32', [
+                ['no_invoice',    'Nomor Opening Balance unik',                 'Ya',       'Diisi manual, harus unik di sistem. Contoh: OB-BUDI-15012024-001'],
                 ['nama_klien',    'Nama klien AR',                              'Ya',       'Harus cocok persis dengan nama klien di sistem'],
                 ['tanggal',       'Tanggal dokumen Opening Balance',            'Ya',       'Format: YYYY-MM-DD atau DD-MM-YYYY'],
                 ['periode_awal',  'Awal periode piutang',                      'Ya',       'Format: YYYY-MM-DD atau DD-MM-YYYY'],

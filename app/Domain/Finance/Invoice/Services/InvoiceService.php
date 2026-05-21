@@ -151,11 +151,10 @@ class InvoiceService
         abort_if(!$user?->karyawan?->id, 422, 'User tidak terhubung dengan data karyawan');
 
         $klien = KlienAr::findOrFail($data['klien_ar_id']);
-        $noInvoice = $this->generateOpeningBalanceNoInvoice($klien, $data['tanggal']);
 
-        return DB::transaction(function () use ($data, $klien, $noInvoice, $user) {
+        return DB::transaction(function () use ($data, $klien, $user) {
             $invoice = $this->repository->create([
-                'no_invoice'                 => $noInvoice,
+                'no_invoice'                 => $data['no_invoice'],
                 'tanggal_invoice'            => $data['tanggal'],
                 'periode_awal'               => $data['periode_awal'],
                 'periode_akhir'              => $data['periode_akhir'],
@@ -200,6 +199,7 @@ class InvoiceService
         $klien = KlienAr::findOrFail($data['klien_ar_id']);
 
         $invoice->update([
+            'no_invoice'                 => $data['no_invoice'],
             'tanggal_invoice'            => $data['tanggal'],
             'periode_awal'               => $data['periode_awal'],
             'periode_akhir'              => $data['periode_akhir'],

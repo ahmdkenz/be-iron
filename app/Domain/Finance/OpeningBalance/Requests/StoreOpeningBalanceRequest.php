@@ -3,6 +3,7 @@
 namespace App\Domain\Finance\OpeningBalance\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class StoreOpeningBalanceRequest extends FormRequest
 {
@@ -10,7 +11,15 @@ class StoreOpeningBalanceRequest extends FormRequest
 
     public function rules(): array
     {
+        $id = $this->route('id');
+
         return [
+            'no_invoice'                     => [
+                'required', 'string', 'max:100',
+                $id
+                    ? Rule::unique('tb_invoices', 'no_invoice')->ignore($id)
+                    : 'unique:tb_invoices,no_invoice',
+            ],
             'klien_ar_id'                    => ['required', 'integer', 'exists:tb_klien_ar,id'],
             'tanggal'                        => ['required', 'date'],
             'periode_awal'                   => ['required', 'date'],
