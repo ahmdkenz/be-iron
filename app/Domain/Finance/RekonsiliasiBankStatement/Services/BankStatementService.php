@@ -2,9 +2,11 @@
 
 namespace App\Domain\Finance\RekonsiliasiBankStatement\Services;
 
+use App\Domain\Finance\Invoice\Services\InvoiceService;
 use App\Domain\Finance\RekonsiliasiBankStatement\Parsers\BankParserFactory;
 use App\Models\BankStatement;
 use App\Models\BankStatementDetail;
+use App\Models\Invoice;
 use App\Models\PembayaranAr;
 use Carbon\Carbon;
 use Illuminate\Http\UploadedFile;
@@ -158,28 +160,66 @@ class BankStatementService
     {
         $statement = BankStatement::with('uploader')->findOrFail($bankStatementId);
 
-        $details = BankStatementDetail::with(['pembayaranAr.invoice.klienAr'])
+        $details = BankStatementDetail::with([
+                'pembayaranAr.invoice.klienAr',
+                'pembayaranAr.alokasiKelebihan.invoice.klienAr',
+                'pembayaranAr.alokasiKelebihan.createdBy',
+                'matchedBy',
+            ])
             ->where('bank_statement_id', $bankStatementId)
             ->orderBy('tanggal')
             ->orderBy('id')
             ->get()
-            ->map(fn($d) => [
-                'id'          => $d->id,
-                'tanggal'     => $d->tanggal?->toDateString(),
-                'keterangan'  => $d->keterangan,
-                'debit'       => $d->debit,
-                'kredit'      => $d->kredit,
-                'saldo'       => $d->saldo,
-                'status_cocok'=> $d->status_cocok,
-                'pembayaran'  => $d->pembayaranAr ? [
-                    'id'                 => $d->pembayaranAr->id,
-                    'no_referensi'       => $d->pembayaranAr->no_referensi,
-                    'tanggal_pembayaran' => $d->pembayaranAr->tanggal_pembayaran?->toDateString(),
-                    'jumlah_pembayaran'  => $d->pembayaranAr->jumlah_pembayaran,
-                    'metode_pembayaran'  => $d->pembayaranAr->metode_pembayaran,
-                    'klien'              => $d->pembayaranAr->invoice?->klienAr?->nama_klien,
-                ] : null,
-            ])
+            ->map(function ($d) {
+                $pembayaran    = $d->pembayaranAr;
+                $invoice       = $pembayaran?->invoice;
+                $selisihBank   = $pembayaran
+                    ? round($d->kredit - (float) $pembayaran->jumlah_pembayaran, 2)
+                    : null;
+
+                $kelebihanBayar = null;
+                if ($invoice) {
+                    $total = max(0, round((float) $invoice->total_pembayaran - (float) $invoice->total_tagihan, 2));
+                    if ($total > 0) {
+                        $dialokasi = $pembayaran->alokasiKelebihan->sum('jumlah_pembayaran');
+                        $kelebihanBayar = [
+                            'total'           => $total,
+                            'sudah_dialokasi' => round($dialokasi, 2),
+                            'sisa'            => max(0, round($total - $dialokasi, 2)),
+                            'riwayat'         => $pembayaran->alokasiKelebihan->map(fn($p) => [
+                                'id'         => $p->id,
+                                'jumlah'     => $p->jumlah_pembayaran,
+                                'no_invoice' => $p->invoice?->no_invoice,
+                                'klien'      => $p->invoice?->klienAr?->nama_klien,
+                                'keterangan' => $p->keterangan,
+                                'created_by' => $p->createdBy?->name,
+                                'tanggal'    => $p->tanggal_pembayaran?->toDateString(),
+                            ])->values(),
+                        ];
+                    }
+                }
+
+                return [
+                    'id'            => $d->id,
+                    'tanggal'       => $d->tanggal?->toDateString(),
+                    'keterangan'    => $d->keterangan,
+                    'debit'         => $d->debit,
+                    'kredit'        => $d->kredit,
+                    'saldo'         => $d->saldo,
+                    'status_cocok'  => $d->status_cocok,
+                    'selisih_bank'  => $selisihBank,
+                    'matched_by'    => $d->matchedBy?->name,
+                    'kelebihan_bayar' => $kelebihanBayar,
+                    'pembayaran'    => $pembayaran ? [
+                        'id'                 => $pembayaran->id,
+                        'no_referensi'       => $pembayaran->no_referensi,
+                        'tanggal_pembayaran' => $pembayaran->tanggal_pembayaran?->toDateString(),
+                        'jumlah_pembayaran'  => $pembayaran->jumlah_pembayaran,
+                        'metode_pembayaran'  => $pembayaran->metode_pembayaran,
+                        'klien'              => $invoice?->klienAr?->nama_klien,
+                    ] : null,
+                ];
+            })
             ->all();
 
         return [
@@ -242,11 +282,12 @@ class BankStatementService
         $detail->update([
             'status_cocok'    => 'MATCHED',
             'pembayaran_ar_id'=> $pembayaranArId,
+            'matched_by'      => auth()->id(),
         ]);
 
         $this->refreshCounter($detail->bank_statement_id);
 
-        return $detail->fresh()->load('pembayaranAr.invoice.klienAr');
+        return $detail->fresh()->load('pembayaranAr.invoice.klienAr', 'matchedBy');
     }
 
     public function unmatch(BankStatementDetail $detail): BankStatementDetail
@@ -271,6 +312,70 @@ class BankStatementService
         ]);
 
         $this->refreshCounter($detail->bank_statement_id);
+    }
+
+    public function getInvoiceB2CKlien(BankStatementDetail $detail): \Illuminate\Support\Collection
+    {
+        $klienArId = $detail->pembayaranAr?->invoice?->klien_ar_id;
+        abort_if(!$klienArId, 422, 'Belum ada pembayaran yang dicocokkan.');
+
+        return Invoice::with('klienAr')
+            ->where('klien_ar_id', $klienArId)
+            ->whereNotIn('status', ['LUNAS'])
+            ->whereHas('klienAr', fn($q) => $q->whereIn('tipe_klien', ['RESTO', 'MITRA']))
+            ->orderByDesc('tanggal_invoice')
+            ->get()
+            ->map(fn($inv) => [
+                'id'            => $inv->id,
+                'no_invoice'    => $inv->no_invoice,
+                'tanggal'       => $inv->tanggal_invoice?->toDateString(),
+                'total_tagihan' => $inv->total_tagihan,
+                'sisa_tagihan'  => $inv->sisa_tagihan,
+                'status'        => $inv->status,
+            ]);
+    }
+
+    public function applyKelebihan(
+        BankStatementDetail $detail,
+        int $invoiceId,
+        float $jumlah,
+        ?string $keterangan
+    ): void {
+        $pembayaran = $detail->pembayaranAr;
+        abort_if(!$pembayaran, 422, 'Transaksi belum memiliki pembayaran yang dicocokkan.');
+
+        $inv       = $pembayaran->invoice;
+        $total     = max(0, (float) $inv->total_pembayaran - (float) $inv->total_tagihan);
+        $sudah     = $pembayaran->alokasiKelebihan()->sum('jumlah_pembayaran');
+        $sisa      = $total - $sudah;
+
+        abort_if($jumlah <= 0, 422, 'Jumlah harus lebih dari 0.');
+        abort_if(
+            $jumlah > $sisa + 0.01,
+            422,
+            'Jumlah melebihi sisa kelebihan (Rp ' . number_format($sisa, 0, ',', '.') . ').'
+        );
+
+        $target = Invoice::with('klienAr')->findOrFail($invoiceId);
+        abort_if(
+            $target->klien_ar_id !== $inv->klien_ar_id,
+            422,
+            'Invoice tujuan harus milik klien yang sama.'
+        );
+        abort_if($target->status === 'LUNAS', 422, 'Invoice ini sudah LUNAS.');
+
+        PembayaranAr::create([
+            'invoice_id'               => $invoiceId,
+            'tanggal_pembayaran'       => $pembayaran->tanggal_pembayaran,
+            'jumlah_pembayaran'        => $jumlah,
+            'metode_pembayaran'        => $pembayaran->metode_pembayaran,
+            'no_referensi'             => $pembayaran->no_referensi,
+            'keterangan'               => $keterangan ?? 'Alokasi kelebihan dari ' . $inv->no_invoice,
+            'sumber_pembayaran_ar_id'  => $pembayaran->id,
+            'created_by'               => auth()->id(),
+        ]);
+
+        app(InvoiceService::class)->recalculate($target->fresh());
     }
 
     private function refreshCounter(int $statementId): void

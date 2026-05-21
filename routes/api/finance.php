@@ -88,6 +88,8 @@ Route::prefix('rekonsiliasi-bank')->group(function () {
     Route::get('/detail/{detail}/kandidat',          [BankStatementController::class, 'kandidat']);
     Route::patch('/detail/{detail}/match',           [BankStatementController::class, 'matchDetail']);
     Route::patch('/detail/{detail}/unmatch',         [BankStatementController::class, 'unmatchDetail']);
+    Route::get('/detail/{detail}/invoice-b2c',       [BankStatementController::class, 'invoiceB2C']);
+    Route::post('/detail/{detail}/kelebihan',        [BankStatementController::class, 'applyKelebihanBayar']);
 });
 
 // ─── Opening Balance ──────────────────────────────────────────────

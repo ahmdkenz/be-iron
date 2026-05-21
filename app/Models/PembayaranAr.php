@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Support\Traits\BlameableTrait;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class PembayaranAr extends Model
 {
@@ -18,6 +19,7 @@ class PembayaranAr extends Model
         'metode_pembayaran',
         'no_referensi',
         'keterangan',
+        'sumber_pembayaran_ar_id',
         'created_by',
         'updated_by',
     ];
@@ -30,6 +32,16 @@ class PembayaranAr extends Model
     public function invoice()
     {
         return $this->belongsTo(Invoice::class, 'invoice_id');
+    }
+
+    public function sumberPembayaran()
+    {
+        return $this->belongsTo(PembayaranAr::class, 'sumber_pembayaran_ar_id');
+    }
+
+    public function alokasiKelebihan(): HasMany
+    {
+        return $this->hasMany(PembayaranAr::class, 'sumber_pembayaran_ar_id');
     }
 
     public function createdBy()

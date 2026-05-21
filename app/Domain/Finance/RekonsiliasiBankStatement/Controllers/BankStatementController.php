@@ -107,6 +107,10 @@ class BankStatementController extends Controller
             return $this->successResponse([
                 'id'           => $updated->id,
                 'status_cocok' => $updated->status_cocok,
+                'matched_by'   => $updated->matchedBy?->name,
+                'selisih_bank' => $updated->pembayaranAr
+                    ? round($updated->kredit - (float) $updated->pembayaranAr->jumlah_pembayaran, 2)
+                    : null,
                 'pembayaran'   => $updated->pembayaranAr ? [
                     'id'                 => $updated->pembayaranAr->id,
                     'no_referensi'       => $updated->pembayaranAr->no_referensi,
@@ -127,6 +131,37 @@ class BankStatementController extends Controller
             $this->service->unmatch($detail);
 
             return $this->successResponse(null, 'Cocok transaksi berhasil dibatalkan.');
+        } catch (\Symfony\Component\HttpKernel\Exception\HttpException $e) {
+            return $this->errorResponse($e->getMessage(), $e->getStatusCode());
+        }
+    }
+
+    public function invoiceB2C(BankStatementDetail $detail): JsonResponse
+    {
+        try {
+            return $this->successResponse($this->service->getInvoiceB2CKlien($detail));
+        } catch (\Symfony\Component\HttpKernel\Exception\HttpException $e) {
+            return $this->errorResponse($e->getMessage(), $e->getStatusCode());
+        }
+    }
+
+    public function applyKelebihanBayar(Request $request, BankStatementDetail $detail): JsonResponse
+    {
+        $request->validate([
+            'invoice_id' => ['required', 'integer', 'exists:tb_invoice,id'],
+            'jumlah'     => ['required', 'numeric', 'min:0.01'],
+            'keterangan' => ['nullable', 'string'],
+        ]);
+
+        try {
+            $this->service->applyKelebihan(
+                $detail,
+                $request->integer('invoice_id'),
+                (float) $request->jumlah,
+                $request->keterangan,
+            );
+
+            return $this->successResponse(null, 'Kelebihan berhasil dialokasikan.');
         } catch (\Symfony\Component\HttpKernel\Exception\HttpException $e) {
             return $this->errorResponse($e->getMessage(), $e->getStatusCode());
         }

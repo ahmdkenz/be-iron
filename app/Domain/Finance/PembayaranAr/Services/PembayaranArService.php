@@ -24,12 +24,6 @@ class PembayaranArService
             'Invoice ini sudah berstatus LUNAS, tidak dapat menambah pembayaran'
         );
 
-        abort_if(
-            (float) $data['jumlah_pembayaran'] > (float) $invoice->sisa_tagihan,
-            422,
-            'Jumlah pembayaran melebihi sisa tagihan (Rp ' . number_format($invoice->sisa_tagihan, 0, ',', '.') . ')'
-        );
-
         $pembayaran = PembayaranAr::create([
             'invoice_id'         => $invoice->id,
             'tanggal_pembayaran' => $data['tanggal_pembayaran'],

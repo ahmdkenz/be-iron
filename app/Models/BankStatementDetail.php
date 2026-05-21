@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class BankStatementDetail extends Model
 {
@@ -18,6 +19,7 @@ class BankStatementDetail extends Model
         'saldo',
         'status_cocok',
         'pembayaran_ar_id',
+        'matched_by',
     ];
 
     protected $casts = [
@@ -35,5 +37,10 @@ class BankStatementDetail extends Model
     public function pembayaranAr(): BelongsTo
     {
         return $this->belongsTo(PembayaranAr::class, 'pembayaran_ar_id');
+    }
+
+    public function matchedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'matched_by');
     }
 }
