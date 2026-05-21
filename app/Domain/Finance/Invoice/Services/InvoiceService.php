@@ -94,7 +94,7 @@ class InvoiceService
     {
         $klien    = KlienAr::findOrFail($dto->klien_ar_id);
         $carryover = $this->getCarryover($dto->klien_ar_id);
-        $noInvoice = $this->generateNoInvoice($klien, $dto->tanggal_invoice);
+        $noInvoice = $dto->no_invoice;
 
         $subtotal = collect($dto->items)->sum(
             fn($item) => ($item['qty'] ?? 0) * ($item['harga_satuan'] ?? 0)
@@ -346,6 +346,7 @@ class InvoiceService
         $totalTagihan = $subtotal + $carryover;
 
         $invoice->update([
+            'no_invoice'                 => $dto->no_invoice,
             'tanggal_invoice'            => $dto->tanggal_invoice,
             'periode_awal'               => $dto->periode_awal,
             'periode_akhir'              => $dto->periode_akhir,

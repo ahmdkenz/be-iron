@@ -3,6 +3,7 @@
 namespace App\Domain\Finance\Invoice\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class UpdateInvoiceRequest extends FormRequest
 {
@@ -11,6 +12,7 @@ class UpdateInvoiceRequest extends FormRequest
     public function rules(): array
     {
         return [
+            'no_invoice'        => ['required', 'string', 'max:100', Rule::unique('tb_invoices', 'no_invoice')->ignore($this->route('invoice'))],
             'klien_ar_id'       => ['required', 'integer', 'exists:tb_klien_ar,id'],
             'tanggal_invoice'      => ['required', 'date'],
             'periode_awal'         => ['required', 'date'],

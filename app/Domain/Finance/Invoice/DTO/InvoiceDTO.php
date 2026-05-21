@@ -5,6 +5,7 @@ namespace App\Domain\Finance\Invoice\DTO;
 class InvoiceDTO
 {
     public function __construct(
+        public readonly string $no_invoice,
         public readonly int $klien_ar_id,
         public readonly string $tanggal_invoice,
         public readonly string $periode_awal,
@@ -18,6 +19,7 @@ class InvoiceDTO
     public static function fromRequest(array $data): self
     {
         return new self(
+            no_invoice:            $data['no_invoice'],
             klien_ar_id:          (int) $data['klien_ar_id'],
             tanggal_invoice:       $data['tanggal_invoice'],
             periode_awal:          $data['periode_awal'],

@@ -400,17 +400,19 @@ class InvoiceController extends Controller
 
             $totalData++;
             $noUrut       = $this->invoiceImportStr($row[0] ?? '');
-            $namaKlien    = $this->invoiceImportStr($row[1] ?? '');
-            $tanggal      = $this->invoiceImportDate($row[2] ?? '');
-            $periodeAwal  = $this->invoiceImportDate($row[3] ?? '');
-            $periodeAkhir = $this->invoiceImportDate($row[4] ?? '');
-            $noSuratJalan = $this->invoiceImportStr($row[5] ?? '');
-            $tagihanSblm  = $this->invoiceImportNum($row[6] ?? '');
-            $keterangan   = $this->invoiceImportStr($row[7] ?? '');
+            $noInvoice    = $this->invoiceImportStr($row[1] ?? '');
+            $namaKlien    = $this->invoiceImportStr($row[2] ?? '');
+            $tanggal      = $this->invoiceImportDate($row[3] ?? '');
+            $periodeAwal  = $this->invoiceImportDate($row[4] ?? '');
+            $periodeAkhir = $this->invoiceImportDate($row[5] ?? '');
+            $noSuratJalan = $this->invoiceImportStr($row[6] ?? '');
+            $tagihanSblm  = $this->invoiceImportNum($row[7] ?? '');
+            $keterangan   = $this->invoiceImportStr($row[8] ?? '');
 
             $validated = Validator::make(
                 [
                     'no_urut'         => $noUrut,
+                    'no_invoice'      => $noInvoice,
                     'nama_klien'      => $namaKlien,
                     'tanggal_invoice' => $tanggal,
                     'periode_awal'    => $periodeAwal,
@@ -418,6 +420,7 @@ class InvoiceController extends Controller
                 ],
                 [
                     'no_urut'         => ['required'],
+                    'no_invoice'      => ['required', 'string', 'unique:tb_invoices,no_invoice'],
                     'nama_klien'      => ['required'],
                     'tanggal_invoice' => ['required', 'date'],
                     'periode_awal'    => ['required', 'date'],
@@ -437,8 +440,6 @@ class InvoiceController extends Controller
             }
 
             try {
-                $noInvoice = $this->service->generateNoInvoice($klien, $tanggal);
-
                 $invoice = Invoice::create([
                     'no_invoice'                 => $noInvoice,
                     'tanggal_invoice'            => $tanggal,
@@ -620,15 +621,16 @@ class InvoiceController extends Controller
         $sheet->setTitle('Invoice');
         $cols = [
             'A' => ['no_urut',                    12],
-            'B' => ['nama_klien',                  32],
-            'C' => ['tanggal_invoice',             20],
-            'D' => ['periode_awal',                20],
-            'E' => ['periode_akhir',               20],
-            'F' => ['no_surat_jalan',              22],
-            'G' => ['tagihan_periode_sebelumnya',  26],
-            'H' => ['keterangan',                  32],
+            'B' => ['no_invoice',                  26],
+            'C' => ['nama_klien',                  32],
+            'D' => ['tanggal_invoice',             20],
+            'E' => ['periode_awal',                20],
+            'F' => ['periode_akhir',               20],
+            'G' => ['no_surat_jalan',              22],
+            'H' => ['tagihan_periode_sebelumnya',  26],
+            'I' => ['keterangan',                  32],
         ];
-        $lastCol = 'H';
+        $lastCol = 'I';
 
         $sheet->mergeCells("A1:{$lastCol}1");
         $sheet->setCellValue('A1', 'TEMPLATE IMPORT INVOICE AR — SHEET 1: DATA INVOICE');
@@ -663,13 +665,14 @@ class InvoiceController extends Controller
 
         $example = [
             'A' => '[CONTOH] 1',
-            'B' => 'Budi Santoso',
-            'C' => date('Y-m-d'),
-            'D' => date('Y-m-01'),
-            'E' => date('Y-m-t'),
-            'F' => 'SJ-001',
-            'G' => '0',
-            'H' => 'Invoice bulan ini',
+            'B' => 'SI-B2C-' . date('dmY') . '-001',
+            'C' => 'Budi Santoso',
+            'D' => date('Y-m-d'),
+            'E' => date('Y-m-01'),
+            'F' => date('Y-m-t'),
+            'G' => 'SJ-001',
+            'H' => '0',
+            'I' => 'Invoice bulan ini',
         ];
         foreach ($example as $col => $val) {
             $sheet->getCell("{$col}5")->setValueExplicit($val, DataType::TYPE_STRING);
@@ -688,8 +691,8 @@ class InvoiceController extends Controller
                 'fill'    => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => $bg]],
                 'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_HAIR, 'color' => ['argb' => 'FFE0E0E0']]],
             ]);
-            $sheet->getStyle("G{$row}")->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
-            foreach (['C', 'D', 'E'] as $dateCol) {
+            $sheet->getStyle("H{$row}")->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
+            foreach (['D', 'E', 'F'] as $dateCol) {
                 $sheet->getStyle("{$dateCol}{$row}")->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
             }
             $sheet->getRowDimension($row)->setRowHeight(18);
@@ -879,6 +882,7 @@ class InvoiceController extends Controller
     {
         return [
             ['no_urut',                    'Nomor urut baris (penghubung ke Sheet Item Invoice)',     'Ya',       'Angka unik per baris. Contoh: 1, 2, 3'],
+            ['no_invoice',                 'Nomor invoice unik',                                      'Ya',       'Harus unik di sistem. Contoh: SI-B2C-21052026-001'],
             ['nama_klien',                 'Nama klien AR sesuai data di sistem',                     'Ya',       'Harus persis sesuai nama klien di sistem'],
             ['tanggal_invoice',            'Tanggal pembuatan invoice',                               'Ya',       'Format YYYY-MM-DD. Contoh: 2025-06-15'],
             ['periode_awal',               'Tanggal awal periode tagihan',                            'Ya',       'Format YYYY-MM-DD. Contoh: 2025-06-01'],
