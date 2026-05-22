@@ -182,7 +182,20 @@ class BankStatementService
                 if ($invoice) {
                     $total = max(0, round((float) $invoice->total_pembayaran - (float) $invoice->total_tagihan, 2));
                     if ($total > 0) {
-                        $dialokasi = $pembayaran->alokasiKelebihan->sum('jumlah_pembayaran');
+                        // Hitung berapa dari kelebihan yang benar-benar mengurangi utang
+                        // invoice tujuan: min(yang dikirim, sisa tagihan B sebelum P1 masuk).
+                        $dialokasi = $pembayaran->alokasiKelebihan
+                            ->groupBy('invoice_id')
+                            ->sum(function ($alokasis) {
+                                $target = $alokasis->first()->invoice;
+                                if (!$target) return (float) $alokasis->sum('jumlah_pembayaran');
+                                $groupTotal  = (float) $alokasis->sum('jumlah_pembayaran');
+                                $sisaSebelum = max(0,
+                                    (float) $target->total_tagihan
+                                    - ((float) $target->total_pembayaran - $groupTotal)
+                                );
+                                return min($groupTotal, $sisaSebelum);
+                            });
                         $kelebihanBayar = [
                             'total'           => $total,
                             'sudah_dialokasi' => round($dialokasi, 2),
@@ -348,8 +361,20 @@ class BankStatementService
 
         $inv       = $pembayaran->invoice;
         $total     = max(0, (float) $inv->total_pembayaran - (float) $inv->total_tagihan);
-        $sudah     = $pembayaran->alokasiKelebihan()->sum('jumlah_pembayaran');
-        $sisa      = $total - $sudah;
+        $alokasiList = $pembayaran->alokasiKelebihan()->with('invoice')->get();
+        $sudah = (float) $alokasiList
+            ->groupBy('invoice_id')
+            ->sum(function ($alokasis) {
+                $targetInvoice = $alokasis->first()->invoice;
+                if (!$targetInvoice) return (float) $alokasis->sum('jumlah_pembayaran');
+                $groupTotal  = (float) $alokasis->sum('jumlah_pembayaran');
+                $sisaSebelum = max(0,
+                    (float) $targetInvoice->total_tagihan
+                    - ((float) $targetInvoice->total_pembayaran - $groupTotal)
+                );
+                return min($groupTotal, $sisaSebelum);
+            });
+        $sisa = max(0, round($total - $sudah, 2));
 
         abort_if($jumlah <= 0, 422, 'Jumlah harus lebih dari 0.');
         abort_if(
@@ -371,13 +396,29 @@ class BankStatementService
             'tanggal_pembayaran'       => $pembayaran->tanggal_pembayaran,
             'jumlah_pembayaran'        => $jumlah,
             'metode_pembayaran'        => $pembayaran->metode_pembayaran,
-            'no_referensi'             => $pembayaran->no_referensi,
+            'no_referensi'             => $pembayaran->no_referensi
+                                            ? $pembayaran->no_referensi . '/ALO-' . ($this->nextAlokasiSuffix($pembayaran))
+                                            : null,
             'keterangan'               => $keterangan ?? 'Alokasi kelebihan dari ' . $inv->no_invoice,
             'sumber_pembayaran_ar_id'  => $pembayaran->id,
             'created_by'               => auth()->id(),
         ]);
 
         app(InvoiceService::class)->recalculate($target->fresh());
+    }
+
+    private function nextAlokasiSuffix(PembayaranAr $pembayaran): int
+    {
+        $prefix = $pembayaran->no_referensi . '/ALO-';
+        $max = $pembayaran->alokasiKelebihan()
+            ->where('no_referensi', 'LIKE', $prefix . '%')
+            ->get(['no_referensi'])
+            ->map(function ($a) use ($prefix) {
+                $n = substr($a->no_referensi ?? '', strlen($prefix));
+                return is_numeric($n) ? (int) $n : 0;
+            })
+            ->max() ?? 0;
+        return $max + 1;
     }
 
     private function refreshCounter(int $statementId): void

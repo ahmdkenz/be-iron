@@ -420,6 +420,8 @@ class InvoiceService
             $sisaTagihan = 0;
         } elseif ($totalPembayaran > 0) {
             $status = 'SEBAGIAN';
+        } else {
+            $status = 'TERKIRIM';
         }
 
         $invoice->update([
@@ -428,6 +430,54 @@ class InvoiceService
             'status'           => $status,
             'updated_by'       => auth()->id(),
         ]);
+
+        $this->cascadeCarryoverToNext($invoice->fresh());
+    }
+
+    private function cascadeCarryoverToNext(Invoice $invoice): void
+    {
+        $nextInvoice = Invoice::where('klien_ar_id', $invoice->klien_ar_id)
+            ->where('tagihan_periode_sebelumnya', '>', 0)
+            ->where(function ($q) use ($invoice) {
+                $q->where('tanggal_invoice', '>', $invoice->tanggal_invoice)
+                    ->orWhere(function ($q2) use ($invoice) {
+                        $q2->where('tanggal_invoice', $invoice->tanggal_invoice)
+                            ->where('id', '>', $invoice->id);
+                    });
+            })
+            ->orderBy('tanggal_invoice')
+            ->orderBy('id')
+            ->first();
+
+        if (!$nextInvoice) {
+            return;
+        }
+
+        $oldCarryover = (float) $nextInvoice->tagihan_periode_sebelumnya;
+        $newCarryover = (float) $invoice->sisa_tagihan;
+
+        if (abs($oldCarryover - $newCarryover) < 0.01) {
+            return;
+        }
+
+        $newTotalTagihan = (float) $nextInvoice->subtotal + $newCarryover;
+        $newSisaTagihan  = max(0, $newTotalTagihan - (float) $nextInvoice->total_pembayaran);
+
+        $newStatus = match (true) {
+            $newSisaTagihan <= 0                        => 'LUNAS',
+            (float) $nextInvoice->total_pembayaran > 0  => 'SEBAGIAN',
+            default                                     => 'TERKIRIM',
+        };
+
+        $nextInvoice->update([
+            'tagihan_periode_sebelumnya' => $newCarryover,
+            'total_tagihan'              => $newTotalTagihan,
+            'sisa_tagihan'               => $newSisaTagihan,
+            'status'                     => $newStatus,
+            'updated_by'                 => auth()->id(),
+        ]);
+
+        $this->cascadeCarryoverToNext($nextInvoice->fresh());
     }
 
     public function delete(Invoice $invoice): void

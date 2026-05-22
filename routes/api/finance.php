@@ -4,6 +4,7 @@ use App\Domain\Finance\AgingReport\Controllers\AgingReportController;
 use App\Domain\Finance\Dashboard\Controllers\DashboardController;
 use App\Domain\Finance\Invoice\Controllers\InvoiceController;
 use App\Domain\Finance\JatuhTempo\Controllers\JatuhTempoController;
+use App\Domain\Finance\JurnalPic\Controllers\JurnalPicController;
 use App\Domain\Finance\KinerjaAr\Controllers\KinerjaArController;
 use App\Domain\Finance\KlienAr\Controllers\KlienArController;
 use App\Domain\Finance\MutasiPiutang\Controllers\MutasiPiutangController;
@@ -55,7 +56,11 @@ Route::prefix('invoices')->group(function () {
 
 // ─── Pembayaran ───────────────────────────────────────────────────
 Route::get('/pembayaran', [PembayaranArController::class, 'index']);
+Route::get('/pembayaran/cek-referensi', [PembayaranArController::class, 'cekReferensi']);
 Route::delete('/pembayaran/{pembayaran}', [PembayaranArController::class, 'destroy']);
+
+// ─── Jurnal per PIC ───────────────────────────────────────────────
+Route::get('/jurnal-pic', [JurnalPicController::class, 'index']);
 
 // ─── Aging Report ────────────────────────────────────────────────
 Route::get('/aging-report', [AgingReportController::class, 'index']);

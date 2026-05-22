@@ -5,6 +5,7 @@ namespace App\Models;
 use App\Support\Traits\BlameableTrait;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class PembayaranAr extends Model
 {
@@ -52,5 +53,15 @@ class PembayaranAr extends Model
     public function updatedBy()
     {
         return $this->belongsTo(User::class, 'updated_by');
+    }
+
+    public function bankStatementDetail(): HasOne
+    {
+        return $this->hasOne(BankStatementDetail::class, 'pembayaran_ar_id');
+    }
+
+    public function logs(): HasMany
+    {
+        return $this->hasMany(PembayaranArLog::class, 'pembayaran_ar_id');
     }
 }

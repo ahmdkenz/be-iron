@@ -91,4 +91,15 @@ class PembayaranArController extends Controller
         $this->service->delete($pembayaran);
         return $this->successResponse(null, 'Pembayaran berhasil dihapus');
     }
+
+    public function cekReferensi(Request $request): JsonResponse
+    {
+        $request->validate([
+            'no_referensi' => ['required', 'string', 'max:100'],
+        ]);
+
+        $result = $this->service->cekDuplikatReferensi($request->no_referensi);
+
+        return $this->successResponse($result);
+    }
 }

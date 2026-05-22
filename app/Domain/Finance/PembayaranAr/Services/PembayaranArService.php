@@ -5,6 +5,7 @@ namespace App\Domain\Finance\PembayaranAr\Services;
 use App\Domain\Finance\Invoice\Services\InvoiceService;
 use App\Models\Invoice;
 use App\Models\PembayaranAr;
+use App\Models\PembayaranArLog;
 
 class PembayaranArService
 {
@@ -34,6 +35,13 @@ class PembayaranArService
             'created_by'         => auth()->id(),
         ]);
 
+        PembayaranArLog::create([
+            'pembayaran_ar_id' => $pembayaran->id,
+            'aksi'             => 'DIBUAT',
+            'actor_id'         => auth()->id(),
+            'data_sesudah'     => $pembayaran->toArray(),
+        ]);
+
         $this->invoiceService->recalculate($invoice->fresh());
 
         return $pembayaran->load('createdBy');
@@ -41,8 +49,36 @@ class PembayaranArService
 
     public function delete(PembayaranAr $pembayaran): void
     {
+        PembayaranArLog::create([
+            'pembayaran_ar_id' => $pembayaran->id,
+            'aksi'             => 'DIHAPUS',
+            'actor_id'         => auth()->id(),
+            'data_sebelum'     => $pembayaran->toArray(),
+        ]);
+
         $invoice = $pembayaran->invoice;
         $pembayaran->delete();
         $this->invoiceService->recalculate($invoice->fresh());
+    }
+
+    public function cekDuplikatReferensi(string $noRef): ?array
+    {
+        $existing = PembayaranAr::with(['invoice.karyawan', 'invoice.klienAr'])
+            ->where('no_referensi', $noRef)
+            ->first();
+
+        if (!$existing) {
+            return null;
+        }
+
+        return [
+            'pembayaran_id'      => $existing->id,
+            'no_invoice'         => $existing->invoice?->no_invoice,
+            'klien'              => $existing->invoice?->klienAr?->nama_klien,
+            'pic'                => $existing->invoice?->karyawan?->nama_karyawan,
+            'tanggal_pembayaran' => $existing->tanggal_pembayaran?->format('Y-m-d'),
+            'jumlah_pembayaran'  => (float) $existing->jumlah_pembayaran,
+            'metode_pembayaran'  => $existing->metode_pembayaran,
+        ];
     }
 }
