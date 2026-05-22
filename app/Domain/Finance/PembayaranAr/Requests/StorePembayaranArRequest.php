@@ -23,6 +23,7 @@ class StorePembayaranArRequest extends FormRequest
                     ->whereNotNull('no_referensi'),
             ],
             'keterangan'         => ['nullable', 'string'],
+            'bukti_pembayaran'   => ['nullable', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:10240'],
         ];
     }
 

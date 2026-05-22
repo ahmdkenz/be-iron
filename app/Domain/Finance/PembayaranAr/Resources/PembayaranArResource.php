@@ -10,19 +10,27 @@ class PembayaranArResource extends JsonResource
     public function toArray(Request $request): array
     {
         return [
-            'id'                 => $this->id,
-            'invoice_id'         => $this->invoice_id,
-            'no_invoice'         => $this->whenLoaded('invoice', fn() => $this->invoice?->no_invoice),
-            'klien'              => $this->whenLoaded('invoice', fn() => $this->invoice?->klienAr?->nama_klien),
-            'perusahaan'         => $this->whenLoaded('invoice', fn() => $this->invoice?->perusahaan?->nama_singkatan_perusahaan),
-            'tanggal_pembayaran' => $this->tanggal_pembayaran?->format('Y-m-d'),
-            'jumlah_pembayaran'  => (float) $this->jumlah_pembayaran,
-            'metode_pembayaran'  => $this->metode_pembayaran,
-            'no_referensi'       => $this->no_referensi,
-            'keterangan'         => $this->keterangan,
-            'created_by'         => $this->created_by,
-            'created_by_name'    => $this->whenLoaded('createdBy', fn() => $this->createdBy?->username),
-            'created_at'         => $this->created_at?->format('Y-m-d H:i:s'),
+            'id'                    => $this->id,
+            'invoice_id'            => $this->invoice_id,
+            'no_invoice'            => $this->whenLoaded('invoice', fn() => $this->invoice?->no_invoice),
+            'klien'                 => $this->whenLoaded('invoice', fn() => $this->invoice?->klienAr?->nama_klien),
+            'perusahaan'            => $this->whenLoaded('invoice', fn() => $this->invoice?->perusahaan?->nama_singkatan_perusahaan),
+            'tanggal_pembayaran'    => $this->tanggal_pembayaran?->format('d-m-Y'),
+            'jumlah_pembayaran'     => (float) $this->jumlah_pembayaran,
+            'metode_pembayaran'     => $this->metode_pembayaran,
+            'no_referensi'          => $this->no_referensi,
+            'keterangan'            => $this->keterangan,
+            'bukti_gdrive_file_id'  => $this->bukti_gdrive_file_id,
+            'bukti_file_name'       => $this->bukti_file_name,
+            'bukti_file_size'       => $this->bukti_file_size,
+            'bukti_mime_type'       => $this->bukti_mime_type,
+            'bukti_uploaded_at'     => $this->bukti_uploaded_at?->format('d-m-Y H:i'),
+            'bukti_gdrive_url'      => $this->bukti_gdrive_file_id
+                ? 'https://drive.google.com/file/d/' . $this->bukti_gdrive_file_id . '/view'
+                : null,
+            'created_by'            => $this->created_by,
+            'created_by_name'       => $this->whenLoaded('createdBy', fn() => $this->createdBy?->username),
+            'created_at'            => $this->created_at?->format('d-m-Y H:i'),
         ];
     }
 }

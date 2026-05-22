@@ -17,6 +17,8 @@ use Illuminate\Support\Facades\Route;
 
 // ─── Master Klien AR ──────────────────────────────────────────────
 Route::get('/dashboard/pic-ar', [DashboardController::class, 'picAr']);
+Route::get('/dashboard/global', [DashboardController::class, 'global']);
+Route::get('/dashboard/kpi',    [DashboardController::class, 'kpi']);
 
 Route::prefix('klien-ar')->group(function () {
     Route::get('/', [KlienArController::class, 'index']);

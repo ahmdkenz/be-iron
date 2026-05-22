@@ -3,6 +3,7 @@
 namespace App\Domain\Finance\RekonsiliasiBankStatement\Services;
 
 use App\Domain\Finance\Invoice\Services\InvoiceService;
+use App\Domain\Finance\RekonsiliasiBankStatement\Exceptions\DuplicateStatementException;
 use App\Domain\Finance\RekonsiliasiBankStatement\Parsers\BankParserFactory;
 use App\Models\BankStatement;
 use App\Models\BankStatementDetail;
@@ -14,25 +15,40 @@ use Illuminate\Support\Facades\DB;
 
 class BankStatementService
 {
-    public function upload(UploadedFile $file, string $bankType, int $userId): BankStatement
+    public function upload(UploadedFile $file, string $bankType, int $userId, bool $force = false): BankStatement
     {
         $parser = BankParserFactory::make($bankType);
-        $tempPath = $file->getPathname();
-        $rows = $parser->parse($tempPath);
+        $rows   = $parser->parse($file->getPathname());
 
         if (empty($rows)) {
             throw new \RuntimeException('File tidak mengandung transaksi yang dapat dibaca. Pastikan format file sesuai dengan bank yang dipilih.');
         }
 
-        return DB::transaction(function () use ($rows, $bankType, $file, $userId) {
-            $tanggalList = array_column($rows, 'tanggal');
-            sort($tanggalList);
+        $tanggalList  = array_column($rows, 'tanggal');
+        sort($tanggalList);
+        $periodeAwal  = $tanggalList[0];
+        $periodeAkhir = end($tanggalList);
+
+        $existing = BankStatement::where('bank_type', $bankType)
+            ->where('periode_awal', '<=', $periodeAkhir)
+            ->where('periode_akhir', '>=', $periodeAwal)
+            ->first();
+
+        if ($existing && !$force) {
+            throw new DuplicateStatementException($existing);
+        }
+
+        return DB::transaction(function () use ($rows, $bankType, $file, $userId, $existing, $periodeAwal, $periodeAkhir) {
+            if ($existing) {
+                $existing->details()->delete();
+                $existing->delete();
+            }
 
             $statement = BankStatement::create([
                 'bank_type'       => $bankType,
                 'nama_file'       => $file->getClientOriginalName(),
-                'periode_awal'    => $tanggalList[0] ?? null,
-                'periode_akhir'   => end($tanggalList) ?: null,
+                'periode_awal'    => $periodeAwal,
+                'periode_akhir'   => $periodeAkhir,
                 'total_transaksi' => count($rows),
                 'total_kredit'    => array_sum(array_column($rows, 'kredit')),
                 'jumlah_matched'  => 0,
@@ -248,7 +264,7 @@ class BankStatementService
             'jumlah_matched'   => $statement->jumlah_matched,
             'jumlah_unmatched' => $statement->jumlah_unmatched,
             'uploaded_by'      => $statement->uploader?->name,
-            'created_at'       => $statement->created_at?->toDateTimeString(),
+            'created_at'       => $statement->created_at?->setTimezone('Asia/Jakarta')->format('d-m-Y H:i'),
             'details'          => $details,
         ];
     }

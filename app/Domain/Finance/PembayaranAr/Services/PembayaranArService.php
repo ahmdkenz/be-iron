@@ -3,15 +3,18 @@
 namespace App\Domain\Finance\PembayaranAr\Services;
 
 use App\Domain\Finance\Invoice\Services\InvoiceService;
+use App\Domain\Finance\PembayaranAr\Jobs\UploadBuktiBayarToGDriveJob;
 use App\Models\Invoice;
 use App\Models\PembayaranAr;
 use App\Models\PembayaranArLog;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Storage;
 
 class PembayaranArService
 {
     public function __construct(private readonly InvoiceService $invoiceService) {}
 
-    public function create(Invoice $invoice, array $data): PembayaranAr
+    public function create(Invoice $invoice, array $data, ?UploadedFile $buktiBayar = null): PembayaranAr
     {
         abort_if(
             $invoice->requiresApproval() && !$invoice->isApprovedForFinanceFlow(),
@@ -44,7 +47,28 @@ class PembayaranArService
 
         $this->invoiceService->recalculate($invoice->fresh());
 
+        if ($buktiBayar) {
+            $this->dispatchBuktiUpload($pembayaran, $buktiBayar);
+        }
+
         return $pembayaran->load('createdBy');
+    }
+
+    private function dispatchBuktiUpload(PembayaranAr $pembayaran, UploadedFile $file): void
+    {
+        $ext      = $file->getClientOriginalExtension();
+        $fileName = 'Pembayaran-' . $pembayaran->id . '-' . now()->format('Ymd') . '.' . $ext;
+        $tempPath = 'temp/bukti/' . $fileName;
+
+        Storage::put($tempPath, file_get_contents($file->getRealPath()));
+
+        UploadBuktiBayarToGDriveJob::dispatch(
+            $pembayaran->id,
+            $tempPath,
+            $fileName,
+            $file->getMimeType() ?? $file->getClientMimeType(),
+            $file->getSize(),
+        );
     }
 
     public function delete(PembayaranAr $pembayaran): void
@@ -76,7 +100,7 @@ class PembayaranArService
             'no_invoice'         => $existing->invoice?->no_invoice,
             'klien'              => $existing->invoice?->klienAr?->nama_klien,
             'pic'                => $existing->invoice?->karyawan?->nama_karyawan,
-            'tanggal_pembayaran' => $existing->tanggal_pembayaran?->format('Y-m-d'),
+            'tanggal_pembayaran' => $existing->tanggal_pembayaran?->format('d-m-Y'),
             'jumlah_pembayaran'  => (float) $existing->jumlah_pembayaran,
             'metode_pembayaran'  => $existing->metode_pembayaran,
         ];

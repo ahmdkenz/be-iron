@@ -3,6 +3,7 @@
 namespace App\Domain\Finance\RekonsiliasiBankStatement\Controllers;
 
 use App\Domain\Finance\RekonsiliasiBankStatement\BankTemplateGenerator;
+use App\Domain\Finance\RekonsiliasiBankStatement\Exceptions\DuplicateStatementException;
 use App\Domain\Finance\RekonsiliasiBankStatement\Services\BankStatementService;
 use App\Http\Controllers\Controller;
 use App\Models\BankStatement;
@@ -35,7 +36,7 @@ class BankStatementController extends Controller
             'jumlah_matched'   => $s->jumlah_matched,
             'jumlah_unmatched' => $s->jumlah_unmatched,
             'uploaded_by'      => $s->uploader?->name,
-            'created_at'       => $s->created_at?->toDateTimeString(),
+            'created_at'       => $s->created_at?->setTimezone('Asia/Jakarta')->format('d-m-Y H:i'),
         ]);
 
         return $this->successResponse($data);
@@ -46,13 +47,15 @@ class BankStatementController extends Controller
         $request->validate([
             'bank_type' => ['required', 'in:BCA,MANDIRI,CIMB,BSI'],
             'file'      => ['required', 'file', 'mimes:csv,xlsx,xls', 'max:10240'],
+            'force'     => ['sometimes', 'boolean'],
         ]);
 
         try {
             $statement = $this->service->upload(
                 $request->file('file'),
                 $request->bank_type,
-                auth()->id()
+                auth()->id(),
+                $request->boolean('force', false),
             );
 
             return $this->successResponse([
@@ -61,6 +64,21 @@ class BankStatementController extends Controller
                 'jumlah_matched'   => $statement->jumlah_matched,
                 'jumlah_unmatched' => $statement->jumlah_unmatched,
             ], 'File berhasil diupload dan diproses.');
+        } catch (DuplicateStatementException $e) {
+            $s = $e->getStatement();
+
+            return $this->errorResponse('Rekening koran sudah diupload untuk periode ini.', 409, [
+                'existing' => [
+                    'id'               => $s->id,
+                    'nama_file'        => $s->nama_file,
+                    'periode_awal'     => $s->periode_awal?->toDateString(),
+                    'periode_akhir'    => $s->periode_akhir?->toDateString(),
+                    'total_transaksi'  => $s->total_transaksi,
+                    'jumlah_matched'   => $s->jumlah_matched,
+                    'jumlah_unmatched' => $s->jumlah_unmatched,
+                    'uploaded_by'      => $s->uploader?->name,
+                ],
+            ]);
         } catch (\RuntimeException $e) {
             return $this->errorResponse($e->getMessage(), 422);
         }

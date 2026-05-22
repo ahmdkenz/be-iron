@@ -30,7 +30,7 @@ class KinerjaArService
                 DB::raw('COUNT(DISTINCT tb_invoice.klien_ar_id) as jumlah_klien'),
                 DB::raw('COUNT(tb_invoice.id) as jumlah_invoice'),
                 DB::raw('SUM(tb_invoice.total_tagihan) as total_tagihan'),
-                DB::raw('SUM(tb_invoice.total_pembayaran) as total_terkumpul'),
+                DB::raw('SUM(tb_invoice.total_tagihan - tb_invoice.sisa_tagihan) as total_terkumpul'),
                 DB::raw('SUM(tb_invoice.sisa_tagihan) as total_sisa')
             )
             ->whereNotNull('tb_klien_ar.karyawan_ar_id')

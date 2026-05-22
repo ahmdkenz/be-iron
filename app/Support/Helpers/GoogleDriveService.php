@@ -71,14 +71,23 @@ class GoogleDriveService
      */
     public function uploadPdf(string $folderId, string $fileName, string $pdfContent): string
     {
+        return $this->uploadFile($folderId, $fileName, $pdfContent, 'application/pdf');
+    }
+
+    /**
+     * Upload file dengan MIME type apapun ke folder yang ditentukan.
+     * Return: Google Drive file ID.
+     */
+    public function uploadFile(string $folderId, string $fileName, string $fileContent, string $mimeType): string
+    {
         $fileMeta = new DriveFile([
             'name'    => $fileName,
             'parents' => [$folderId],
         ]);
 
         $file = $this->drive->files->create($fileMeta, [
-            'data'       => $pdfContent,
-            'mimeType'   => 'application/pdf',
+            'data'       => $fileContent,
+            'mimeType'   => $mimeType,
             'uploadType' => 'multipart',
             'fields'     => 'id',
         ]);

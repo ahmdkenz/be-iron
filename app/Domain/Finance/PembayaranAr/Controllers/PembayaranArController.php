@@ -74,8 +74,12 @@ class PembayaranArController extends Controller
 
     public function store(StorePembayaranArRequest $request, int $invoiceId): JsonResponse
     {
-        $invoice   = $this->invoiceService->findOrFail($invoiceId);
-        $pembayaran = $this->service->create($invoice, $request->validated());
+        $invoice    = $this->invoiceService->findOrFail($invoiceId);
+        $pembayaran = $this->service->create(
+            $invoice,
+            $request->validated(),
+            $request->file('bukti_pembayaran'),
+        );
 
         return $this->createdResponse(
             new PembayaranArResource($pembayaran),

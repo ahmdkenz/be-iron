@@ -6,6 +6,7 @@ use App\Models\Invoice;
 use App\Models\KlienAr;
 use App\Models\PembayaranAr;
 use App\Models\User;
+use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 
@@ -50,6 +51,7 @@ class DashboardService
             'status_breakdown' => $this->buildStatusBreakdown($invoiceQuery),
             'monthly_trend'    => $this->buildMonthlyTrend($months, $klienIds),
             'recent_invoices'  => $this->buildRecentInvoices($invoiceQuery),
+            'kpi'              => $this->buildKpiMetrics($klienIds),
         ];
     }
 
@@ -123,7 +125,7 @@ class DashboardService
             ->map(fn(Invoice $invoice) => [
                 'id'               => $invoice->id,
                 'no_invoice'       => $invoice->no_invoice,
-                'tanggal_invoice'  => $invoice->tanggal_invoice?->format('Y-m-d'),
+                'tanggal_invoice'  => $invoice->tanggal_invoice?->format('d-m-Y'),
                 'klien'            => $invoice->klienAr?->nama_klien,
                 'resto'            => $invoice->klienAr?->resto?->nama_resto,
                 'total_tagihan'    => (float) $invoice->total_tagihan,
@@ -149,6 +151,135 @@ class DashboardService
                 'end_date'   => $month->copy()->endOfMonth()->toDateString(),
             ];
         });
+    }
+
+    public function getGlobalOverview(User $user): array
+    {
+        $months     = $this->buildMonthBuckets();
+        $klienIds   = KlienAr::query()->pluck('id');
+        $invoiceQuery = Invoice::query()->whereIn('klien_ar_id', $klienIds);
+
+        return [
+            'scope' => 'GLOBAL',
+            'summary' => [
+                'total_klien'       => KlienAr::where('status', true)->count(),
+                'total_invoice'     => (clone $invoiceQuery)->count(),
+                'total_tagihan'     => (float) (clone $invoiceQuery)->sum('total_tagihan'),
+                'total_pembayaran'  => (float) (clone $invoiceQuery)->sum('total_pembayaran'),
+                'total_sisa'        => (float) (clone $invoiceQuery)->sum('sisa_tagihan'),
+            ],
+            'status_breakdown' => $this->buildStatusBreakdown($invoiceQuery),
+            'monthly_trend'    => $this->buildMonthlyTrend($months, $klienIds),
+            'recent_invoices'  => $this->buildRecentInvoices($invoiceQuery),
+            'kpi'              => $this->buildKpiMetrics($klienIds),
+        ];
+    }
+
+    public function getKpiMetrics(User $user): array
+    {
+        $user->loadMissing('karyawan');
+
+        if (!$user->karyawan_id) {
+            return $this->emptyKpi();
+        }
+
+        $klienIds = KlienAr::where('karyawan_ar_id', $user->karyawan_id)->pluck('id');
+
+        return $this->buildKpiMetrics($klienIds);
+    }
+
+    public function getGlobalKpiMetrics(): array
+    {
+        $klienIds = KlienAr::pluck('id');
+
+        return $this->buildKpiMetrics($klienIds);
+    }
+
+    private function buildKpiMetrics(Collection $klienIds): array
+    {
+        $today = Carbon::today();
+
+        $invoiceBase = Invoice::query()
+            ->whereIn('klien_ar_id', $klienIds)
+            ->where('sisa_tagihan', '>', 0)
+            ->whereNotIn('status', ['DRAFT', 'LUNAS']);
+
+        $totalTagihan    = (float) Invoice::whereIn('klien_ar_id', $klienIds)->sum('total_tagihan');
+        $totalPembayaran = (float) Invoice::whereIn('klien_ar_id', $klienIds)->sum('total_pembayaran');
+        $totalSisa       = (float) Invoice::whereIn('klien_ar_id', $klienIds)->sum('sisa_tagihan');
+        $totalInvoice    = Invoice::whereIn('klien_ar_id', $klienIds)->count();
+
+        // Collection Rate: gunakan (tagihan - sisa) agar tidak melebihi 100% saat invoice overpaid
+        $collectionRate = $totalTagihan > 0 ? round(($totalTagihan - $totalSisa) / $totalTagihan * 100, 1) : 0;
+
+        // DSO: rata-rata hari piutang yang belum terbayar, dihitung dari seluruh outstanding
+        // DSO = (Sisa Piutang / Total Tagihan) × 30 hari (estimasi per bulan)
+        $dso = $totalTagihan > 0 ? round(($totalSisa / $totalTagihan) * 30, 1) : 0;
+
+        // Invoice Overdue: invoice dengan tanggal_invoice > 30 hari yang masih ada sisa
+        $overdueCount = (clone $invoiceBase)
+            ->where('tanggal_invoice', '<=', $today->copy()->subDays(30))
+            ->count();
+
+        $overduePercentage = $totalInvoice > 0 ? round(($overdueCount / $totalInvoice) * 100, 1) : 0;
+
+        // Aging summary (5 bucket)
+        $agingSummary = $this->buildAgingSummaryForKpi($klienIds, $today);
+
+        return [
+            'dso'                => $dso,
+            'collection_rate'    => $collectionRate,
+            'overdue_count'      => $overdueCount,
+            'overdue_percentage' => $overduePercentage,
+            'aging_summary'      => $agingSummary,
+        ];
+    }
+
+    private function buildAgingSummaryForKpi(Collection $klienIds, Carbon $today): array
+    {
+        $invoices = Invoice::query()
+            ->whereIn('klien_ar_id', $klienIds)
+            ->where('sisa_tagihan', '>', 0)
+            ->whereNotIn('status', ['LUNAS'])
+            ->get(['tanggal_invoice', 'sisa_tagihan']);
+
+        $buckets = ['current' => 0.0, 'hari_1_30' => 0.0, 'hari_31_60' => 0.0, 'hari_61_90' => 0.0, 'hari_91_plus' => 0.0];
+
+        foreach ($invoices as $inv) {
+            $ageDays = Carbon::parse($inv->tanggal_invoice)->startOfDay()->diffInDays($today, false);
+            $sisa    = (float) $inv->sisa_tagihan;
+
+            if ($ageDays <= 0) {
+                $buckets['current'] += $sisa;
+            } elseif ($ageDays <= 30) {
+                $buckets['hari_1_30'] += $sisa;
+            } elseif ($ageDays <= 60) {
+                $buckets['hari_31_60'] += $sisa;
+            } elseif ($ageDays <= 90) {
+                $buckets['hari_61_90'] += $sisa;
+            } else {
+                $buckets['hari_91_plus'] += $sisa;
+            }
+        }
+
+        return $buckets;
+    }
+
+    private function emptyKpi(): array
+    {
+        return [
+            'dso'                => 0,
+            'collection_rate'    => 0,
+            'overdue_count'      => 0,
+            'overdue_percentage' => 0,
+            'aging_summary'      => [
+                'current'      => 0,
+                'hari_1_30'    => 0,
+                'hari_31_60'   => 0,
+                'hari_61_90'   => 0,
+                'hari_91_plus' => 0,
+            ],
+        ];
     }
 
     private function emptyPicArOverview(User $user, Collection $months): array
