@@ -4,6 +4,8 @@ namespace App\Domain\Finance\PembayaranAr\Services;
 
 use App\Domain\Finance\Invoice\Services\InvoiceService;
 use App\Domain\Finance\PembayaranAr\Jobs\UploadBuktiBayarToGDriveJob;
+use App\Models\BankStatement;
+use App\Models\BankStatementDetail;
 use App\Models\Invoice;
 use App\Models\PembayaranAr;
 use App\Models\PembayaranArLog;
@@ -73,6 +75,12 @@ class PembayaranArService
 
     public function delete(PembayaranAr $pembayaran): void
     {
+        // Kumpulkan alokasi anak DAN invoice tujuannya SEBELUM FK nullOnDelete berjalan.
+        // Setelah $pembayaran->delete(), sumber_pembayaran_ar_id di-NULL sehingga
+        // query WHERE sumber_pembayaran_ar_id = X tidak akan menemukan records lagi.
+        $childAllocations = $pembayaran->alokasiKelebihan()->with('invoice')->get();
+        $affectedInvoices = $childAllocations->map->invoice->filter()->unique('id')->values();
+
         PembayaranArLog::create([
             'pembayaran_ar_id' => $pembayaran->id,
             'aksi'             => 'DIHAPUS',
@@ -80,9 +88,43 @@ class PembayaranArService
             'data_sebelum'     => $pembayaran->toArray(),
         ]);
 
+        foreach ($childAllocations as $alloc) {
+            PembayaranArLog::create([
+                'pembayaran_ar_id' => $alloc->id,
+                'aksi'             => 'DIHAPUS',
+                'actor_id'         => auth()->id(),
+                'data_sebelum'     => $alloc->toArray(),
+            ]);
+        }
+
+        $pembayaran->alokasiKelebihan()->delete();
+
+        $linkedStatementIds = BankStatementDetail::where('pembayaran_ar_id', $pembayaran->id)
+            ->pluck('bank_statement_id')
+            ->unique()
+            ->all();
+        BankStatementDetail::where('pembayaran_ar_id', $pembayaran->id)
+            ->update(['pembayaran_ar_id' => null, 'status_cocok' => 'UNMATCHED']);
+
         $invoice = $pembayaran->invoice;
         $pembayaran->delete();
+
+        foreach ($linkedStatementIds as $statementId) {
+            $matched   = BankStatementDetail::where('bank_statement_id', $statementId)->where('status_cocok', 'MATCHED')->count();
+            $unmatched = BankStatementDetail::where('bank_statement_id', $statementId)->where('status_cocok', 'UNMATCHED')->count();
+            BankStatement::where('id', $statementId)->update([
+                'jumlah_matched'   => $matched,
+                'jumlah_unmatched' => $unmatched,
+            ]);
+        }
+
         $this->invoiceService->recalculate($invoice->fresh());
+
+        foreach ($affectedInvoices as $targetInvoice) {
+            if ($targetInvoice->id !== $invoice->id) {
+                $this->invoiceService->recalculate($targetInvoice->fresh());
+            }
+        }
     }
 
     public function cekDuplikatReferensi(string $noRef): ?array

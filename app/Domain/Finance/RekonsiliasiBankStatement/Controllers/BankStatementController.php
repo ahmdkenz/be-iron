@@ -122,21 +122,51 @@ class BankStatementController extends Controller
         try {
             $updated = $this->service->manualMatch($detail, $request->integer('pembayaran_ar_id'));
 
+            $updated->load([
+                'pembayaranAr.alokasiKelebihan.invoice.klienAr',
+                'pembayaranAr.alokasiKelebihan.createdBy',
+            ]);
+
+            $pembayaran     = $updated->pembayaranAr;
+            $invoice        = $pembayaran?->invoice;
+            $kelebihanBayar = null;
+            if ($invoice) {
+                $total = max(0, round((float) $invoice->total_pembayaran - (float) $invoice->total_tagihan, 2));
+                if ($total > 0) {
+                    $dialokasi      = (float) $pembayaran->alokasiKelebihan->sum('jumlah_pembayaran');
+                    $kelebihanBayar = [
+                        'total'           => $total,
+                        'sudah_dialokasi' => round($dialokasi, 2),
+                        'sisa'            => max(0, round($total - $dialokasi, 2)),
+                        'riwayat'         => $pembayaran->alokasiKelebihan->map(fn($p) => [
+                            'id'         => $p->id,
+                            'jumlah'     => $p->jumlah_pembayaran,
+                            'no_invoice' => $p->invoice?->no_invoice,
+                            'klien'      => $p->invoice?->klienAr?->nama_klien,
+                            'keterangan' => $p->keterangan,
+                            'created_by' => $p->createdBy?->name,
+                            'tanggal'    => $p->tanggal_pembayaran?->toDateString(),
+                        ])->values(),
+                    ];
+                }
+            }
+
             return $this->successResponse([
-                'id'           => $updated->id,
-                'status_cocok' => $updated->status_cocok,
-                'matched_by'   => $updated->matchedBy?->name,
-                'selisih_bank' => $updated->pembayaranAr
-                    ? round($updated->kredit - (float) $updated->pembayaranAr->jumlah_pembayaran, 2)
+                'id'              => $updated->id,
+                'status_cocok'    => $updated->status_cocok,
+                'matched_by'      => $updated->matchedBy?->name,
+                'selisih_bank'    => $pembayaran
+                    ? round($updated->kredit - (float) $pembayaran->jumlah_pembayaran, 2)
                     : null,
-                'pembayaran'   => $updated->pembayaranAr ? [
-                    'id'                 => $updated->pembayaranAr->id,
-                    'no_referensi'       => $updated->pembayaranAr->no_referensi,
-                    'tanggal_pembayaran' => $updated->pembayaranAr->tanggal_pembayaran?->toDateString(),
-                    'jumlah_pembayaran'  => $updated->pembayaranAr->jumlah_pembayaran,
-                    'metode_pembayaran'  => $updated->pembayaranAr->metode_pembayaran,
-                    'klien'              => $updated->pembayaranAr->invoice?->klienAr?->nama_klien,
+                'pembayaran'      => $pembayaran ? [
+                    'id'                 => $pembayaran->id,
+                    'no_referensi'       => $pembayaran->no_referensi,
+                    'tanggal_pembayaran' => $pembayaran->tanggal_pembayaran?->toDateString(),
+                    'jumlah_pembayaran'  => $pembayaran->jumlah_pembayaran,
+                    'metode_pembayaran'  => $pembayaran->metode_pembayaran,
+                    'klien'              => $invoice?->klienAr?->nama_klien,
                 ] : null,
+                'kelebihan_bayar' => $kelebihanBayar,
             ], 'Transaksi berhasil dicocokkan.');
         } catch (\Symfony\Component\HttpKernel\Exception\HttpException $e) {
             return $this->errorResponse($e->getMessage(), $e->getStatusCode());

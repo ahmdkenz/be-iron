@@ -91,15 +91,6 @@
     .ob-detail-row-summary { background: #fffbf0; }
     .ob-detail-row-summary td { border-bottom: 2px solid #ccc; }
 
-    /* OB Sub-items */
-    .ob-sub-items { margin-top: 6px; padding: 6px 0 0 0; border-top: 1px dashed #ccc; }
-    .ob-sub-item-row { font-size: 13px; color: #444; padding: 3px 0; display: block; }
-    .ob-sub-item-label { color: #888; font-size: 12px; }
-    .ob-sub-table { width: 100%; border-collapse: collapse; margin-top: 4px; }
-    .ob-sub-table th { background: #f0f0f0; font-size: 12px; font-weight: bold; padding: 4px 6px; border: 1px solid #ddd; color: #555; text-transform: uppercase; }
-    .ob-sub-table td { font-size: 12px; padding: 4px 6px; border: 1px solid #eee; color: #333; }
-    .ob-sub-total-row td { background: #f5f5f5; font-weight: bold; border-top: 1px solid #ccc; }
-
     /* OB Grand total row */
     .ob-grand-row td { background: #fef2f2; border-top: 2px solid #b71c1c; border-bottom: 2px solid #b71c1c; font-weight: bold; color: #b71c1c; font-size: 16px; padding: 10px 8px; }
 
@@ -257,8 +248,8 @@
   </div>
 
   @if($invoice->is_opening_balance)
-  {{-- ======== OPENING BALANCE: Rincian Invoice Asal ======== --}}
-  <div class="ob-section-title">Rincian Invoice Asal</div>
+  {{-- ======== OPENING BALANCE: Rincian Invoice Periode Sebelumnya ======== --}}
+  <div class="ob-section-title">Rincian Invoice Periode Sebelumnya</div>
 
   @php $obDetails = $invoice->openingBalanceDetails ?? collect(); @endphp
 
@@ -309,44 +300,6 @@
         <td class="ob-detail-jumlah text-right" style="color:#555;">Rp {{ number_format((float)$detail->jumlah_tagihan_asal, 0, ',', '.') }}</td>
         <td class="ob-detail-sisa text-right font-bold">Rp {{ number_format((float)$detail->sisa_tagihan_asal, 0, ',', '.') }}</td>
       </tr>
-      @if($detail->items->isNotEmpty())
-      <tr>
-        <td colspan="6" style="padding: 0 8px 12px 32px; background: #fafafa; border-bottom: 1px solid #eee;">
-          <div class="ob-sub-items">
-            <span class="ob-sub-item-label">Item Invoice:</span>
-            <table class="ob-sub-table">
-              <thead>
-                <tr>
-                  <th style="width:5%; text-align:center;">No</th>
-                  <th style="width:13%; text-align:left;">Kode Barang</th>
-                  <th style="width:27%; text-align:left;">Nama Barang</th>
-                  <th style="width:9%; text-align:center;">Qty</th>
-                  <th style="width:9%; text-align:center;">Satuan</th>
-                  <th style="width:18%; text-align:right;">Harga Satuan</th>
-                  <th style="width:19%; text-align:right;">Subtotal</th>
-                </tr>
-              </thead>
-              <tbody>
-                @foreach($detail->items as $ii => $item)
-                <tr>
-                  <td style="text-align:center; color:#777;">{{ $ii + 1 }}</td>
-                  <td style="color:#555;">{{ $item->barang?->kode_barang ?? '-' }}</td>
-                  <td>
-                    {{ $item->nama_barang }}
-                    @if($item->keterangan)<span class="ob-sub-item-label" style="display:block;">{{ $item->keterangan }}</span>@endif
-                  </td>
-                  <td style="text-align:center;">{{ rtrim(rtrim(number_format((float)$item->qty, 4, '.', ''), '0'), '.') }}</td>
-                  <td style="text-align:center; color:#555;">{{ $item->satuan }}</td>
-                  <td style="text-align:right;">Rp {{ number_format((float)$item->harga_satuan, 0, ',', '.') }}</td>
-                  <td style="text-align:right; font-weight:bold;">Rp {{ number_format((float)$item->subtotal, 0, ',', '.') }}</td>
-                </tr>
-                @endforeach
-              </tbody>
-            </table>
-          </div>
-        </td>
-      </tr>
-      @endif
       @endforeach
     </tbody>
     <tfoot>
@@ -357,6 +310,55 @@
     </tfoot>
   </table>
   @endif
+
+  {{-- ======== OPENING BALANCE: Invoice Bulan Berjalan ======== --}}
+  @php
+    $regularInvoicesInPeriod = $regularInvoicesInPeriod ?? collect();
+    $totalTagihanPeriode = $regularInvoicesInPeriod->sum('total_tagihan');
+    $totalSisaPeriode    = $regularInvoicesInPeriod->sum('sisa_tagihan');
+  @endphp
+
+  <div class="ob-section-title" style="margin-top: 18px;">Invoice Bulan Berjalan</div>
+
+  <table class="ob-detail-table">
+    <thead>
+      <tr>
+        <th class="ob-detail-no text-center">No</th>
+        <th class="ob-detail-invoice text-left">No. Invoice</th>
+        <th class="ob-detail-invoice text-left">No. Surat Jalan</th>
+        <th class="ob-detail-date text-center">Tanggal</th>
+        <th class="ob-detail-jumlah text-right">Total Tagihan</th>
+        <th class="ob-detail-sisa text-right">Sisa Tagihan</th>
+      </tr>
+    </thead>
+    <tbody>
+      @forelse($regularInvoicesInPeriod as $ri => $regInv)
+      <tr>
+        <td class="ob-detail-no text-center" style="color:#777;">{{ $ri + 1 }}</td>
+        <td class="ob-detail-invoice font-bold" style="color:#b71c1c;">{{ $regInv->no_invoice }}</td>
+        <td class="ob-detail-invoice" style="color:#555;">{{ $regInv->no_surat_jalan ?: '-' }}</td>
+        <td class="ob-detail-date text-center" style="color:#555;">{{ \Carbon\Carbon::parse($regInv->tanggal_invoice)->isoFormat('D MMM YYYY') }}</td>
+        <td class="ob-detail-jumlah text-right" style="color:#555;">Rp {{ number_format((float)$regInv->total_tagihan, 0, ',', '.') }}</td>
+        <td class="ob-detail-sisa text-right font-bold">Rp {{ number_format((float)$regInv->sisa_tagihan, 0, ',', '.') }}</td>
+      </tr>
+      @empty
+      <tr>
+        <td colspan="6" class="text-center" style="padding:20px; color:#777; font-style:italic;">
+          Tidak ada invoice reguler dalam periode ini.
+        </td>
+      </tr>
+      @endforelse
+    </tbody>
+    @if($regularInvoicesInPeriod->isNotEmpty())
+    <tfoot>
+      <tr class="ob-grand-row">
+        <td colspan="4" class="text-right">TOTAL INVOICE BULAN BERJALAN</td>
+        <td class="text-right">Rp {{ number_format((float)$totalTagihanPeriode, 0, ',', '.') }}</td>
+        <td class="text-right">Rp {{ number_format((float)$totalSisaPeriode, 0, ',', '.') }}</td>
+      </tr>
+    </tfoot>
+    @endif
+  </table>
 
   @else
   {{-- ======== INVOICE BIASA: Item Barang ======== --}}
@@ -398,14 +400,21 @@
   @endif
 
   <!-- Summary -->
+  @php
+    $isOb = $invoice->is_opening_balance;
+    $totalBerjalan = isset($totalSisaPeriode) ? (float)$totalSisaPeriode : 0;
+    $obGrandTotal  = $isOb ? ((float)$invoice->subtotal + $totalBerjalan) : 0;
+    $obSisaBayar   = $isOb ? max(0, $obGrandTotal - (float)$invoice->total_pembayaran) : 0;
+    $terbilangAmt  = $isOb ? $obGrandTotal : (float)$invoice->total_tagihan;
+  @endphp
   <table>
     <tr>
       <td class="summary-left">
         <div class="terbilang-box">
           <div class="terbilang-lbl">Terbilang</div>
-          <div class="terbilang-val">"{{ \App\Support\Helpers\Terbilang::convert((int) $invoice->total_tagihan) }} Rupiah"</div>
+          <div class="terbilang-val">"{{ \App\Support\Helpers\Terbilang::convert((int) $terbilangAmt) }} Rupiah"</div>
         </div>
-        
+
         @if($invoice->keterangan)
         <div class="note-box">
           <div class="note-lbl">Catatan Invoice</div>
@@ -415,6 +424,16 @@
       </td>
       <td class="summary-right">
         <table class="totals-table">
+          @if($isOb)
+          <tr>
+            <td class="totals-lbl">Tagihan Periode Sebelumnya</td>
+            <td class="totals-val">Rp {{ number_format((float)$invoice->subtotal, 0, ',', '.') }}</td>
+          </tr>
+          <tr>
+            <td class="totals-lbl">Invoice Bulan Berjalan</td>
+            <td class="totals-val">Rp {{ number_format($totalBerjalan, 0, ',', '.') }}</td>
+          </tr>
+          @else
           <tr>
             <td class="totals-lbl">Total Barang</td>
             <td class="totals-val">Rp {{ number_format((float)$invoice->subtotal, 0, ',', '.') }}</td>
@@ -425,22 +444,23 @@
             <td class="totals-val">Rp {{ number_format((float)$invoice->tagihan_periode_sebelumnya, 0, ',', '.') }}</td>
           </tr>
           @endif
-          
+          @endif
+
           <tr class="totals-grand">
             <td class="totals-lbl">GRAND TOTAL</td>
-            <td class="totals-val">Rp {{ number_format((float)$invoice->total_tagihan, 0, ',', '.') }}</td>
+            <td class="totals-val">Rp {{ number_format($isOb ? $obGrandTotal : (float)$invoice->total_tagihan, 0, ',', '.') }}</td>
           </tr>
-          
+
           @if((float)$invoice->total_pembayaran > 0)
           <tr>
             <td class="totals-lbl" style="color:#166534;">Sudah Dibayar</td>
             <td class="totals-val" style="color:#166534;">- Rp {{ number_format((float)$invoice->total_pembayaran, 0, ',', '.') }}</td>
           </tr>
           @endif
-          
+
           <tr class="totals-sisa">
             <td class="totals-lbl">SISA BAYAR</td>
-            <td class="totals-val">Rp {{ number_format((float)$invoice->sisa_tagihan, 0, ',', '.') }}</td>
+            <td class="totals-val">Rp {{ number_format($isOb ? $obSisaBayar : (float)$invoice->sisa_tagihan, 0, ',', '.') }}</td>
           </tr>
         </table>
       </td>

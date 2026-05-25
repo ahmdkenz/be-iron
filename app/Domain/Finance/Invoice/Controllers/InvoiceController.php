@@ -569,16 +569,33 @@ class InvoiceController extends Controller
             'klienAr.karyawanAr',
             'perusahaan',
             'items.barang',
+            'openingBalanceDetails.items.barang',
             'pembayarans',
             'createdBy.karyawan',
             'submittedBy.karyawan',
             'approvedBy.karyawan',
         ]);
 
+        $regularInvoicesInPeriod = collect();
+        if ($invoice->is_opening_balance && $invoice->klien_ar_id && $invoice->tanggal_invoice) {
+            $bulanAwal = $invoice->tanggal_invoice->copy()->startOfMonth();
+            $bulanAkhir = $invoice->tanggal_invoice->copy()->endOfMonth();
+            $regularInvoicesInPeriod = Invoice::query()
+                ->where('klien_ar_id', $invoice->klien_ar_id)
+                ->where('perusahaan_id', $invoice->perusahaan_id)
+                ->where('is_opening_balance', false)
+                ->whereBetween('tanggal_invoice', [
+                    $bulanAwal->toDateString(),
+                    $bulanAkhir->toDateString(),
+                ])
+                ->orderBy('tanggal_invoice', 'asc')
+                ->get();
+        }
+
         $signatureData = $this->buildSignatureData($invoice);
         $filename = 'Invoice-' . str_replace(['/', '\\', ' '], '-', $invoice->no_invoice) . '.pdf';
 
-        return Pdf::loadView('finance.invoice-print', compact('invoice', 'signatureData'))
+        return Pdf::loadView('finance.invoice-print', compact('invoice', 'signatureData', 'regularInvoicesInPeriod'))
             ->setPaper('a4', 'portrait')
             ->setOptions([
                 'isHtml5ParserEnabled' => true,
@@ -609,15 +626,31 @@ class InvoiceController extends Controller
             'approvedBy.karyawan',
         ]);
 
+        $regularInvoicesInPeriod = collect();
+        if ($invoice->is_opening_balance && $invoice->klien_ar_id && $invoice->tanggal_invoice) {
+            $bulanAwal = $invoice->tanggal_invoice->copy()->startOfMonth();
+            $bulanAkhir = $invoice->tanggal_invoice->copy()->endOfMonth();
+            $regularInvoicesInPeriod = Invoice::query()
+                ->where('klien_ar_id', $invoice->klien_ar_id)
+                ->where('perusahaan_id', $invoice->perusahaan_id)
+                ->where('is_opening_balance', false)
+                ->whereBetween('tanggal_invoice', [
+                    $bulanAwal->toDateString(),
+                    $bulanAkhir->toDateString(),
+                ])
+                ->orderBy('tanggal_invoice', 'asc')
+                ->get();
+        }
+
         $signatureData = $this->buildSignatureData($invoice);
 
         if ($request->has('html')) {
-            return view('finance.invoice-print', compact('invoice', 'signatureData'))->render();
+            return view('finance.invoice-print', compact('invoice', 'signatureData', 'regularInvoicesInPeriod'))->render();
         }
 
         $filename = 'Invoice-' . str_replace(['/', '\\', ' '], '-', $invoice->no_invoice) . '.pdf';
 
-        return Pdf::loadView('finance.invoice-print', compact('invoice', 'signatureData'))
+        return Pdf::loadView('finance.invoice-print', compact('invoice', 'signatureData', 'regularInvoicesInPeriod'))
             ->setPaper('a4', 'portrait')
             ->setOptions([
                 'isHtml5ParserEnabled' => true,
