@@ -330,7 +330,7 @@ class OpeningBalanceController extends Controller
             ];
 
             $validator = Validator::make($data, [
-                'no_invoice'   => ['required', 'string', 'unique:tb_invoices,no_invoice'],
+                'no_invoice'   => ['required', 'string', 'unique:tb_invoice,no_invoice'],
                 'klien_ar_id'  => ['required', 'integer'],
                 'tanggal'      => ['required', 'date'],
                 'periode_awal' => ['required', 'date'],
@@ -1355,6 +1355,12 @@ class OpeningBalanceController extends Controller
             if ($d) return $d->format('Y-m-d');
         } catch (\Throwable) {}
 
+        // Try DD/MM/YYYY (slash separator, common in Indonesian Excel locale)
+        try {
+            $d = \Carbon\Carbon::createFromFormat('d/m/Y', $s);
+            if ($d && $d->format('d/m/Y') === $s) return $d->format('Y-m-d');
+        } catch (\Throwable) {}
+
         // Fallback: numeric Excel serial date
         try {
             $d = \Carbon\Carbon::parse($s);
@@ -1376,6 +1382,13 @@ class OpeningBalanceController extends Controller
 
         if ($value === null) return '';
         if (is_bool($value)) return $value ? '1' : '0';
+
+        // Convert Excel date serial numbers to YYYY-MM-DD string
+        if ((is_int($value) || is_float($value)) && \PhpOffice\PhpSpreadsheet\Shared\Date::isDateTime($cell)) {
+            $dt = \PhpOffice\PhpSpreadsheet\Shared\Date::excelToDateTimeObject((float) $value);
+            return $dt->format('Y-m-d');
+        }
+
         if (is_int($value)) return (string) $value;
         if (is_float($value)) {
             return fmod($value, 1.0) === 0.0

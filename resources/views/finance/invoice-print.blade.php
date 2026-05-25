@@ -129,11 +129,11 @@
     .sig-title { font-weight: bold; font-size: 15px; color: #555; text-transform: uppercase; margin-bottom: 12px; }
     .sig-name { font-weight: bold; font-size: 16px; text-decoration: underline; margin-bottom: 4px; }
     .sig-role { font-size: 14px; color: #666; }
-    .sig-barcode-wrap { min-height: 78px; margin-bottom: 10px; }
+    .sig-barcode-wrap { min-height: 160px; margin-bottom: 10px; }
     .sig-barcode { display: inline-block; max-width: 100%; }
-    .sig-barcode img { width: 80px; height: 80px; }
+    .sig-barcode img { width: 150px; height: 150px; }
     .sig-barcode-code { margin-top: 4px; font-size: 10px; letter-spacing: 1px; color: #777; }
-    .sig-placeholder { height: 78px; }
+    .sig-placeholder { height: 160px; }
 
     /* Footer */
     .footer { text-align: center; margin-top: 50px; padding-top: 15px; border-top: 1px solid #ddd; font-size: 15px; color: #888; }

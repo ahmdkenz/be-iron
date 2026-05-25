@@ -2,7 +2,6 @@
 
 namespace App\Domain\Finance\RekonsiliasiBankStatement\Services;
 
-use App\Domain\Finance\Invoice\Services\InvoiceService;
 use App\Domain\Finance\RekonsiliasiBankStatement\Exceptions\DuplicateStatementException;
 use App\Domain\Finance\RekonsiliasiBankStatement\Parsers\BankParserFactory;
 use App\Models\BankStatement;
@@ -198,20 +197,7 @@ class BankStatementService
                 if ($invoice) {
                     $total = max(0, round((float) $invoice->total_pembayaran - (float) $invoice->total_tagihan, 2));
                     if ($total > 0) {
-                        // Hitung berapa dari kelebihan yang benar-benar mengurangi utang
-                        // invoice tujuan: min(yang dikirim, sisa tagihan B sebelum P1 masuk).
-                        $dialokasi = $pembayaran->alokasiKelebihan
-                            ->groupBy('invoice_id')
-                            ->sum(function ($alokasis) {
-                                $target = $alokasis->first()->invoice;
-                                if (!$target) return (float) $alokasis->sum('jumlah_pembayaran');
-                                $groupTotal  = (float) $alokasis->sum('jumlah_pembayaran');
-                                $sisaSebelum = max(0,
-                                    (float) $target->total_tagihan
-                                    - ((float) $target->total_pembayaran - $groupTotal)
-                                );
-                                return min($groupTotal, $sisaSebelum);
-                            });
+                        $dialokasi = (float) $pembayaran->alokasiKelebihan->sum('jumlah_pembayaran');
                         $kelebihanBayar = [
                             'total'           => $total,
                             'sudah_dialokasi' => round($dialokasi, 2),
@@ -375,22 +361,10 @@ class BankStatementService
         $pembayaran = $detail->pembayaranAr;
         abort_if(!$pembayaran, 422, 'Transaksi belum memiliki pembayaran yang dicocokkan.');
 
-        $inv       = $pembayaran->invoice;
-        $total     = max(0, (float) $inv->total_pembayaran - (float) $inv->total_tagihan);
-        $alokasiList = $pembayaran->alokasiKelebihan()->with('invoice')->get();
-        $sudah = (float) $alokasiList
-            ->groupBy('invoice_id')
-            ->sum(function ($alokasis) {
-                $targetInvoice = $alokasis->first()->invoice;
-                if (!$targetInvoice) return (float) $alokasis->sum('jumlah_pembayaran');
-                $groupTotal  = (float) $alokasis->sum('jumlah_pembayaran');
-                $sisaSebelum = max(0,
-                    (float) $targetInvoice->total_tagihan
-                    - ((float) $targetInvoice->total_pembayaran - $groupTotal)
-                );
-                return min($groupTotal, $sisaSebelum);
-            });
-        $sisa = max(0, round($total - $sudah, 2));
+        $inv   = $pembayaran->invoice;
+        $total = max(0, (float) $inv->total_pembayaran - (float) $inv->total_tagihan);
+        $sudah = (float) $pembayaran->alokasiKelebihan()->sum('jumlah_pembayaran');
+        $sisa  = max(0, round($total - $sudah, 2));
 
         abort_if($jumlah <= 0, 422, 'Jumlah harus lebih dari 0.');
         abort_if(
@@ -406,21 +380,45 @@ class BankStatementService
             'Invoice tujuan harus milik klien yang sama.'
         );
         abort_if($target->status === 'LUNAS', 422, 'Invoice ini sudah LUNAS.');
+        abort_if(
+            $target->requiresApproval() && !$target->isApprovedForFinanceFlow(),
+            422,
+            'Opening balance belum disetujui, pembayaran belum dapat diproses'
+        );
 
-        PembayaranAr::create([
-            'invoice_id'               => $invoiceId,
-            'tanggal_pembayaran'       => $pembayaran->tanggal_pembayaran,
-            'jumlah_pembayaran'        => $jumlah,
-            'metode_pembayaran'        => $pembayaran->metode_pembayaran,
-            'no_referensi'             => $pembayaran->no_referensi
-                                            ? $pembayaran->no_referensi . '/ALO-' . ($this->nextAlokasiSuffix($pembayaran))
-                                            : null,
-            'keterangan'               => $keterangan ?? 'Alokasi kelebihan dari ' . $inv->no_invoice,
-            'sumber_pembayaran_ar_id'  => $pembayaran->id,
-            'created_by'               => auth()->id(),
-        ]);
+        DB::transaction(function () use ($invoiceId, $jumlah, $pembayaran, $inv, $keterangan, $target) {
+            PembayaranAr::create([
+                'invoice_id'              => $invoiceId,
+                'tanggal_pembayaran'      => $pembayaran->tanggal_pembayaran,
+                'jumlah_pembayaran'       => $jumlah,
+                'metode_pembayaran'       => $pembayaran->metode_pembayaran,
+                'no_referensi'            => $pembayaran->no_referensi
+                                                ? $pembayaran->no_referensi . '/ALO-' . ($this->nextAlokasiSuffix($pembayaran))
+                                                : null,
+                'keterangan'              => $keterangan ?? 'Alokasi kelebihan dari ' . $inv->no_invoice,
+                'sumber_pembayaran_ar_id' => $pembayaran->id,
+                'created_by'              => auth()->id(),
+            ]);
 
-        app(InvoiceService::class)->recalculate($target->fresh());
+            // Update Invoice B langsung tanpa cascade ke invoice-invoice berikutnya.
+            // Memanggil InvoiceService::recalculate() akan memicu cascadeCarryoverToNext()
+            // yang mengurangi total_tagihan Invoice A (sumber kelebihan), sehingga $total
+            // naik sebesar alokasi dan $sisa tidak pernah berkurang ke 0 (circular dependency).
+            $fresh     = $target->fresh();
+            $newTotal  = (float) $fresh->pembayarans()->sum('jumlah_pembayaran');
+            $newSisa   = max(0, (float) $fresh->total_tagihan - $newTotal);
+            $newStatus = match (true) {
+                $newSisa <= 0  => 'LUNAS',
+                $newTotal > 0  => 'SEBAGIAN',
+                default        => 'TERKIRIM',
+            };
+            $fresh->update([
+                'total_pembayaran' => $newTotal,
+                'sisa_tagihan'     => $newSisa,
+                'status'           => $newStatus,
+                'updated_by'       => auth()->id(),
+            ]);
+        });
     }
 
     private function nextAlokasiSuffix(PembayaranAr $pembayaran): int
