@@ -63,12 +63,15 @@ Route::delete('/pembayaran/{pembayaran}', [PembayaranArController::class, 'destr
 
 // ─── Jurnal per PIC ───────────────────────────────────────────────
 Route::get('/jurnal-pic', [JurnalPicController::class, 'index']);
+Route::get('/jurnal-pic/export-excel', [JurnalPicController::class, 'exportExcel']);
 
 // ─── Aging Report ────────────────────────────────────────────────
 Route::get('/aging-report', [AgingReportController::class, 'index']);
+Route::get('/aging-report/export-excel', [AgingReportController::class, 'exportExcel']);
 
 // ─── Mutasi Piutang ───────────────────────────────────────────────
 Route::get('/mutasi-piutang', [MutasiPiutangController::class, 'index']);
+Route::get('/mutasi-piutang/export-excel', [MutasiPiutangController::class, 'exportExcel']);
 
 // ─── Rekening Koran ───────────────────────────────────────────────
 Route::get('/rekening-koran', [RekeningKoranController::class, 'index']);
@@ -80,9 +83,11 @@ Route::get('/jatuh-tempo', [JatuhTempoController::class, 'index']);
 
 // ─── Rekap Pembayaran ─────────────────────────────────────────────
 Route::get('/rekap-pembayaran', [RekapPembayaranController::class, 'index']);
+Route::get('/rekap-pembayaran/export-excel', [RekapPembayaranController::class, 'exportExcel']);
 
 // ─── Kinerja AR per PIC ───────────────────────────────────────────
 Route::get('/kinerja-ar', [KinerjaArController::class, 'index']);
+Route::get('/kinerja-ar/export-excel', [KinerjaArController::class, 'exportExcel']);
 
 // ─── Rekonsiliasi Bank Statement ──────────────────────────────────
 Route::prefix('rekonsiliasi-bank')->group(function () {

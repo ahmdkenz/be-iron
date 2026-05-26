@@ -22,6 +22,7 @@ class AgingReportService
             ->whereNotIn('status', ['LUNAS'])
             ->when($filters['klien_ar_id'] ?? null, fn($q, $v) => $q->where('klien_ar_id', $v))
             ->when($filters['perusahaan_id'] ?? null, fn($q, $v) => $q->where('perusahaan_id', $v))
+            ->when($filters['karyawan_ar_id'] ?? null, fn($q, $v) => $q->whereHas('klienAr', fn($q) => $q->where('karyawan_ar_id', $v)))
             ->when($segmentTypes, fn($q) => $q->whereHas('klienAr', fn($q) => $q->whereIn('tipe_klien', $segmentTypes)))
             ->get();
 
@@ -32,6 +33,7 @@ class AgingReportService
             ->whereNotIn('status', ['LUNAS'])
             ->when($filters['klien_ar_id'] ?? null, fn($q, $v) => $q->where('klien_ar_id', $v))
             ->when($filters['perusahaan_id'] ?? null, fn($q, $v) => $q->where('perusahaan_id', $v))
+            ->when($filters['karyawan_ar_id'] ?? null, fn($q, $v) => $q->whereHas('klienAr', fn($q) => $q->where('karyawan_ar_id', $v)))
             ->when($segmentTypes, fn($q) => $q->whereHas('klienAr', fn($q) => $q->whereIn('tipe_klien', $segmentTypes)))
             ->get();
 

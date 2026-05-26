@@ -29,7 +29,7 @@ class PembayaranArResource extends JsonResource
                 ? 'https://drive.google.com/file/d/' . $this->bukti_gdrive_file_id . '/view'
                 : null,
             'created_by'            => $this->created_by,
-            'created_by_name'       => $this->whenLoaded('createdBy', fn() => $this->createdBy?->username),
+            'created_by_name'       => $this->whenLoaded('createdBy', fn() => $this->createdBy?->karyawan?->nama_karyawan ?? $this->createdBy?->username),
             'created_at'            => $this->created_at?->format('d-m-Y H:i'),
         ];
     }

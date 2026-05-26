@@ -24,12 +24,14 @@ class RekapPembayaranService
             ->join('tb_invoice', 'tb_pembayaran_ar.invoice_id', '=', 'tb_invoice.id')
             ->join('tb_klien_ar', 'tb_invoice.klien_ar_id', '=', 'tb_klien_ar.id')
             ->leftJoin('tb_perusahaan', 'tb_invoice.perusahaan_id', '=', 'tb_perusahaan.id')
+            ->leftJoin('tb_karyawan as pic_karyawan', 'tb_klien_ar.karyawan_ar_id', '=', 'pic_karyawan.id')
+            ->leftJoin('tb_bank_statement_detail as bsd', 'bsd.pembayaran_ar_id', '=', 'tb_pembayaran_ar.id')
             ->whereBetween('tb_pembayaran_ar.tanggal_pembayaran', [$from->toDateString(), $to->toDateString()])
             ->when($filters['klien_ar_id'] ?? null, fn($q, $v) => $q->where('tb_invoice.klien_ar_id', $v))
             ->when($filters['metode_pembayaran'] ?? null, fn($q, $v) => $q->where('tb_pembayaran_ar.metode_pembayaran', $v))
             ->when($segmentTypes, fn($q) => $q->whereIn('tb_klien_ar.tipe_klien', $segmentTypes));
 
-        // Rekap per metode
+        // Rekap per metode (untuk summary cards)
         $perMetode = (clone $query)
             ->select(
                 'tb_pembayaran_ar.metode_pembayaran',
@@ -40,38 +42,43 @@ class RekapPembayaranService
             ->get()
             ->keyBy('metode_pembayaran');
 
-        // Rekap per tanggal
-        $perTanggal = (clone $query)
+        // Data per record individual
+        $perRecord = (clone $query)
             ->select(
                 'tb_pembayaran_ar.tanggal_pembayaran',
-                DB::raw('SUM(CASE WHEN tb_pembayaran_ar.metode_pembayaran = "TRANSFER" THEN tb_pembayaran_ar.jumlah_pembayaran ELSE 0 END) as transfer'),
-                DB::raw('SUM(CASE WHEN tb_pembayaran_ar.metode_pembayaran = "CASH" THEN tb_pembayaran_ar.jumlah_pembayaran ELSE 0 END) as cash'),
-                DB::raw('SUM(CASE WHEN tb_pembayaran_ar.metode_pembayaran = "GIRO" THEN tb_pembayaran_ar.jumlah_pembayaran ELSE 0 END) as giro'),
-                DB::raw('SUM(tb_pembayaran_ar.jumlah_pembayaran) as total')
+                'tb_klien_ar.nama_klien',
+                'tb_invoice.no_invoice',
+                'tb_pembayaran_ar.no_referensi',
+                'tb_pembayaran_ar.metode_pembayaran',
+                'tb_pembayaran_ar.jumlah_pembayaran',
+                DB::raw('COALESCE(pic_karyawan.nama_karyawan, "") as pic_ar'),
+                DB::raw('IF(bsd.id IS NOT NULL, 1, 0) as is_rekon')
             )
-            ->groupBy('tb_pembayaran_ar.tanggal_pembayaran')
             ->orderBy('tb_pembayaran_ar.tanggal_pembayaran', 'asc')
             ->get();
 
-        $grandTotal   = $perTanggal->sum('total');
+        $grandTotal    = (float) $perMetode->sum('total');
         $totalTransfer = (float) ($perMetode['TRANSFER']->total ?? 0);
         $totalCash     = (float) ($perMetode['CASH']->total ?? 0);
         $totalGiro     = (float) ($perMetode['GIRO']->total ?? 0);
 
         $summary = [
-            'total'              => (float) $grandTotal,
-            'transfer'           => $totalTransfer,
-            'cash'               => $totalCash,
-            'giro'               => $totalGiro,
-            'jumlah_transaksi'   => (int) $perMetode->sum('jumlah_transaksi'),
+            'total'            => $grandTotal,
+            'transfer'         => $totalTransfer,
+            'cash'             => $totalCash,
+            'giro'             => $totalGiro,
+            'jumlah_transaksi' => (int) $perMetode->sum('jumlah_transaksi'),
         ];
 
-        $rows = $perTanggal->map(fn($r) => [
-            'tanggal'  => $r->tanggal_pembayaran,
-            'transfer' => (float) $r->transfer,
-            'cash'     => (float) $r->cash,
-            'giro'     => (float) $r->giro,
-            'total'    => (float) $r->total,
+        $rows = $perRecord->map(fn($r) => [
+            'tanggal'     => $r->tanggal_pembayaran,
+            'client'      => $r->nama_klien,
+            'invoice'     => $r->no_invoice,
+            'ref_payment' => $r->no_referensi,
+            'metode'      => $r->metode_pembayaran,
+            'nominal'     => (float) $r->jumlah_pembayaran,
+            'pic_ar'      => $r->pic_ar,
+            'is_rekon'    => (bool) $r->is_rekon,
         ])->values()->all();
 
         return [

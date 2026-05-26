@@ -7,6 +7,13 @@ use App\Http\Controllers\Controller;
 use App\Support\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use PhpOffice\PhpSpreadsheet\Cell\DataType;
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Style\Alignment;
+use PhpOffice\PhpSpreadsheet\Style\Border;
+use PhpOffice\PhpSpreadsheet\Style\Fill;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx as XlsxWriter;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 class MutasiPiutangController extends Controller
 {
@@ -20,12 +27,131 @@ class MutasiPiutangController extends Controller
             'periode_awal'  => ['nullable', 'date'],
             'periode_akhir' => ['nullable', 'date', 'after_or_equal:periode_awal'],
             'klien_ar_id'   => ['nullable', 'integer', 'exists:tb_klien_ar,id'],
+            'segment'       => ['nullable', 'in:B2B,B2C,ALL'],
         ]);
 
         $report = $this->service->getReport(
-            $request->only(['periode_awal', 'periode_akhir', 'klien_ar_id'])
+            $request->only(['periode_awal', 'periode_akhir', 'klien_ar_id', 'segment'])
         );
 
         return $this->successResponse($report);
+    }
+
+    public function exportExcel(Request $request): BinaryFileResponse|JsonResponse
+    {
+        if (!class_exists('ZipArchive')) {
+            return $this->errorResponse('Ekstensi PHP "zip" tidak aktif. Aktifkan extension=zip pada php.ini lalu restart server.', 500);
+        }
+
+        $request->validate([
+            'periode_awal'  => ['nullable', 'date'],
+            'periode_akhir' => ['nullable', 'date', 'after_or_equal:periode_awal'],
+            'klien_ar_id'   => ['nullable', 'integer', 'exists:tb_klien_ar,id'],
+            'segment'       => ['nullable', 'in:B2B,B2C,ALL'],
+        ]);
+
+        $report = $this->service->getReport(
+            $request->only(['periode_awal', 'periode_akhir', 'klien_ar_id', 'segment'])
+        );
+
+        $spreadsheet = new Spreadsheet();
+        $sheet       = $spreadsheet->getActiveSheet();
+        $sheet->setTitle('Mutasi Piutang');
+
+        $lastCol = 'H';
+
+        $sheet->mergeCells("A1:{$lastCol}1");
+        $sheet->setCellValue('A1', 'MUTASI PIUTANG');
+        $sheet->getStyle('A1')->applyFromArray([
+            'font'      => ['bold' => true, 'size' => 14, 'color' => ['argb' => 'FFFFFFFF']],
+            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF4527A0']],
+            'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
+        ]);
+        $sheet->getRowDimension(1)->setRowHeight(36);
+
+        $periodeText = 'Periode: ' . $report['periode_awal'] . ' s/d ' . $report['periode_akhir']
+            . '   |   Diekspor: ' . now()->format('d-m-Y H:i');
+        $sheet->mergeCells("A2:{$lastCol}2");
+        $sheet->setCellValue('A2', $periodeText);
+        $sheet->getStyle('A2')->applyFromArray([
+            'font'      => ['italic' => true, 'size' => 9, 'color' => ['argb' => 'FF455A64']],
+            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFEDE7F6']],
+            'alignment' => ['horizontal' => Alignment::HORIZONTAL_LEFT, 'vertical' => Alignment::VERTICAL_CENTER],
+        ]);
+        $sheet->getRowDimension(2)->setRowHeight(18);
+        $sheet->getRowDimension(3)->setRowHeight(6);
+
+        $cols = [
+            'A' => ['No',           5],
+            'B' => ['Kode Klien',  16],
+            'C' => ['Nama Klien',  30],
+            'D' => ['Entitas',     14],
+            'E' => ['Saldo Awal',  20],
+            'F' => ['Invoice Masuk', 20],
+            'G' => ['Pembayaran',  20],
+            'H' => ['Saldo Akhir', 20],
+        ];
+
+        foreach ($cols as $col => [$label, $width]) {
+            $sheet->setCellValue("{$col}4", $label);
+            $sheet->getColumnDimension($col)->setWidth($width);
+        }
+        $sheet->getStyle("A4:{$lastCol}4")->applyFromArray([
+            'font'      => ['bold' => true, 'size' => 10, 'color' => ['argb' => 'FFFFFFFF']],
+            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF512DA8']],
+            'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
+            'borders'   => ['allBorders' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FF4527A0']]],
+        ]);
+        $sheet->getRowDimension(4)->setRowHeight(22);
+
+        $rowNum = 5;
+        foreach ($report['rows'] as $i => $row) {
+            $bg = $rowNum % 2 === 0 ? 'FFEDE7F6' : 'FFFFFFFF';
+
+            $sheet->getCell("A{$rowNum}")->setValueExplicit($i + 1, DataType::TYPE_NUMERIC);
+            $sheet->getCell("B{$rowNum}")->setValueExplicit($row['kode_klien'] ?? '', DataType::TYPE_STRING);
+            $sheet->getCell("C{$rowNum}")->setValueExplicit($row['nama_klien'] ?? '', DataType::TYPE_STRING);
+            $sheet->getCell("D{$rowNum}")->setValueExplicit($row['perusahaan'] ?? '', DataType::TYPE_STRING);
+
+            foreach (['saldo_awal' => 'E', 'invoice_masuk' => 'F', 'pembayaran' => 'G', 'saldo_akhir' => 'H'] as $field => $col) {
+                $val = (float) ($row[$field] ?? 0);
+                $sheet->getCell("{$col}{$rowNum}")->setValueExplicit($val, DataType::TYPE_NUMERIC);
+                $sheet->getStyle("{$col}{$rowNum}")->getNumberFormat()->setFormatCode('#,##0');
+            }
+
+            $sheet->getStyle("A{$rowNum}:{$lastCol}{$rowNum}")->applyFromArray([
+                'fill'    => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => $bg]],
+                'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_HAIR, 'color' => ['argb' => 'FFCFD8DC']]],
+                'alignment' => ['vertical' => Alignment::VERTICAL_CENTER],
+            ]);
+            $sheet->getRowDimension($rowNum)->setRowHeight(18);
+            $rowNum++;
+        }
+
+        $summary = $report['summary'];
+        $sheet->mergeCells("A{$rowNum}:D{$rowNum}");
+        $sheet->setCellValue("A{$rowNum}", 'TOTAL');
+        foreach (['saldo_awal' => 'E', 'invoice_masuk' => 'F', 'pembayaran' => 'G', 'saldo_akhir' => 'H'] as $field => $col) {
+            $sheet->getCell("{$col}{$rowNum}")->setValueExplicit((float) ($summary[$field] ?? 0), DataType::TYPE_NUMERIC);
+            $sheet->getStyle("{$col}{$rowNum}")->getNumberFormat()->setFormatCode('#,##0');
+        }
+        $sheet->getStyle("A{$rowNum}:{$lastCol}{$rowNum}")->applyFromArray([
+            'font'    => ['bold' => true, 'size' => 10, 'color' => ['argb' => 'FF4527A0']],
+            'fill'    => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFEDE7F6']],
+            'alignment' => ['vertical' => Alignment::VERTICAL_CENTER],
+            'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FF512DA8']]],
+        ]);
+        $sheet->getRowDimension($rowNum)->setRowHeight(20);
+
+        $sheet->freezePane('A5');
+
+        $temp = tempnam(sys_get_temp_dir(), 'mp_') . '.xlsx';
+        (new XlsxWriter($spreadsheet))->save($temp);
+
+        return response()
+            ->download($temp, 'mutasi-piutang-' . now()->format('Ymd') . '.xlsx', [
+                'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            ])
+            ->deleteFileAfterSend(true);
     }
 }
