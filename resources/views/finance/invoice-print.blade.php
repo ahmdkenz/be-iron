@@ -202,6 +202,12 @@
               <td class="dl-lbl">Tgl. Invoice</td><td class="dl-colon">:</td>
               <td class="dl-val">{{ \Carbon\Carbon::parse($invoice->tanggal_invoice)->isoFormat('D MMMM YYYY') }}</td>
             </tr>
+            @if($invoice->tanggal_jatuh_tempo)
+            <tr>
+              <td class="dl-lbl">Jatuh Tempo</td><td class="dl-colon">:</td>
+              <td class="dl-val">{{ \Carbon\Carbon::parse($invoice->tanggal_jatuh_tempo)->isoFormat('D MMMM YYYY') }}</td>
+            </tr>
+            @endif
             <tr>
               <td class="dl-lbl">Periode</td><td class="dl-colon">:</td>
               <td class="dl-val">{{ \Carbon\Carbon::parse($invoice->periode_awal)->isoFormat('D MMM YYYY') }} &ndash; {{ \Carbon\Carbon::parse($invoice->periode_akhir)->isoFormat('D MMM YYYY') }}</td>

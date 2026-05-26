@@ -15,6 +15,7 @@ class Invoice extends Model
     protected $fillable = [
         'no_invoice',
         'tanggal_invoice',
+        'tanggal_jatuh_tempo',
         'periode_awal',
         'periode_akhir',
         'klien_ar_id',
@@ -46,6 +47,7 @@ class Invoice extends Model
 
     protected $casts = [
         'tanggal_invoice'            => 'date',
+        'tanggal_jatuh_tempo'        => 'date',
         'periode_awal'               => 'date',
         'periode_akhir'              => 'date',
         'submitted_at'               => 'datetime',

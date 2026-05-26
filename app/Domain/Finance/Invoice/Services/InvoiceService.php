@@ -104,6 +104,7 @@ class InvoiceService
         $invoice = $this->repository->create([
             'no_invoice'                 => $noInvoice,
             'tanggal_invoice'            => $dto->tanggal_invoice,
+            'tanggal_jatuh_tempo'        => $dto->tanggal_jatuh_tempo,
             'periode_awal'               => $dto->periode_awal,
             'periode_akhir'              => $dto->periode_akhir,
             'klien_ar_id'                => $dto->klien_ar_id,
@@ -356,6 +357,7 @@ class InvoiceService
         $invoice->update([
             'no_invoice'                 => $dto->no_invoice,
             'tanggal_invoice'            => $dto->tanggal_invoice,
+            'tanggal_jatuh_tempo'        => $dto->tanggal_jatuh_tempo,
             'periode_awal'               => $dto->periode_awal,
             'periode_akhir'              => $dto->periode_akhir,
             'klien_ar_id'                => $dto->klien_ar_id,

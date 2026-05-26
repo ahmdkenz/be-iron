@@ -210,7 +210,7 @@ class OpeningBalanceController extends Controller
         (new XlsxWriter($spreadsheet))->save($temp);
 
         return response()
-            ->download($temp, 'opening-balance-' . now()->format('Ymd-His') . '.xlsx', [
+            ->download($temp, 'Data Opening Balance-' . now()->format('Ymd-His') . '.xlsx', [
                 'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             ])
             ->deleteFileAfterSend(true);
@@ -239,7 +239,7 @@ class OpeningBalanceController extends Controller
         (new XlsxWriter($spreadsheet))->save($temp);
 
         return response()
-            ->download($temp, 'template-opening-balance.xlsx', [
+            ->download($temp, 'Template OB (Saldo Awal).xlsx', [
                 'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             ])
             ->deleteFileAfterSend(true);

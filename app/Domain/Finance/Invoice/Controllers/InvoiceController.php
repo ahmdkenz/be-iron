@@ -211,7 +211,7 @@ class InvoiceController extends Controller
 
         $spreadsheet = new Spreadsheet();
         $sheet       = $spreadsheet->getActiveSheet();
-        $sheet->setTitle('Invoice AR');
+        $sheet->setTitle('Data Tagihan Invoice');
 
         $cols = [
             'A' => ['No Invoice',             24],
@@ -230,7 +230,7 @@ class InvoiceController extends Controller
         $lastCol = 'L';
 
         $sheet->mergeCells("A1:{$lastCol}1");
-        $sheet->setCellValue('A1', 'DATA INVOICE AR');
+        $sheet->setCellValue('A1', 'DATA TAGIHAN INVOICE');
         $sheet->getStyle('A1')->applyFromArray([
             'font'      => ['bold' => true, 'size' => 14, 'color' => ['argb' => 'FFFFFFFF']],
             'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF0D47A1']],
@@ -321,7 +321,7 @@ class InvoiceController extends Controller
         (new XlsxWriter($spreadsheet))->save($temp);
 
         return response()
-            ->download($temp, 'invoice-ar-' . now()->format('Ymd-His') . '.xlsx', [
+            ->download($temp, 'Data Tagihan Invoice-' . now()->format('Ymd-His') . '.xlsx', [
                 'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             ])
             ->deleteFileAfterSend(true);
@@ -345,7 +345,7 @@ class InvoiceController extends Controller
         (new XlsxWriter($spreadsheet))->save($temp);
 
         return response()
-            ->download($temp, 'template-invoice-ar.xlsx', [
+            ->download($temp, 'Template Tagihan Invoice.xlsx', [
                 'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             ])
             ->deleteFileAfterSend(true);
@@ -403,11 +403,12 @@ class InvoiceController extends Controller
             $noInvoice    = $this->invoiceImportStr($row[1] ?? '');
             $namaKlien    = $this->invoiceImportStr($row[2] ?? '');
             $tanggal      = $this->invoiceImportDate($row[3] ?? '');
-            $periodeAwal  = $this->invoiceImportDate($row[4] ?? '');
-            $periodeAkhir = $this->invoiceImportDate($row[5] ?? '');
-            $noSuratJalan = $this->invoiceImportStr($row[6] ?? '');
-            $tagihanSblm  = $this->invoiceImportNum($row[7] ?? '');
-            $keterangan   = $this->invoiceImportStr($row[8] ?? '');
+            $jatuhTempo   = $this->invoiceImportDate($row[4] ?? '');
+            $periodeAwal  = $this->invoiceImportDate($row[5] ?? '');
+            $periodeAkhir = $this->invoiceImportDate($row[6] ?? '');
+            $noSuratJalan = $this->invoiceImportStr($row[7] ?? '');
+            $tagihanSblm  = $this->invoiceImportNum($row[8] ?? '');
+            $keterangan   = $this->invoiceImportStr($row[9] ?? '');
 
             $validated = Validator::make(
                 [
@@ -443,6 +444,7 @@ class InvoiceController extends Controller
                 $invoice = Invoice::create([
                     'no_invoice'                 => $noInvoice,
                     'tanggal_invoice'            => $tanggal,
+                    'tanggal_jatuh_tempo'        => $jatuhTempo,
                     'periode_awal'               => $periodeAwal,
                     'periode_akhir'              => $periodeAkhir,
                     'klien_ar_id'                => $klien->id,
@@ -669,16 +671,17 @@ class InvoiceController extends Controller
             'B' => ['no_invoice',                  26],
             'C' => ['nama_klien',                  32],
             'D' => ['tanggal_invoice',             20],
-            'E' => ['periode_awal',                20],
-            'F' => ['periode_akhir',               20],
-            'G' => ['no_surat_jalan',              22],
-            'H' => ['tagihan_periode_sebelumnya',  26],
-            'I' => ['keterangan',                  32],
+            'E' => ['tanggal_jatuh_tempo',         20],
+            'F' => ['periode_awal',                20],
+            'G' => ['periode_akhir',               20],
+            'H' => ['no_surat_jalan',              22],
+            'I' => ['tagihan_periode_sebelumnya',  26],
+            'J' => ['keterangan',                  32],
         ];
-        $lastCol = 'I';
+        $lastCol = 'J';
 
         $sheet->mergeCells("A1:{$lastCol}1");
-        $sheet->setCellValue('A1', 'TEMPLATE IMPORT INVOICE AR — SHEET 1: DATA INVOICE');
+        $sheet->setCellValue('A1', 'TEMPLATE TAGIHAN INVOICE — SHEET 1: DATA INVOICE');
         $sheet->getStyle('A1')->applyFromArray([
             'font'      => ['bold' => true, 'size' => 13, 'color' => ['argb' => 'FFFFFFFF']],
             'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF0D47A1']],
@@ -713,11 +716,12 @@ class InvoiceController extends Controller
             'B' => 'SI-B2C-' . date('dmY') . '-001',
             'C' => 'Budi Santoso',
             'D' => date('Y-m-d'),
-            'E' => date('Y-m-01'),
-            'F' => date('Y-m-t'),
-            'G' => 'SJ-001',
-            'H' => '0',
-            'I' => 'Invoice bulan ini',
+            'E' => '',
+            'F' => date('Y-m-01'),
+            'G' => date('Y-m-t'),
+            'H' => 'SJ-001',
+            'I' => '0',
+            'J' => 'Invoice bulan ini',
         ];
         foreach ($example as $col => $val) {
             $sheet->getCell("{$col}5")->setValueExplicit($val, DataType::TYPE_STRING);
@@ -736,8 +740,8 @@ class InvoiceController extends Controller
                 'fill'    => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => $bg]],
                 'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_HAIR, 'color' => ['argb' => 'FFE0E0E0']]],
             ]);
-            $sheet->getStyle("H{$row}")->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
-            foreach (['D', 'E', 'F'] as $dateCol) {
+            $sheet->getStyle("I{$row}")->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
+            foreach (['D', 'E', 'F', 'G'] as $dateCol) {
                 $sheet->getStyle("{$dateCol}{$row}")->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
             }
             $sheet->getRowDimension($row)->setRowHeight(18);
@@ -835,7 +839,7 @@ class InvoiceController extends Controller
         $row = 1;
 
         $sheet->mergeCells("A{$row}:D{$row}");
-        $sheet->setCellValue("A{$row}", 'PETUNJUK PENGISIAN — TEMPLATE IMPORT INVOICE AR');
+        $sheet->setCellValue("A{$row}", 'PETUNJUK PENGISIAN — TEMPLATE TAGIHAN INVOICE');
         $sheet->getStyle("A{$row}")->applyFromArray([
             'font'      => ['bold' => true, 'size' => 13, 'color' => ['argb' => 'FFFFFFFF']],
             'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF0D47A1']],
@@ -932,6 +936,7 @@ class InvoiceController extends Controller
             ['no_invoice',                 'Nomor invoice unik',                                      'Ya',       'Harus unik di sistem. Contoh: SI-B2C-21052026-001'],
             ['nama_klien',                 'Nama klien AR sesuai data di sistem',                     'Ya',       'Harus persis sesuai nama klien di sistem'],
             ['tanggal_invoice',            'Tanggal pembuatan invoice',                               'Ya',       'Format YYYY-MM-DD. Contoh: 2025-06-15'],
+            ['tanggal_jatuh_tempo',        'Tanggal jatuh tempo pembayaran invoice',                  'Opsional', 'Format YYYY-MM-DD. Contoh: 2025-07-15. Kosongkan jika tidak ada.'],
             ['periode_awal',               'Tanggal awal periode tagihan',                            'Ya',       'Format YYYY-MM-DD. Contoh: 2025-06-01'],
             ['periode_akhir',              'Tanggal akhir periode tagihan',                           'Ya',       'Format YYYY-MM-DD. Contoh: 2025-06-30'],
             ['no_surat_jalan',             'Nomor surat jalan',                                       'Opsional', 'Teks bebas. Contoh: SJ-001/VI/2025'],
