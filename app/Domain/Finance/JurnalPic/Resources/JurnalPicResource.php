@@ -24,10 +24,14 @@ class JurnalPicResource extends JsonResource
             'invoice_id'           => $this->invoice_id,
             'no_invoice'           => $this->whenLoaded('invoice', fn() => $this->invoice?->no_invoice),
             'tanggal_invoice'      => $this->whenLoaded('invoice', fn() => $this->invoice?->tanggal_invoice?->format('Y-m-d')),
+            'invoice_status'       => $this->whenLoaded('invoice', fn() => $this->invoice?->status),
+            'total_tagihan'        => $this->whenLoaded('invoice', fn() => (float) ($this->invoice?->total_tagihan ?? 0)),
+            'sisa_piutang'         => $this->whenLoaded('invoice', fn() => (float) ($this->invoice?->sisa_tagihan ?? 0)),
 
             // Info Klien
             'klien'                => $this->whenLoaded('invoice', fn() => $this->invoice?->klienAr?->nama_klien),
             'kode_klien'           => $this->whenLoaded('invoice', fn() => $this->invoice?->klienAr?->kode_klien),
+            'klien_ar_id'          => $this->whenLoaded('invoice', fn() => $this->invoice?->klien_ar_id),
 
             // Info PIC yang bertanggung jawab atas invoice
             'pic_id'               => $this->whenLoaded('invoice', fn() => $this->invoice?->karyawan_id),

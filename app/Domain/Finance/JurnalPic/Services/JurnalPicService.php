@@ -40,6 +40,14 @@ class JurnalPicService
                     $q->whereHas('bankStatementDetail', fn($q) => $q->where('status_cocok', $v))
                       ->orWhereHas('sumberPembayaran.bankStatementDetail', fn($q) => $q->where('status_cocok', $v));
                 })
+            )
+            ->when(
+                $filters['perusahaan_id'] ?? null,
+                fn(Builder $q, int $v) => $q->whereHas('invoice', fn($q) => $q->where('perusahaan_id', $v))
+            )
+            ->when(
+                $filters['klien_ar_id'] ?? null,
+                fn(Builder $q, int $v) => $q->whereHas('invoice', fn($q) => $q->where('klien_ar_id', $v))
             );
 
         if (isset($filters['_user'])) {
@@ -72,6 +80,36 @@ class JurnalPicService
     public function getJurnalAll(array $filters): Collection
     {
         return $this->buildFilteredQuery($filters)
+            ->with([
+                'invoice.karyawan',
+                'invoice.klienAr',
+                'invoice.perusahaan',
+                'createdBy',
+                'bankStatementDetail',
+                'sumberPembayaran.bankStatementDetail',
+            ])
+            ->latest('tanggal_pembayaran')
+            ->get();
+    }
+
+    public function getByReferensiExact(array $filters): Collection
+    {
+        $noRef = $filters['no_referensi'] ?? null;
+
+        $query = PembayaranAr::query()
+            ->whereHas('invoice')
+            ->when($noRef, fn(Builder $q, string $v) => $q->where('no_referensi', $v));
+
+        if (isset($filters['_user'])) {
+            $user = $filters['_user'];
+            if ($user->karyawan && !RoleHelper::hasGlobalFinanceAccess($user)) {
+                $query->whereHas('invoice', fn($q) =>
+                    $q->where('perusahaan_id', $user->karyawan->perusahaan_id)
+                );
+            }
+        }
+
+        return $query
             ->with([
                 'invoice.karyawan',
                 'invoice.klienAr',

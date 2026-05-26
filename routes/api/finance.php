@@ -62,8 +62,9 @@ Route::get('/pembayaran/cek-referensi', [PembayaranArController::class, 'cekRefe
 Route::delete('/pembayaran/{pembayaran}', [PembayaranArController::class, 'destroy']);
 
 // ─── Jurnal per PIC ───────────────────────────────────────────────
-Route::get('/jurnal-pic', [JurnalPicController::class, 'index']);
-Route::get('/jurnal-pic/export-excel', [JurnalPicController::class, 'exportExcel']);
+Route::get('/jurnal-pic',                  [JurnalPicController::class, 'index']);
+Route::get('/jurnal-pic/by-referensi',     [JurnalPicController::class, 'byReferensi']);
+Route::get('/jurnal-pic/export-excel',     [JurnalPicController::class, 'exportExcel']);
 
 // ─── Aging Report ────────────────────────────────────────────────
 Route::get('/aging-report', [AgingReportController::class, 'index']);

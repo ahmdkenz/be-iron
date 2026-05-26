@@ -27,6 +27,8 @@ class JurnalPicController extends Controller
         $request->validate([
             'no_referensi'        => ['nullable', 'string', 'max:100'],
             'karyawan_id'         => ['nullable', 'integer', 'exists:tb_karyawan,id'],
+            'perusahaan_id'       => ['nullable', 'integer', 'exists:tb_perusahaan,id'],
+            'klien_ar_id'         => ['nullable', 'integer', 'exists:tb_klien_ar,id'],
             'metode_pembayaran'   => ['nullable', 'in:TRANSFER,CASH,GIRO'],
             'tanggal_dari'        => ['nullable', 'date'],
             'tanggal_sampai'      => ['nullable', 'date', 'after_or_equal:tanggal_dari'],
@@ -35,8 +37,8 @@ class JurnalPicController extends Controller
         ]);
 
         $filters          = $request->only([
-            'no_referensi', 'karyawan_id', 'metode_pembayaran',
-            'tanggal_dari', 'tanggal_sampai', 'status_rekonsiliasi', 'per_page',
+            'no_referensi', 'karyawan_id', 'perusahaan_id', 'klien_ar_id',
+            'metode_pembayaran', 'tanggal_dari', 'tanggal_sampai', 'status_rekonsiliasi', 'per_page',
         ]);
         /** @var \App\Models\User $authUser */
         $authUser         = auth()->user();
@@ -60,6 +62,28 @@ class JurnalPicController extends Controller
         ]);
     }
 
+    public function byReferensi(Request $request): JsonResponse
+    {
+        $request->validate([
+            'no_referensi' => ['required', 'string', 'max:100'],
+        ]);
+
+        /** @var \App\Models\User $authUser */
+        $authUser = auth()->user();
+        $filters  = [
+            '_user'        => $authUser->load('karyawan'),
+            'no_referensi' => $request->no_referensi,
+            'per_page'     => 50,
+        ];
+
+        $rows = $this->service->getByReferensiExact($filters);
+
+        return response()->json([
+            'success' => true,
+            'data'    => JurnalPicResource::collection($rows),
+        ]);
+    }
+
     public function exportExcel(Request $request): BinaryFileResponse|JsonResponse
     {
         if (!class_exists('ZipArchive')) {
@@ -69,6 +93,8 @@ class JurnalPicController extends Controller
         $request->validate([
             'no_referensi'        => ['nullable', 'string', 'max:100'],
             'karyawan_id'         => ['nullable', 'integer', 'exists:tb_karyawan,id'],
+            'perusahaan_id'       => ['nullable', 'integer', 'exists:tb_perusahaan,id'],
+            'klien_ar_id'         => ['nullable', 'integer', 'exists:tb_klien_ar,id'],
             'metode_pembayaran'   => ['nullable', 'in:TRANSFER,CASH,GIRO'],
             'tanggal_dari'        => ['nullable', 'date'],
             'tanggal_sampai'      => ['nullable', 'date', 'after_or_equal:tanggal_dari'],
@@ -76,8 +102,8 @@ class JurnalPicController extends Controller
         ]);
 
         $filters          = $request->only([
-            'no_referensi', 'karyawan_id', 'metode_pembayaran',
-            'tanggal_dari', 'tanggal_sampai', 'status_rekonsiliasi',
+            'no_referensi', 'karyawan_id', 'perusahaan_id', 'klien_ar_id',
+            'metode_pembayaran', 'tanggal_dari', 'tanggal_sampai', 'status_rekonsiliasi',
         ]);
         /** @var \App\Models\User $authUser */
         $authUser         = auth()->user();
