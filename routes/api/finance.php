@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 use App\Domain\Finance\AgingReport\Controllers\AgingReportController;
 use App\Domain\Finance\Dashboard\Controllers\DashboardController;
@@ -15,7 +15,7 @@ use App\Domain\Finance\PembayaranAr\Controllers\PembayaranArController;
 use App\Domain\Finance\RekapPembayaran\Controllers\RekapPembayaranController;
 use Illuminate\Support\Facades\Route;
 
-// ─── Master Klien AR ──────────────────────────────────────────────
+// ─── Master Client ──────────────────────────────────────────────
 Route::get('/dashboard/pic-ar', [DashboardController::class, 'picAr']);
 Route::get('/dashboard/global', [DashboardController::class, 'global']);
 Route::get('/dashboard/kpi',    [DashboardController::class, 'kpi']);

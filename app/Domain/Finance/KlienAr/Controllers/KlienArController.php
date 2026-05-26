@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace App\Domain\Finance\KlienAr\Controllers;
 
@@ -76,11 +76,11 @@ class KlienArController extends Controller
         abort_if(
             $this->isDirectorOnly(),
             403,
-            'Direktur hanya memiliki akses lihat data klien AR'
+            'Direktur hanya memiliki akses lihat data Client'
         );
 
         $klien = $this->service->create(KlienArDTO::fromRequest($request->validated()));
-        return $this->createdResponse(new KlienArResource($klien), 'Klien AR berhasil dibuat');
+        return $this->createdResponse(new KlienArResource($klien), 'Client berhasil dibuat');
     }
 
     public function show(int $id): JsonResponse
@@ -97,7 +97,7 @@ class KlienArController extends Controller
 
         $klien   = $this->service->findOrFail($id);
         $updated = $this->service->update($klien, KlienArDTO::fromRequest($request->validated()));
-        return $this->successResponse(new KlienArResource($updated), 'Klien AR berhasil diperbarui');
+        return $this->successResponse(new KlienArResource($updated), 'Client berhasil diperbarui');
     }
 
     public function updateNoWa(Request $request, int $id): JsonResponse
@@ -117,7 +117,7 @@ class KlienArController extends Controller
 
         $klien = $this->service->findOrFail($id);
         $this->service->delete($klien);
-        return $this->successResponse(null, 'Klien AR berhasil dihapus');
+        return $this->successResponse(null, 'Client berhasil dihapus');
     }
 
     public function export(Request $request): BinaryFileResponse|JsonResponse
@@ -133,7 +133,7 @@ class KlienArController extends Controller
 
         $spreadsheet = new Spreadsheet();
         $sheet       = $spreadsheet->getActiveSheet();
-        $sheet->setTitle('Data Klien AR');
+        $sheet->setTitle('Data Client');
 
         $cols = [
             'A' => ['Kode Klien',               18],
@@ -151,7 +151,7 @@ class KlienArController extends Controller
 
         // Row 1 — Title
         $sheet->mergeCells("A1:{$lastCol}1");
-        $sheet->setCellValue('A1', 'DATA KLIEN AR');
+        $sheet->setCellValue('A1', 'DATA Client');
         $sheet->getStyle('A1')->applyFromArray([
             'font'      => ['bold' => true, 'size' => 14, 'color' => ['argb' => 'FFFFFFFF']],
             'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF1B5E20']],
@@ -389,7 +389,7 @@ class KlienArController extends Controller
 
     private function buildDataSheet(Worksheet $sheet): void
     {
-        $sheet->setTitle('Data Klien AR');
+        $sheet->setTitle('Data Client');
 
         $cols = [
             'A' => ['nama_klien',       28],
@@ -403,7 +403,7 @@ class KlienArController extends Controller
 
         // Row 1 — Title
         $sheet->mergeCells('A1:G1');
-        $sheet->setCellValue('A1', 'TEMPLATE IMPORT DATA KLIEN AR');
+        $sheet->setCellValue('A1', 'TEMPLATE IMPORT DATA Client');
         $sheet->getStyle('A1')->applyFromArray([
             'font'      => ['bold' => true, 'size' => 14, 'color' => ['argb' => 'FFFFFFFF']],
             'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF1565C0']],
@@ -413,7 +413,7 @@ class KlienArController extends Controller
 
         // Row 2 — Subtitle
         $sheet->mergeCells('A2:G2');
-        $sheet->setCellValue('A2', 'Isi data klien AR di bawah ini. Hapus baris [CONTOH] sebelum import. Lihat sheet "Petunjuk Pengisian" untuk panduan lengkap.');
+        $sheet->setCellValue('A2', 'Isi data Client di bawah ini. Hapus baris [CONTOH] sebelum import. Lihat sheet "Petunjuk Pengisian" untuk panduan lengkap.');
         $sheet->getStyle('A2')->applyFromArray([
             'font'      => ['italic' => true, 'size' => 9, 'color' => ['argb' => 'FF37474F']],
             'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFE3F2FD']],
@@ -486,7 +486,7 @@ class KlienArController extends Controller
 
         // Title
         $sheet->mergeCells("A{$row}:D{$row}");
-        $sheet->setCellValue("A{$row}", 'PETUNJUK PENGISIAN — TEMPLATE IMPORT DATA KLIEN AR');
+        $sheet->setCellValue("A{$row}", 'PETUNJUK PENGISIAN — TEMPLATE IMPORT DATA Client');
         $sheet->getStyle("A{$row}")->applyFromArray([
             'font'      => ['bold' => true, 'size' => 13, 'color' => ['argb' => 'FFFFFFFF']],
             'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF1565C0']],
@@ -557,7 +557,7 @@ class KlienArController extends Controller
 
         $colInfos = [
             ['nama_klien',       'Nama pengelola / kontak billing klien',       'Ya',       'Teks, maks 150 karakter. Contoh: Budi Santoso'],
-            ['tipe_klien',       'Jenis/tipe klien AR',                         'Ya',       'Isi persis salah satu: RESTO / MITRA / PT / STOKIS'],
+            ['tipe_klien',       'Jenis/tipe Client',                         'Ya',       'Isi persis salah satu: RESTO / MITRA / PT / STOKIS'],
             ['nama_resto',       'Nama resto sesuai data di sistem',            'Jika B2C', 'Wajib untuk tipe RESTO dan MITRA. Kosongkan jika PT/STOKIS'],
             ['nama_karyawan_ar', 'Nama karyawan yang bertugas sebagai PIC AR',  'Ya',       'Harus sesuai persis dengan nama karyawan di sistem'],
             ['no_npwp',          'Nomor NPWP klien',                            'Opsional', 'Format: XX.XXX.XXX.X-XXX.XXX. Contoh: 12.345.678.9-012.000'],
@@ -705,7 +705,7 @@ class KlienArController extends Controller
         abort_if(
             (int) $user->karyawan_id !== (int) $karyawanArId,
             403,
-            'Anda hanya dapat melihat klien AR yang ditugaskan kepada Anda'
+            'Anda hanya dapat melihat Client yang ditugaskan kepada Anda'
         );
     }
 
@@ -714,7 +714,7 @@ class KlienArController extends Controller
         abort_if(
             $this->isReadOnlyRole(),
             403,
-            'Role AR dan Direktur hanya memiliki akses lihat data klien AR'
+            'Role AR dan Direktur hanya memiliki akses lihat data Client'
         );
     }
 

@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace App\Domain\Finance\OpeningBalance\Controllers;
 
@@ -1193,7 +1193,7 @@ class OpeningBalanceController extends Controller
         $sheetInfos = [
             ['Sheet 1 — Data Opening Balance', 'FF2E7D32', [
                 ['no_invoice',    'Nomor Opening Balance unik',                 'Ya',       'Diisi manual, harus unik di sistem. Contoh: OB-BUDI-15012024-001'],
-                ['nama_klien',    'Nama klien AR',                              'Ya',       'Harus cocok persis dengan nama klien di sistem'],
+                ['nama_klien',    'Nama Client',                              'Ya',       'Harus cocok persis dengan nama klien di sistem'],
                 ['tanggal',       'Tanggal dokumen Opening Balance',            'Ya',       'Format: YYYY-MM-DD atau DD-MM-YYYY'],
                 ['periode_awal',  'Awal periode piutang',                      'Ya',       'Format: YYYY-MM-DD atau DD-MM-YYYY'],
                 ['periode_akhir', 'Akhir periode piutang',                     'Ya',       'Harus >= periode_awal'],

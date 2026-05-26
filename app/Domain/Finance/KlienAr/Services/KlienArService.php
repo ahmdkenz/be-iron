@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace App\Domain\Finance\KlienAr\Services;
 
@@ -42,7 +42,7 @@ class KlienArService
     public function findOrFail(int $id): KlienAr
     {
         $klien = $this->repository->findById($id);
-        abort_if(!$klien, 404, 'Klien AR tidak ditemukan');
+        abort_if(!$klien, 404, 'Client tidak ditemukan');
         return $klien;
     }
 
@@ -91,7 +91,7 @@ class KlienArService
         abort_if(
             $klien->invoices()->exists(),
             422,
-            'Klien AR tidak dapat dihapus karena memiliki data invoice'
+            'Client tidak dapat dihapus karena memiliki data invoice'
         );
         $this->repository->delete($klien);
     }

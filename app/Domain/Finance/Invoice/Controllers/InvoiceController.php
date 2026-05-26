@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 
 namespace App\Domain\Finance\Invoice\Controllers;
 
@@ -934,7 +934,7 @@ class InvoiceController extends Controller
         return [
             ['no_urut',                    'Nomor urut baris (penghubung ke Sheet Item Invoice)',     'Ya',       'Angka unik per baris. Contoh: 1, 2, 3'],
             ['no_invoice',                 'Nomor invoice unik',                                      'Ya',       'Harus unik di sistem. Contoh: SI-B2C-21052026-001'],
-            ['nama_klien',                 'Nama klien AR sesuai data di sistem',                     'Ya',       'Harus persis sesuai nama klien di sistem'],
+            ['nama_klien',                 'Nama Client sesuai data di sistem',                     'Ya',       'Harus persis sesuai nama klien di sistem'],
             ['tanggal_invoice',            'Tanggal pembuatan invoice',                               'Ya',       'Format YYYY-MM-DD. Contoh: 2025-06-15'],
             ['tanggal_jatuh_tempo',        'Tanggal jatuh tempo pembayaran invoice',                  'Opsional', 'Format YYYY-MM-DD. Contoh: 2025-07-15. Kosongkan jika tidak ada.'],
             ['periode_awal',               'Tanggal awal periode tagihan',                            'Ya',       'Format YYYY-MM-DD. Contoh: 2025-06-01'],
