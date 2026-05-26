@@ -428,6 +428,21 @@ class OpeningBalanceController extends Controller
             }
         }
 
+        // ── Reconcile: update OB subtotal from sum of detail sisa values ────
+        if (!$isCsv) {
+            foreach ($obMap as $obInvoice) {
+                $sumSisa = OpeningBalanceDetail::where('invoice_id', $obInvoice->id)
+                    ->sum('sisa_tagihan_asal');
+                if ($sumSisa > 0.01 && abs($sumSisa - (float) $obInvoice->subtotal) > 0.01) {
+                    $obInvoice->update([
+                        'subtotal'      => $sumSisa,
+                        'total_tagihan' => $sumSisa,
+                        'sisa_tagihan'  => max(0, $sumSisa - (float) $obInvoice->total_pembayaran),
+                    ]);
+                }
+            }
+        }
+
         // ── Pass 3: Item Invoice Asal (Sheet 3, XLSX only) ───────────────────
         if (!$isCsv) {
             $sheet3Rows    = $this->parseObSheetRows($file->getRealPath(), 2, 'no_urut_ob', 9);

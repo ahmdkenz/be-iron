@@ -251,7 +251,12 @@
   {{-- ======== OPENING BALANCE: Rincian Invoice Periode Sebelumnya ======== --}}
   <div class="ob-section-title">Rincian Invoice Periode Sebelumnya</div>
 
-  @php $obDetails = $invoice->openingBalanceDetails ?? collect(); @endphp
+  @php
+    $obDetails  = $invoice->openingBalanceDetails ?? collect();
+    $obSubtotal = $obDetails->isNotEmpty()
+        ? (float) $obDetails->sum('sisa_tagihan_asal')
+        : (float) $invoice->subtotal;
+  @endphp
 
   @if($obDetails->isEmpty())
   {{-- Lump-sum tanpa detail --}}
@@ -305,7 +310,7 @@
     <tfoot>
       <tr class="ob-grand-row">
         <td colspan="5" class="text-right">TOTAL SALDO AWAL</td>
-        <td class="text-right">Rp {{ number_format((float)$invoice->subtotal, 0, ',', '.') }}</td>
+        <td class="text-right">Rp {{ number_format($obSubtotal, 0, ',', '.') }}</td>
       </tr>
     </tfoot>
   </table>
@@ -403,7 +408,7 @@
   @php
     $isOb = $invoice->is_opening_balance;
     $totalBerjalan = isset($totalSisaPeriode) ? (float)$totalSisaPeriode : 0;
-    $obGrandTotal  = $isOb ? ((float)$invoice->subtotal + $totalBerjalan) : 0;
+    $obGrandTotal  = $isOb ? ($obSubtotal + $totalBerjalan) : 0;
     $obSisaBayar   = $isOb ? max(0, $obGrandTotal - (float)$invoice->total_pembayaran) : 0;
     $terbilangAmt  = $isOb ? $obGrandTotal : (float)$invoice->total_tagihan;
   @endphp
@@ -427,7 +432,7 @@
           @if($isOb)
           <tr>
             <td class="totals-lbl">Tagihan Periode Sebelumnya</td>
-            <td class="totals-val">Rp {{ number_format((float)$invoice->subtotal, 0, ',', '.') }}</td>
+            <td class="totals-val">Rp {{ number_format($obSubtotal, 0, ',', '.') }}</td>
           </tr>
           <tr>
             <td class="totals-lbl">Invoice Bulan Berjalan</td>

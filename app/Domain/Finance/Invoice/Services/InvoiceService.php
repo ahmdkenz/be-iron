@@ -153,6 +153,10 @@ class InvoiceService
         $klien = KlienAr::findOrFail($data['klien_ar_id']);
 
         return DB::transaction(function () use ($data, $klien, $user) {
+            $saldoAwal = !empty($data['details'])
+                ? collect($data['details'])->sum(fn($d) => (float) ($d['sisa_tagihan_asal'] ?? 0))
+                : (float) ($data['saldo_awal'] ?? 0);
+
             $invoice = $this->repository->create([
                 'no_invoice'                 => $data['no_invoice'],
                 'tanggal_invoice'            => $data['tanggal'],
@@ -161,11 +165,11 @@ class InvoiceService
                 'klien_ar_id'                => $data['klien_ar_id'],
                 'perusahaan_id'              => $klien->perusahaan_id,
                 'karyawan_id'                => $user->karyawan->id,
-                'subtotal'                   => $data['saldo_awal'],
+                'subtotal'                   => $saldoAwal,
                 'tagihan_periode_sebelumnya' => 0,
-                'total_tagihan'              => $data['saldo_awal'],
+                'total_tagihan'              => $saldoAwal,
                 'total_pembayaran'           => 0,
-                'sisa_tagihan'               => $data['saldo_awal'],
+                'sisa_tagihan'               => $saldoAwal,
                 'status'                     => 'DRAFT',
                 'approval_status'            => 'PENDING',
                 'submitted_at'               => now(),
@@ -198,6 +202,10 @@ class InvoiceService
 
         $klien = KlienAr::findOrFail($data['klien_ar_id']);
 
+        $saldoAwal = !empty($data['details'])
+            ? collect($data['details'])->sum(fn($d) => (float) ($d['sisa_tagihan_asal'] ?? 0))
+            : (float) ($data['saldo_awal'] ?? 0);
+
         $invoice->update([
             'no_invoice'                 => $data['no_invoice'],
             'tanggal_invoice'            => $data['tanggal'],
@@ -205,9 +213,9 @@ class InvoiceService
             'periode_akhir'              => $data['periode_akhir'],
             'klien_ar_id'                => $data['klien_ar_id'],
             'perusahaan_id'              => $klien->perusahaan_id,
-            'subtotal'                   => $data['saldo_awal'],
-            'total_tagihan'              => $data['saldo_awal'],
-            'sisa_tagihan'               => $data['saldo_awal'] - $invoice->total_pembayaran,
+            'subtotal'                   => $saldoAwal,
+            'total_tagihan'              => $saldoAwal,
+            'sisa_tagihan'               => $saldoAwal - $invoice->total_pembayaran,
             'keterangan'                 => $data['keterangan'] ?? 'Opening Balance',
             'updated_by'                 => auth()->id(),
         ]);
