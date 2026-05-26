@@ -16,9 +16,10 @@ use App\Domain\Finance\RekapPembayaran\Controllers\RekapPembayaranController;
 use Illuminate\Support\Facades\Route;
 
 // ─── Master Client ──────────────────────────────────────────────
-Route::get('/dashboard/pic-ar', [DashboardController::class, 'picAr']);
-Route::get('/dashboard/global', [DashboardController::class, 'global']);
-Route::get('/dashboard/kpi',    [DashboardController::class, 'kpi']);
+Route::get('/dashboard/pic-ar',      [DashboardController::class, 'picAr']);
+Route::get('/dashboard/global',      [DashboardController::class, 'global']);
+Route::get('/dashboard/kpi',         [DashboardController::class, 'kpi']);
+Route::get('/dashboard/top-clients', [DashboardController::class, 'topClients']);
 
 Route::prefix('klien-ar')->group(function () {
     Route::get('/', [KlienArController::class, 'index']);

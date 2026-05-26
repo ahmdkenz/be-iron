@@ -153,9 +153,9 @@ class DashboardService
         });
     }
 
-    public function getGlobalOverview(User $user): array
+    public function getGlobalOverview(User $user, int $trendMonths = 6): array
     {
-        $months     = $this->buildMonthBuckets();
+        $months     = $this->buildMonthBuckets($trendMonths);
         $klienIds   = KlienAr::query()->pluck('id');
         $invoiceQuery = Invoice::query()->whereIn('klien_ar_id', $klienIds);
 
@@ -263,6 +263,29 @@ class DashboardService
         }
 
         return $buckets;
+    }
+
+    public function buildTopClients(int $limit = 5): array
+    {
+        return KlienAr::query()
+            ->join('tb_invoice', 'tb_klien_ar.id', '=', 'tb_invoice.klien_ar_id')
+            ->selectRaw('tb_klien_ar.id, tb_klien_ar.nama_klien, tb_klien_ar.kode_klien, SUM(tb_invoice.sisa_tagihan) as total_sisa, SUM(tb_invoice.total_tagihan) as total_tagihan, COUNT(tb_invoice.id) as jumlah_invoice')
+            ->where('tb_klien_ar.status', true)
+            ->groupBy('tb_klien_ar.id', 'tb_klien_ar.nama_klien', 'tb_klien_ar.kode_klien')
+            ->having('total_sisa', '>', 0)
+            ->orderByDesc('total_sisa')
+            ->limit($limit)
+            ->get()
+            ->map(fn($row) => [
+                'id'             => $row->id,
+                'nama_klien'     => $row->nama_klien,
+                'kode_klien'     => $row->kode_klien,
+                'total_sisa'     => (float) $row->total_sisa,
+                'total_tagihan'  => (float) $row->total_tagihan,
+                'jumlah_invoice' => (int) $row->jumlah_invoice,
+            ])
+            ->values()
+            ->all();
     }
 
     private function emptyKpi(): array
