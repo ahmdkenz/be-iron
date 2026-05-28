@@ -126,7 +126,7 @@ class KlienArController extends Controller
             return $this->errorResponse('Ekstensi PHP "zip" tidak aktif. Aktifkan extension=zip pada php.ini lalu restart server.', 500);
         }
 
-        $filters = $request->only(['search', 'status', 'segment']);
+        $filters = $request->only(['search', 'status', 'segment', 'karyawan_ar_id']);
         $this->applyPicArScope($filters);
 
         $klientArs = $this->service->getAllForExport($filters);

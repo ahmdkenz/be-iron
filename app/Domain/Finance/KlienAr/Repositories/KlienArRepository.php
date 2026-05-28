@@ -49,6 +49,7 @@ class KlienArRepository
                 ->where('nama_klien', 'like', "%{$v}%")
                 ->orWhere('kode_klien', 'like', "%{$v}%")
             ))
+            ->when($filters['karyawan_ar_id'] ?? null, fn($q, $v) => $q->where('karyawan_ar_id', $v))
             ->when(isset($filters['status']), fn($q) => $q->where('status', $filters['status']))
             ->when($filters['segment'] ?? null, fn($q, $v) => $q->whereIn('tipe_klien', $this->resolveSegmentTypes($v)))
             ->latest()
