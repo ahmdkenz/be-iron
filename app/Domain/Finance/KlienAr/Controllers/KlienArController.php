@@ -308,9 +308,10 @@ class KlienArController extends Controller
 
             $totalData++;
 
-            $namaResto       = $this->importValue($row[2] ?? '');
-            $namaKaryawanAr  = $this->importValue($row[3] ?? '');
-            $tipeKlien       = strtoupper(trim((string) ($row[1] ?? '')));
+            $namaKlien       = trim((string) ($row[1] ?? ''));
+            $tipeKlien       = strtoupper(trim((string) ($row[2] ?? '')));
+            $namaResto       = $this->importValue($row[3] ?? '');
+            $namaKaryawanAr  = $this->importValue($row[4] ?? '');
 
             // Lookup Resto
             $restoId = null;
@@ -338,16 +339,18 @@ class KlienArController extends Controller
             }
 
             $data = [
-                'nama_klien'     => $firstCell,
+                'kode_klien'     => $this->importValue($row[0] ?? ''),
+                'nama_klien'     => $namaKlien,
                 'tipe_klien'     => $tipeKlien,
                 'resto_id'       => $restoId,
                 'karyawan_ar_id' => $karyawanArId,
-                'no_npwp'        => $this->importValue($row[4] ?? ''),
-                'no_wa'          => $this->importValue($row[5] ?? ''),
-                'status'         => isset($row[6]) && trim((string) $row[6]) !== '' ? (bool) (int) $row[6] : true,
+                'no_npwp'        => $this->importValue($row[5] ?? ''),
+                'no_wa'          => $this->importValue($row[6] ?? ''),
+                'status'         => isset($row[7]) && trim((string) $row[7]) !== '' ? (bool) (int) $row[7] : true,
             ];
 
             $validator = Validator::make($data, [
+                'kode_klien'     => ['required', 'string', 'max:30'],
                 'nama_klien'     => ['required', 'string', 'max:150'],
                 'tipe_klien'     => ['required', 'in:PT,RESTO,STOKIS,MITRA'],
                 'resto_id'       => ['nullable', 'integer'],
@@ -362,10 +365,13 @@ class KlienArController extends Controller
                 continue;
             }
 
-            $existing = KlienAr::where('nama_klien', $data['nama_klien'])
-                ->where('tipe_klien', $data['tipe_klien'])
-                ->latest()
-                ->first();
+            $existing = KlienAr::where('kode_klien', $data['kode_klien'])->latest()->first();
+            if (!$existing) {
+                $existing = KlienAr::where('nama_klien', $data['nama_klien'])
+                    ->where('tipe_klien', $data['tipe_klien'])
+                    ->latest()
+                    ->first();
+            }
 
             if ($existing) {
                 $this->service->update($existing, KlienArDTO::fromRequest($data));
@@ -392,17 +398,18 @@ class KlienArController extends Controller
         $sheet->setTitle('Data Client');
 
         $cols = [
-            'A' => ['nama_klien',       28],
-            'B' => ['tipe_klien',       14],
-            'C' => ['nama_resto',       28],
-            'D' => ['nama_karyawan_ar', 26],
-            'E' => ['no_npwp',          22],
-            'F' => ['no_wa',            18],
-            'G' => ['status',           10],
+            'A' => ['kode_klien',       20],
+            'B' => ['nama_klien',       28],
+            'C' => ['tipe_klien',       14],
+            'D' => ['nama_resto',       28],
+            'E' => ['nama_karyawan_ar', 26],
+            'F' => ['no_npwp',          22],
+            'G' => ['no_wa',            18],
+            'H' => ['status',           10],
         ];
 
         // Row 1 — Title
-        $sheet->mergeCells('A1:G1');
+        $sheet->mergeCells('A1:H1');
         $sheet->setCellValue('A1', 'TEMPLATE IMPORT DATA Client');
         $sheet->getStyle('A1')->applyFromArray([
             'font'      => ['bold' => true, 'size' => 14, 'color' => ['argb' => 'FFFFFFFF']],
@@ -412,7 +419,7 @@ class KlienArController extends Controller
         $sheet->getRowDimension(1)->setRowHeight(36);
 
         // Row 2 — Subtitle
-        $sheet->mergeCells('A2:G2');
+        $sheet->mergeCells('A2:H2');
         $sheet->setCellValue('A2', 'Isi data Client di bawah ini. Hapus baris [CONTOH] sebelum import. Lihat sheet "Petunjuk Pengisian" untuk panduan lengkap.');
         $sheet->getStyle('A2')->applyFromArray([
             'font'      => ['italic' => true, 'size' => 9, 'color' => ['argb' => 'FF37474F']],
@@ -429,7 +436,7 @@ class KlienArController extends Controller
             $sheet->setCellValue("{$col}4", $name);
             $sheet->getColumnDimension($col)->setWidth($width);
         }
-        $sheet->getStyle('A4:G4')->applyFromArray([
+        $sheet->getStyle('A4:H4')->applyFromArray([
             'font'      => ['bold' => true, 'size' => 10, 'color' => ['argb' => 'FFFFFFFF']],
             'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF1976D2']],
             'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
@@ -439,18 +446,19 @@ class KlienArController extends Controller
 
         // Row 5 — Example row
         $example = [
-            'A' => '[CONTOH] Budi Santoso',
-            'B' => 'RESTO',
-            'C' => 'Warung Makan Enak',
-            'D' => 'Andi Karyawan AR',
-            'E' => '12.345.678.9-012.000',
-            'F' => '08123456789',
-            'G' => '1',
+            'A' => '[CONTOH] AR-B2C-001',
+            'B' => 'Budi Santoso',
+            'C' => 'RESTO',
+            'D' => 'Warung Makan Enak',
+            'E' => 'Andi Karyawan AR',
+            'F' => '12.345.678.9-012.000',
+            'G' => '08123456789',
+            'H' => '1',
         ];
         foreach ($example as $col => $val) {
             $sheet->getCell("{$col}5")->setValueExplicit($val, DataType::TYPE_STRING);
         }
-        $sheet->getStyle('A5:G5')->applyFromArray([
+        $sheet->getStyle('A5:H5')->applyFromArray([
             'font'      => ['italic' => true, 'size' => 9, 'color' => ['argb' => 'FFE65100']],
             'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFFFF9C4']],
             'alignment' => ['vertical' => Alignment::VERTICAL_CENTER],
@@ -461,17 +469,17 @@ class KlienArController extends Controller
         // Rows 6–55 — Empty template rows
         for ($row = 6; $row <= 55; $row++) {
             $bg = $row % 2 === 0 ? 'FFF5F5F5' : 'FFFFFFFF';
-            $sheet->getStyle("A{$row}:G{$row}")->applyFromArray([
+            $sheet->getStyle("A{$row}:H{$row}")->applyFromArray([
                 'fill'    => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => $bg]],
                 'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_HAIR, 'color' => ['argb' => 'FFE0E0E0']]],
             ]);
             // Format no_wa as TEXT to prevent scientific notation
-            $sheet->getStyle("F{$row}")->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
+            $sheet->getStyle("G{$row}")->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
             $sheet->getRowDimension($row)->setRowHeight(18);
         }
 
         $sheet->freezePane('A5');
-        $sheet->setAutoFilter('A4:G4');
+        $sheet->setAutoFilter('A4:H4');
     }
 
     private function buildInstructionSheet(Worksheet $sheet): void
@@ -511,10 +519,11 @@ class KlienArController extends Controller
             '2. Hapus baris [CONTOH] sebelum melakukan import data.',
             '3. Isi data mulai dari baris kosong di bawah baris [CONTOH].',
             '4. Kolom opsional dapat dikosongkan atau diisi tanda \'-\' — sistem akan memperlakukan keduanya sebagai tidak ada nilai.',
-            '5. Kolom tipe_klien harus diisi persis salah satu dari: RESTO, MITRA, PT, atau STOKIS.',
-            '6. Untuk tipe RESTO atau MITRA, kolom nama_resto WAJIB diisi persis sesuai nama resto di sistem.',
-            '7. Kolom nama_karyawan_ar WAJIB diisi persis sesuai nama karyawan AR di sistem.',
-            '8. Simpan file sebagai .xlsx atau .csv sebelum diupload ke sistem.',
+            '5. Kolom kode_klien WAJIB diisi dengan format AR-B2C-xxx (B2C) atau AR-B2B-xxx (B2B). Contoh: AR-B2C-001.',
+            '6. Kolom tipe_klien harus diisi persis salah satu dari: RESTO, MITRA, PT, atau STOKIS.',
+            '7. Untuk tipe RESTO atau MITRA, kolom nama_resto WAJIB diisi persis sesuai nama resto di sistem.',
+            '8. Kolom nama_karyawan_ar WAJIB diisi persis sesuai nama karyawan AR di sistem.',
+            '9. Simpan file sebagai .xlsx atau .csv sebelum diupload ke sistem.',
         ];
 
         foreach ($steps as $i => $step) {
@@ -556,8 +565,9 @@ class KlienArController extends Controller
         $row++;
 
         $colInfos = [
+            ['kode_klien',       'Kode unik Client',                            'Ya',       'Format: AR-B2C-xxx (B2C) / AR-B2B-xxx (B2B). Contoh: AR-B2C-001'],
             ['nama_klien',       'Nama pengelola / kontak billing klien',       'Ya',       'Teks, maks 150 karakter. Contoh: Budi Santoso'],
-            ['tipe_klien',       'Jenis/tipe Client',                         'Ya',       'Isi persis salah satu: RESTO / MITRA / PT / STOKIS'],
+            ['tipe_klien',       'Jenis/tipe Client',                           'Ya',       'Isi persis salah satu: RESTO / MITRA / PT / STOKIS'],
             ['nama_resto',       'Nama resto sesuai data di sistem',            'Jika B2C', 'Wajib untuk tipe RESTO dan MITRA. Kosongkan jika PT/STOKIS'],
             ['nama_karyawan_ar', 'Nama karyawan yang bertugas sebagai PIC AR',  'Ya',       'Harus sesuai persis dengan nama karyawan di sistem'],
             ['no_npwp',          'Nomor NPWP klien',                            'Opsional', 'Format: XX.XXX.XXX.X-XXX.XXX. Contoh: 12.345.678.9-012.000'],
@@ -593,9 +603,9 @@ class KlienArController extends Controller
         $row++;
 
         $notes = [
-            '• Jika kombinasi nama_klien + tipe_klien SUDAH ADA di sistem, data akan DIPERBARUI (update).',
-            '• Jika kombinasi nama_klien + tipe_klien BELUM ADA di sistem, data baru DITAMBAHKAN dengan kode otomatis.',
-            '• Kode Klien (AR-B2C-xxx / AR-B2B-xxx) tidak perlu diisi — di-generate otomatis oleh sistem.',
+            '• kode_klien WAJIB diisi — kode tidak di-generate otomatis, harus diisi manual sesuai format.',
+            '• Jika kode_klien SUDAH ADA di sistem, data akan DIPERBARUI (update).',
+            '• Jika kode_klien BELUM ADA di sistem, data baru DITAMBAHKAN dengan kode yang diberikan.',
             '• nama_resto yang tidak ditemukan di sistem akan menyebabkan baris tersebut GAGAL diproses.',
             '• nama_karyawan_ar yang tidak ditemukan di sistem akan menyebabkan baris tersebut GAGAL diproses.',
         ];
@@ -630,11 +640,11 @@ class KlienArController extends Controller
                 $cells[] = $this->xlsxCellToString($cell);
             }
 
-            $cells     = array_slice($cells, 0, 7);
+            $cells     = array_slice($cells, 0, 8);
             $firstCell = trim($cells[0] ?? '');
 
             if (!$headerFound) {
-                if (strtolower($firstCell) === 'nama_klien') {
+                if (strtolower($firstCell) === 'kode_klien') {
                     $headerFound = true;
                     $rows[]      = $cells;
                 }

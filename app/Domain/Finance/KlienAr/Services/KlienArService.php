@@ -52,7 +52,7 @@ class KlienArService
             ?? Karyawan::find($dto->karyawan_ar_id)?->perusahaan_id;
 
         return $this->repository->create([
-            'kode_klien'    => $this->generateKodeKlien($dto->tipe_klien),
+            'kode_klien'    => $dto->kode_klien ?: $this->generateKodeKlien($dto->tipe_klien),
             'nama_klien'    => $dto->nama_klien,
             'tipe_klien'    => $dto->tipe_klien,
             'no_npwp'       => $dto->no_npwp,
