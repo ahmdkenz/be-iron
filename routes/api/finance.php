@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 
 use App\Domain\Finance\AgingReport\Controllers\AgingReportController;
 use App\Domain\Finance\Dashboard\Controllers\DashboardController;
