@@ -166,16 +166,8 @@
       <td style="width: 60%; vertical-align: middle;" class="text-center">
         <div class="company-name">{{ $invoice->perusahaan->nama_perusahaan }}</div>
         <div class="company-address">
-          @php
-            $parts = array_filter([
-              $invoice->perusahaan->alamat ?? null,
-              $invoice->perusahaan->kota ?? null,
-              $invoice->perusahaan->kode_pos ? 'Kode Pos ' . $invoice->perusahaan->kode_pos : null,
-            ]);
-          @endphp
-          @if(count($parts)){{ implode(', ', $parts) }}<br>@endif
-          @if($invoice->perusahaan->no_telp)Telp: {{ $invoice->perusahaan->no_telp }}@endif
-          @if($invoice->perusahaan->email) &bull; {{ $invoice->perusahaan->email }}@endif
+          Jl. Moh. Kahfi 1, RT.6/RW.1, Cipedak, Kec. Jagakarsa<br>
+          Kota Jakarta Selatan, Daerah Khusus Ibukota Jakarta 12630
         </div>
       </td>
       <td style="width: 20%;"></td>
