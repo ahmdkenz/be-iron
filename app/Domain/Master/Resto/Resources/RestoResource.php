@@ -17,6 +17,7 @@ class RestoResource extends JsonResource
             'investor'       => $this->whenLoaded('investor', fn() => $this->investor ? [
                 'id'              => $this->investor->id,
                 'nama_investor'   => $this->investor->nama_investor,
+                'no_hp'           => $this->investor->no_hp,
                 'pengelola'       => $this->investor->pengelola,
                 'no_hp_pengelola' => $this->investor->no_hp_pengelola,
             ] : null),

@@ -38,6 +38,7 @@ class InvoiceResource extends JsonResource
                     'investor'   => $this->klienAr->resto->relationLoaded('investor') && $this->klienAr->resto->investor ? [
                         'id'              => $this->klienAr->resto->investor->id,
                         'nama_investor'   => $this->klienAr->resto->investor->nama_investor,
+                        'no_hp'           => $this->klienAr->resto->investor->no_hp,
                         'pengelola'       => $this->klienAr->resto->investor->pengelola,
                         'no_hp_pengelola' => $this->klienAr->resto->investor->no_hp_pengelola,
                     ] : null,
