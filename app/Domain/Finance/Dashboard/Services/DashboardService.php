@@ -137,9 +137,9 @@ class DashboardService
             ->all();
     }
 
-    private function buildMonthBuckets(int $totalMonths = 6): Collection
+    private function buildMonthBuckets(int $totalMonths = 6, ?Carbon $startFrom = null): Collection
     {
-        $startMonth = now()->startOfMonth()->subMonths($totalMonths - 1);
+        $startMonth = $startFrom ?? now()->startOfMonth()->subMonths($totalMonths - 1);
 
         return collect(range(0, $totalMonths - 1))->map(function (int $offset) use ($startMonth) {
             $month = $startMonth->copy()->addMonths($offset);
@@ -153,10 +153,79 @@ class DashboardService
         });
     }
 
-    public function getGlobalOverview(User $user, int $trendMonths = 6): array
+    private function buildDayBuckets(Carbon $start, Carbon $end): Collection
     {
-        $months     = $this->buildMonthBuckets($trendMonths);
-        $klienIds   = KlienAr::query()->pluck('id');
+        $days = (int) $start->copy()->startOfDay()->diffInDays($end->copy()->endOfDay());
+
+        return collect(range(0, $days))->map(function (int $offset) use ($start) {
+            $day = $start->copy()->startOfDay()->addDays($offset);
+
+            return [
+                'key'        => $day->format('Y-m-d'),
+                'label'      => $day->locale('id')->translatedFormat('d M'),
+                'start_date' => $day->copy()->startOfDay()->toDateString(),
+                'end_date'   => $day->copy()->endOfDay()->toDateString(),
+            ];
+        });
+    }
+
+    private function buildYtdBuckets(): Collection
+    {
+        $startOfYear  = Carbon::now()->startOfYear();
+        $currentMonth = Carbon::now()->startOfMonth();
+        $totalMonths  = (int) $startOfYear->diffInMonths($currentMonth) + 1;
+
+        return $this->buildMonthBuckets($totalMonths, $startOfYear);
+    }
+
+    private function buildBuckets(string $period): array
+    {
+        $now = Carbon::now();
+
+        return match ($period) {
+            '1D'  => [$this->buildDayBuckets($now->copy()->startOfDay(), $now->copy()->endOfDay()), 'daily'],
+            '1W'  => [$this->buildDayBuckets($now->copy()->subDays(6)->startOfDay(), $now->copy()->endOfDay()), 'daily'],
+            '1M'  => [$this->buildDayBuckets($now->copy()->subDays(29)->startOfDay(), $now->copy()->endOfDay()), 'daily'],
+            '3M'  => [$this->buildMonthBuckets(3), 'monthly'],
+            'YTD' => [$this->buildYtdBuckets(), 'monthly'],
+            '1Y'  => [$this->buildMonthBuckets(12), 'monthly'],
+            '3Y'  => [$this->buildMonthBuckets(36), 'monthly'],
+            '5Y'  => [$this->buildMonthBuckets(60), 'monthly'],
+            default => [$this->buildMonthBuckets(6), 'monthly'],
+        };
+    }
+
+    private function buildTrend(Collection $buckets, Collection $klienIds, string $granularity): array
+    {
+        $startDate  = $buckets->first()['start_date'];
+        $endDate    = $buckets->last()['end_date'];
+        $dateFormat = $granularity === 'daily' ? '%Y-%m-%d' : '%Y-%m';
+
+        $invoiceTotals = Invoice::query()
+            ->selectRaw("DATE_FORMAT(tanggal_invoice, '{$dateFormat}') as bucket_key, SUM(total_tagihan) as total")
+            ->whereIn('klien_ar_id', $klienIds)
+            ->whereBetween('tanggal_invoice', [$startDate, $endDate])
+            ->groupBy('bucket_key')
+            ->pluck('total', 'bucket_key');
+
+        $paymentTotals = PembayaranAr::query()
+            ->selectRaw("DATE_FORMAT(tanggal_pembayaran, '{$dateFormat}') as bucket_key, SUM(jumlah_pembayaran) as total")
+            ->whereBetween('tanggal_pembayaran', [$startDate, $endDate])
+            ->whereIn('invoice_id', Invoice::whereIn('klien_ar_id', $klienIds)->select('id'))
+            ->groupBy('bucket_key')
+            ->pluck('total', 'bucket_key');
+
+        return [
+            'labels'         => $buckets->pluck('label')->all(),
+            'invoice_totals' => $buckets->map(fn(array $b) => (float) ($invoiceTotals[$b['key']] ?? 0))->all(),
+            'payment_totals' => $buckets->map(fn(array $b) => (float) ($paymentTotals[$b['key']] ?? 0))->all(),
+        ];
+    }
+
+    public function getGlobalOverview(User $user, string $period = '6M'): array
+    {
+        [$buckets, $granularity] = $this->buildBuckets($period);
+        $klienIds     = KlienAr::query()->pluck('id');
         $invoiceQuery = Invoice::query()->whereIn('klien_ar_id', $klienIds);
 
         return [
@@ -169,7 +238,7 @@ class DashboardService
                 'total_sisa'        => (float) (clone $invoiceQuery)->sum('sisa_tagihan'),
             ],
             'status_breakdown' => $this->buildStatusBreakdown($invoiceQuery),
-            'monthly_trend'    => $this->buildMonthlyTrend($months, $klienIds),
+            'monthly_trend'    => $this->buildTrend($buckets, $klienIds, $granularity),
             'recent_invoices'  => $this->buildRecentInvoices($invoiceQuery),
             'kpi'              => $this->buildKpiMetrics($klienIds),
         ];

@@ -26,9 +26,9 @@ class DashboardController extends Controller
     {
         abort_unless(RoleHelper::hasGlobalDashboardAccess(auth()->user()), 403, 'Akses ditolak');
 
-        $months = min((int) $request->query('months', 6), 12);
+        $period = $request->query('period', '6M');
 
-        return $this->successResponse($this->service->getGlobalOverview(auth()->user(), $months));
+        return $this->successResponse($this->service->getGlobalOverview(auth()->user(), $period));
     }
 
     public function topClients(): JsonResponse
