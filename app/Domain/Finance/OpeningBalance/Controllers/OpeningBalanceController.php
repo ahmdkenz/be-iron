@@ -906,7 +906,7 @@ class OpeningBalanceController extends Controller
         $sheet->getRowDimension(1)->setRowHeight(36);
 
         $sheet->mergeCells('A2:H2');
-        $sheet->setCellValue('A2', 'Isi data Opening Balance di sini. Kolom no_invoice (B) WAJIB diisi secara manual. Kolom no_urut (H) WAJIB diisi sebagai referensi untuk Sheet 2 dan 3. Lihat sheet "Petunjuk Pengisian" untuk panduan.');
+        $sheet->setCellValue('A2', 'Isi data Opening Balance di sini. Kolom no_invoice (A) WAJIB diisi secara manual. Kolom no_urut (H) WAJIB diisi sebagai referensi untuk Sheet 2 dan 3. PERHATIAN: periode_awal dan periode_akhir (D & E) mengacu pada rentang waktu invoice historis yang belum lunas — BUKAN tanggal hari ini. Lihat sheet "Petunjuk Pengisian" untuk panduan lengkap.');
         $sheet->getStyle('A2')->applyFromArray([
             'font'      => ['italic' => true, 'size' => 9, 'color' => ['argb' => 'FF37474F']],
             'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFF1F8E9']],
@@ -1166,7 +1166,7 @@ class OpeningBalanceController extends Controller
             '3. SHEET 1 (Data Opening Balance): isi data OB utama. Kolom no_urut wajib diisi dengan angka unik (1, 2, 3, ...).',
             '4. SHEET 2 (Rincian Invoice Asal): opsional. Isi rincian per-invoice. Kolom no_urut_ob harus sama dengan no_urut di Sheet 1.',
             '5. SHEET 3 (Item Invoice Asal): opsional. Isi item/barang. Kolom no_urut_ob dan no_invoice_asal harus sesuai dengan Sheet 1 dan 2.',
-            '6. Tanggal diisi dalam format YYYY-MM-DD (contoh: 2024-01-15) atau DD-MM-YYYY (contoh: 15-01-2024).',
+            '6. Kolom "tanggal" (Sheet 1) diisi dengan tanggal pengajuan OB (hari ini). Kolom "periode_awal" dan "periode_akhir" diisi dengan rentang waktu invoice HISTORIS yang belum lunas — bukan tanggal hari ini. Contoh: ada tagihan Mei 2026 belum lunas → periode_awal=2026-05-01, periode_akhir=2026-05-31. Format semua tanggal: YYYY-MM-DD (contoh: 2024-01-15) atau DD-MM-YYYY (contoh: 15-01-2024).',
             '7. Angka diisi tanpa titik ribuan dan tanpa simbol Rp (contoh: 1500000, bukan Rp 1.500.000).',
             '8. nama_klien di Sheet 1 harus cocok persis dengan nama klien yang terdaftar di sistem.',
             '9. Data yang berhasil diimport akan berstatus DRAFT dan membutuhkan persetujuan.',
@@ -1195,8 +1195,8 @@ class OpeningBalanceController extends Controller
                 ['no_invoice',    'Nomor Opening Balance unik',                 'Ya',       'Diisi manual, harus unik di sistem. Contoh: OB-BUDI-15012024-001'],
                 ['nama_klien',    'Nama Client',                              'Ya',       'Harus cocok persis dengan nama klien di sistem'],
                 ['tanggal',       'Tanggal dokumen Opening Balance',            'Ya',       'Format: YYYY-MM-DD atau DD-MM-YYYY'],
-                ['periode_awal',  'Awal periode piutang',                      'Ya',       'Format: YYYY-MM-DD atau DD-MM-YYYY'],
-                ['periode_akhir', 'Akhir periode piutang',                     'Ya',       'Harus >= periode_awal'],
+                ['periode_awal',  'Tanggal awal invoice historis yang belum lunas (bukan tanggal pengajuan)', 'Ya', 'Rentang waktu invoice LAMA di luar sistem. Contoh: invoice Jan 2024 belum lunas → isi 2024-01-01. Format: YYYY-MM-DD atau DD-MM-YYYY'],
+                ['periode_akhir', 'Tanggal akhir invoice historis yang belum lunas (bukan tanggal pengajuan)', 'Ya', 'Biasanya akhir bulan invoice lama. Harus >= periode_awal. Contoh: 2024-01-31'],
                 ['saldo_awal',    'Jumlah saldo awal piutang',                 'Ya',       'Angka tanpa titik ribuan. Contoh: 1500000'],
                 ['keterangan',    'Catatan tambahan',                          'Opsional', 'Teks bebas, maks 500 karakter'],
                 ['no_urut',       'Nomor urut sebagai referensi Sheet 2 & 3', 'Ya',       'Angka unik: 1, 2, 3, ...'],
