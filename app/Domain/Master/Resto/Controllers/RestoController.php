@@ -102,7 +102,7 @@ class RestoController extends Controller
             'A' => ['Kode Resto',       14],
             'B' => ['Nama Resto',        28],
             'C' => ['Nama Investor',     24],
-            'D' => ['Nama Perusahaan',   22],
+            'D' => ['Nama Entitas',      22],
             'E' => ['Nama Brand',        18],
             'F' => ['PIC',               20],
             'G' => ['Supervisor',        24],
@@ -320,7 +320,7 @@ class RestoController extends Controller
                     ->orWhere('nama_singkatan_perusahaan', $namaPerusahaan)
                     ->first();
                 if (!$perusahaan) {
-                    $rowErrors[] = "Perusahaan '{$namaPerusahaan}' tidak ditemukan";
+                    $rowErrors[] = "Entitas '{$namaPerusahaan}' tidak ditemukan";
                 } else {
                     $perusahaanId = $perusahaan->id;
                 }
@@ -484,7 +484,7 @@ class RestoController extends Controller
         $cols = [
             'A' => ['nama_resto',        28],
             'B' => ['nama_investor',     26],
-            'C' => ['nama_perusahaan',   26],
+            'C' => ['nama_entitas',      26],
             'D' => ['nama_brand',        20],
             'E' => ['nama_pic',          26],
             'F' => ['supervisor',        24],
@@ -541,7 +541,7 @@ class RestoController extends Controller
         $example = [
             'A' => '[CONTOH] Resto Contoh',
             'B' => 'Nama Investor',
-            'C' => 'Nama Perusahaan',
+            'C' => 'Nama Entitas',
             'D' => 'Nama Brand',
             'E' => 'Nama Karyawan PIC',
             'F' => 'Nama Supervisor',
@@ -625,7 +625,7 @@ class RestoController extends Controller
             '1. Jangan ubah nama atau urutan kolom pada baris header (berwarna biru).',
             '2. Hapus baris [CONTOH] sebelum melakukan import data.',
             '3. Isi data mulai dari baris kosong di bawah baris [CONTOH].',
-            '4. Kolom nama_investor, nama_perusahaan, nama_brand, nama_pic HARUS persis sama dengan data yang ada di sistem (case-sensitive).',
+            '4. Kolom nama_investor, nama_entitas, nama_brand, nama_pic HARUS persis sama dengan data yang ada di sistem (case-sensitive).',
             '5. Kolom tgl_aktif gunakan format DD-MM-YYYY. Contoh: 15-01-2026.',
             '6. Kolom no_telp — format sel Excel harus TEXT agar angka panjang tidak berubah ke notasi ilmiah.',
             '7. Kolom opsional dapat dikosongkan atau diisi tanda \'-\' (strip) — sistem akan memperlakukan keduanya sebagai tidak ada nilai.',
@@ -673,7 +673,7 @@ class RestoController extends Controller
         $colInfos = [
             ['nama_resto',        'Nama lengkap restoran',                         'Ya',       'Teks, maks 150 karakter. Contoh: Resto Maju Jaya'],
             ['nama_investor',     'Nama investor pemilik resto',                   'Opsional', 'Harus SAMA PERSIS dengan nama investor di sistem'],
-            ['nama_perusahaan',   'Nama atau singkatan perusahaan pengelola',      'Opsional', 'Boleh nama lengkap atau singkatan. Contoh: PT Maju Jaya'],
+            ['nama_entitas',       'Nama atau singkatan entitas pengelola',         'Opsional', 'Boleh nama lengkap atau singkatan. Contoh: PT Maju Jaya'],
             ['nama_brand',        'Nama brand / merek resto',                      'Opsional', 'Harus SAMA PERSIS dengan nama brand di sistem'],
             ['nama_pic',          'Nama karyawan sebagai PIC (penanggung jawab)',  'Opsional', 'Harus SAMA PERSIS dengan nama karyawan di sistem'],
             ['supervisor',        'Nama supervisor resto',                         'Opsional', 'Teks, maks 150 karakter. Contoh: Budi Santoso'],
@@ -718,7 +718,7 @@ class RestoController extends Controller
         $notes = [
             '• Jika nama_resto SUDAH ADA di sistem, data akan DIPERBARUI (update).',
             '• Jika nama_resto BELUM ADA di sistem, data baru akan DITAMBAHKAN (insert).',
-            '• Kolom referensi (nama_investor, nama_perusahaan, nama_brand, nama_pic) yang tidak ditemukan di sistem akan menyebabkan baris tersebut GAGAL diimport.',
+            '• Kolom referensi (nama_investor, nama_entitas, nama_brand, nama_pic) yang tidak ditemukan di sistem akan menyebabkan baris tersebut GAGAL diimport.',
             '• Kolom referensi yang dikosongkan akan diabaikan (tidak wajib diisi).',
         ];
 

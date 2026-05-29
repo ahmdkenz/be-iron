@@ -137,7 +137,7 @@ class KlienArController extends Controller
 
         $cols = [
             'A' => ['Kode Klien',               18],
-            'B' => ['Nama Pengelola (Billing)',  28],
+            'B' => ['Nama Investor (Billing)',   28],
             'C' => ['Tipe Klien',                14],
             'D' => ['Segment',                   12],
             'E' => ['Nama Resto',                28],
@@ -398,7 +398,7 @@ class KlienArController extends Controller
         $sheet->setTitle('Data Client');
 
         $cols = [
-            'A' => ['kode_klien',       20],
+            'A' => ['kode_resto',       20],
             'B' => ['nama_klien',       28],
             'C' => ['tipe_klien',       14],
             'D' => ['nama_resto',       28],
@@ -565,8 +565,8 @@ class KlienArController extends Controller
         $row++;
 
         $colInfos = [
-            ['kode_klien',       'Kode unik Client',                            'Ya',       'Format: AR-B2C-xxx (B2C) / AR-B2B-xxx (B2B). Contoh: AR-B2C-001'],
-            ['nama_klien',       'Nama pengelola / kontak billing klien',       'Ya',       'Teks, maks 150 karakter. Contoh: Budi Santoso'],
+            ['kode_resto',       'Kode unik Client (Resto)',                     'Ya',       'Format: AR-B2C-xxx (B2C) / AR-B2B-xxx (B2B). Contoh: AR-B2C-001'],
+            ['nama_klien',       'Nama investor / kontak billing klien',        'Ya',       'Teks, maks 150 karakter. Contoh: Budi Santoso'],
             ['tipe_klien',       'Jenis/tipe Client',                           'Ya',       'Isi persis salah satu: RESTO / MITRA / PT / STOKIS'],
             ['nama_resto',       'Nama resto sesuai data di sistem',            'Jika B2C', 'Wajib untuk tipe RESTO dan MITRA. Kosongkan jika PT/STOKIS'],
             ['nama_karyawan_ar', 'Nama karyawan yang bertugas sebagai PIC AR',  'Ya',       'Harus sesuai persis dengan nama karyawan di sistem'],
@@ -603,9 +603,9 @@ class KlienArController extends Controller
         $row++;
 
         $notes = [
-            '• kode_klien WAJIB diisi — kode tidak di-generate otomatis, harus diisi manual sesuai format.',
-            '• Jika kode_klien SUDAH ADA di sistem, data akan DIPERBARUI (update).',
-            '• Jika kode_klien BELUM ADA di sistem, data baru DITAMBAHKAN dengan kode yang diberikan.',
+            '• kode_resto WAJIB diisi — kode tidak di-generate otomatis, harus diisi manual sesuai format.',
+            '• Jika kode_resto SUDAH ADA di sistem, data akan DIPERBARUI (update).',
+            '• Jika kode_resto BELUM ADA di sistem, data baru DITAMBAHKAN dengan kode yang diberikan.',
             '• nama_resto yang tidak ditemukan di sistem akan menyebabkan baris tersebut GAGAL diproses.',
             '• nama_karyawan_ar yang tidak ditemukan di sistem akan menyebabkan baris tersebut GAGAL diproses.',
         ];
