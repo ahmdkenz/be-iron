@@ -565,14 +565,14 @@ class KlienArController extends Controller
         $row++;
 
         $colInfos = [
-            ['kode_resto',       'Kode unik Client (Resto)',                     'Ya',       'Format: AR-B2C-xxx (B2C) / AR-B2B-xxx (B2B). Contoh: AR-B2C-001'],
-            ['nama_klien',       'Nama investor / kontak billing klien',        'Ya',       'Teks, maks 150 karakter. Contoh: Budi Santoso'],
-            ['tipe_klien',       'Jenis/tipe Client',                           'Ya',       'Isi persis salah satu: RESTO (B2C) atau PT (B2B)'],
-            ['nama_resto',       'Nama resto sesuai data di sistem',            'Jika B2C', 'Wajib untuk tipe RESTO. Kosongkan jika PT'],
-            ['nama_karyawan_ar', 'Nama karyawan yang bertugas sebagai PIC AR',  'Ya',       'Harus sesuai persis dengan nama karyawan di sistem'],
-            ['no_npwp',          'Nomor NPWP klien',                            'Opsional', 'Format: XX.XXX.XXX.X-XXX.XXX. Contoh: 12.345.678.9-012.000'],
-            ['no_wa',            'Nomor WhatsApp untuk notifikasi tagihan',     'Opsional', 'Awali dengan 08 atau 62. Contoh: 08123456789'],
-            ['status',           'Status aktif klien',                          'Opsional', '1 = Aktif (default), 0 = Nonaktif'],
+            ['kode_resto',       'Kode unik Client (Resto)',                                       'Ya',        'Format: AR-B2C-xxx (B2C) / AR-B2B-xxx (B2B). Contoh: AR-B2C-001'],
+            ['nama_klien',       'B2C: Nama investor pemilik resto. B2B: Nama kontak keuangan PT', 'Ya',        'Teks, maks 150 karakter. Contoh: Budi Santoso'],
+            ['tipe_klien',       'Jenis/tipe Client',                                              'Ya',        'Isi persis salah satu: RESTO (B2C) atau PT (B2B)'],
+            ['nama_resto',       'Nama resto sesuai data di sistem',                               'Jika B2C',  'Wajib untuk tipe RESTO. Kosongkan jika PT'],
+            ['nama_karyawan_ar', 'Nama karyawan yang bertugas sebagai PIC AR',                     'Ya',        'Harus sesuai persis dengan nama karyawan di sistem'],
+            ['no_npwp',          'B2C: NPWP investor (opsional). B2B: NPWP perusahaan (wajib)',   'Jika B2B',  'Format: XX.XXX.XXX.X-XXX.XXX. Contoh: 12.345.678.9-012.000'],
+            ['no_wa',            'Nomor WhatsApp untuk notifikasi tagihan',                        'Opsional',  'Awali dengan 08 atau 62. Contoh: 08123456789'],
+            ['status',           'Status aktif klien',                                             'Opsional',  '1 = Aktif (default), 0 = Nonaktif'],
         ];
 
         foreach ($colInfos as $i => [$colName, $desc, $req, $fmt]) {
