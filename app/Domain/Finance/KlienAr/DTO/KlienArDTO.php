@@ -21,7 +21,7 @@ class KlienArDTO
         return new self(
             nama_klien:     $data['nama_klien'],
             kode_klien:     isset($data['kode_klien']) ? strtoupper($data['kode_klien']) : null,
-            tipe_klien:     $data['tipe_klien'] ?? 'MITRA',
+            tipe_klien:     $data['tipe_klien'] ?? 'RESTO',
             no_npwp:        $data['no_npwp'] ?? null,
             no_wa:          $data['no_wa'] ?? null,
             perusahaan_id:  isset($data['perusahaan_id']) ? (int) $data['perusahaan_id'] : null,

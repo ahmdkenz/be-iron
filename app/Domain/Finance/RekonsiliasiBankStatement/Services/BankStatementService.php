@@ -339,7 +339,7 @@ class BankStatementService
         return Invoice::with('klienAr')
             ->where('klien_ar_id', $klienArId)
             ->whereNotIn('status', ['LUNAS'])
-            ->whereHas('klienAr', fn($q) => $q->whereIn('tipe_klien', ['RESTO', 'MITRA']))
+            ->whereHas('klienAr', fn($q) => $q->where('tipe_klien', 'RESTO'))
             ->orderByDesc('tanggal_invoice')
             ->get()
             ->map(fn($inv) => [

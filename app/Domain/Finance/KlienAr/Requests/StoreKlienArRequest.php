@@ -13,7 +13,7 @@ class StoreKlienArRequest extends FormRequest
         return [
             'kode_klien'    => ['nullable', 'string', 'max:20'],
             'nama_klien'    => ['required', 'string', 'max:150'],
-            'tipe_klien'    => ['nullable', 'in:PT,RESTO,STOKIS,MITRA'],
+            'tipe_klien'    => ['nullable', 'in:PT,RESTO'],
             'no_npwp'       => ['nullable', 'string', 'max:30'],
             'no_wa'         => ['nullable', 'string', 'max:20'],
             'perusahaan_id' => ['nullable', 'integer', 'exists:tb_perusahaan,id'],

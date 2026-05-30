@@ -28,8 +28,8 @@ class PembayaranArController extends Controller
         $user = auth()->user()->load('karyawan');
 
         $segmentTypes = match(strtoupper($request->segment ?? '')) {
-            'B2B'   => ['PT', 'STOKIS'],
-            'B2C'   => ['RESTO', 'MITRA'],
+            'B2B'   => ['PT'],
+            'B2C'   => ['RESTO'],
             default => null,
         };
 

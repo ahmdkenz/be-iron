@@ -12,9 +12,9 @@ class KlienArService
 {
     public function __construct(private readonly KlienArRepository $repository) {}
 
-    public function generateKodeKlien(?string $tipeKlien = 'MITRA'): string
+    public function generateKodeKlien(?string $tipeKlien = 'RESTO'): string
     {
-        $segment = $this->resolveKodeSegment($tipeKlien ?? 'MITRA');
+        $segment = $this->resolveKodeSegment($tipeKlien ?? 'RESTO');
         $prefix  = "AR-{$segment}";
         $count   = KlienAr::withTrashed()
             ->where('kode_klien', 'like', $prefix . '-%')
@@ -98,7 +98,7 @@ class KlienArService
 
     private function resolveKodeSegment(string $tipeKlien): string
     {
-        return in_array(strtoupper($tipeKlien), ['RESTO', 'MITRA']) ? 'B2C' : 'B2B';
+        return strtoupper($tipeKlien) === 'RESTO' ? 'B2C' : 'B2B';
     }
 
 }

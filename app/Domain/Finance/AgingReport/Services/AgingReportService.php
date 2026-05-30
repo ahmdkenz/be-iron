@@ -126,8 +126,8 @@ class AgingReportService
     private function resolveSegmentTypes(?string $segment): ?array
     {
         return match(strtoupper($segment ?? '')) {
-            'B2B'   => ['PT', 'STOKIS'],
-            'B2C'   => ['RESTO', 'MITRA'],
+            'B2B'   => ['PT'],
+            'B2C'   => ['RESTO'],
             default => null,
         };
     }

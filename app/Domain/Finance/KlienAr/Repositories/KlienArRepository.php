@@ -36,9 +36,9 @@ class KlienArRepository
     private function resolveSegmentTypes(string $segment): array
     {
         return match(strtoupper($segment)) {
-            'B2B'   => ['PT', 'STOKIS'],
-            'B2C'   => ['RESTO', 'MITRA'],
-            default => ['PT', 'STOKIS', 'RESTO', 'MITRA'],
+            'B2B'   => ['PT'],
+            'B2C'   => ['RESTO'],
+            default => ['PT', 'RESTO'],
         };
     }
 

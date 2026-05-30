@@ -533,6 +533,6 @@ class InvoiceService
 
     private function resolveInvoiceSegment(KlienAr $klien): string
     {
-        return in_array(strtoupper($klien->tipe_klien ?? ''), ['RESTO', 'MITRA']) ? 'B2C' : 'B2B';
+        return strtoupper($klien->tipe_klien ?? '') === 'RESTO' ? 'B2C' : 'B2B';
     }
 }

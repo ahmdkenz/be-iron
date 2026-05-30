@@ -63,11 +63,11 @@ class KlienArController extends Controller
     public function previewKode(Request $request): JsonResponse
     {
         $payload = $request->validate([
-            'tipe_klien' => ['nullable', 'in:PT,RESTO,STOKIS,MITRA'],
+            'tipe_klien' => ['nullable', 'in:PT,RESTO'],
         ]);
 
         return $this->successResponse([
-            'kode_klien' => $this->service->generateKodeKlien($payload['tipe_klien'] ?? 'MITRA'),
+            'kode_klien' => $this->service->generateKodeKlien($payload['tipe_klien'] ?? 'RESTO'),
         ]);
     }
 
@@ -189,7 +189,7 @@ class KlienArController extends Controller
         $rowNum = 5;
         foreach ($klientArs as $klien) {
             $bg      = $rowNum % 2 === 0 ? 'FFF1F8E9' : 'FFFFFFFF';
-            $isB2C   = in_array($klien->tipe_klien, ['RESTO', 'MITRA']);
+            $isB2C   = $klien->tipe_klien === 'RESTO';
             $segment = $isB2C ? 'B2C' : 'B2B';
 
             $rowData = [
@@ -322,7 +322,7 @@ class KlienArController extends Controller
                     continue;
                 }
                 $restoId = $resto->id;
-            } elseif (in_array($tipeKlien, ['RESTO', 'MITRA'])) {
+            } elseif ($tipeKlien === 'RESTO') {
                 $errors[] = ['row' => $lineNumber, 'message' => "Kolom nama_resto wajib diisi untuk tipe klien {$tipeKlien}."];
                 continue;
             }
@@ -352,7 +352,7 @@ class KlienArController extends Controller
             $validator = Validator::make($data, [
                 'kode_klien'     => ['required', 'string', 'max:30'],
                 'nama_klien'     => ['required', 'string', 'max:150'],
-                'tipe_klien'     => ['required', 'in:PT,RESTO,STOKIS,MITRA'],
+                'tipe_klien'     => ['required', 'in:PT,RESTO'],
                 'resto_id'       => ['nullable', 'integer'],
                 'karyawan_ar_id' => ['required', 'integer'],
                 'no_npwp'        => ['nullable', 'string', 'max:30'],
@@ -520,8 +520,8 @@ class KlienArController extends Controller
             '3. Isi data mulai dari baris kosong di bawah baris [CONTOH].',
             '4. Kolom opsional dapat dikosongkan atau diisi tanda \'-\' — sistem akan memperlakukan keduanya sebagai tidak ada nilai.',
             '5. Kolom kode_klien WAJIB diisi dengan format AR-B2C-xxx (B2C) atau AR-B2B-xxx (B2B). Contoh: AR-B2C-001.',
-            '6. Kolom tipe_klien harus diisi persis salah satu dari: RESTO, MITRA, PT, atau STOKIS.',
-            '7. Untuk tipe RESTO atau MITRA, kolom nama_resto WAJIB diisi persis sesuai nama resto di sistem.',
+            '6. Kolom tipe_klien harus diisi persis salah satu dari: RESTO (B2C) atau PT (B2B).',
+            '7. Untuk tipe RESTO, kolom nama_resto WAJIB diisi persis sesuai nama resto di sistem.',
             '8. Kolom nama_karyawan_ar WAJIB diisi persis sesuai nama karyawan AR di sistem.',
             '9. Simpan file sebagai .xlsx atau .csv sebelum diupload ke sistem.',
         ];
@@ -567,8 +567,8 @@ class KlienArController extends Controller
         $colInfos = [
             ['kode_resto',       'Kode unik Client (Resto)',                     'Ya',       'Format: AR-B2C-xxx (B2C) / AR-B2B-xxx (B2B). Contoh: AR-B2C-001'],
             ['nama_klien',       'Nama investor / kontak billing klien',        'Ya',       'Teks, maks 150 karakter. Contoh: Budi Santoso'],
-            ['tipe_klien',       'Jenis/tipe Client',                           'Ya',       'Isi persis salah satu: RESTO / MITRA / PT / STOKIS'],
-            ['nama_resto',       'Nama resto sesuai data di sistem',            'Jika B2C', 'Wajib untuk tipe RESTO dan MITRA. Kosongkan jika PT/STOKIS'],
+            ['tipe_klien',       'Jenis/tipe Client',                           'Ya',       'Isi persis salah satu: RESTO (B2C) atau PT (B2B)'],
+            ['nama_resto',       'Nama resto sesuai data di sistem',            'Jika B2C', 'Wajib untuk tipe RESTO. Kosongkan jika PT'],
             ['nama_karyawan_ar', 'Nama karyawan yang bertugas sebagai PIC AR',  'Ya',       'Harus sesuai persis dengan nama karyawan di sistem'],
             ['no_npwp',          'Nomor NPWP klien',                            'Opsional', 'Format: XX.XXX.XXX.X-XXX.XXX. Contoh: 12.345.678.9-012.000'],
             ['no_wa',            'Nomor WhatsApp untuk notifikasi tagihan',     'Opsional', 'Awali dengan 08 atau 62. Contoh: 08123456789'],
