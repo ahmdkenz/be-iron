@@ -11,7 +11,7 @@ class StoreKlienArRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'kode_klien'    => ['nullable', 'string', 'max:20'],
+            'kode_klien'    => ['required', 'string', 'max:20'],
             'nama_klien'    => ['required', 'string', 'max:150'],
             'tipe_klien'    => ['nullable', 'in:PT,RESTO'],
             'no_npwp'       => ['nullable', 'string', 'max:30'],
