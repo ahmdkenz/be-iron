@@ -19,6 +19,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use PhpOffice\PhpSpreadsheet\Cell\DataType;
 use PhpOffice\PhpSpreadsheet\IOFactory;
+use PhpOffice\PhpSpreadsheet\Shared\Date as PhpSpreadsheetDate;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
 use PhpOffice\PhpSpreadsheet\Style\Border;
@@ -259,6 +260,13 @@ class RestoController extends Controller
             ? $this->parseXlsx($path)
             : $this->parseCsv($path);
 
+        if (in_array($extension, ['xlsx', 'xls']) && empty($rows)) {
+            return $this->errorResponse(
+                'Header kolom "kode_resto" tidak ditemukan dalam file. Pastikan menggunakan template import yang disediakan dan tidak mengubah nama kolom pada baris header.',
+                422
+            );
+        }
+
         $insertedCount = 0;
         $updatedCount  = 0;
         $totalData     = 0;
@@ -472,6 +480,9 @@ class RestoController extends Controller
         if (is_bool($value)) return $value ? '1' : '0';
         if (is_int($value)) return (string) $value;
         if (is_float($value)) {
+            if (PhpSpreadsheetDate::isDateTime($cell)) {
+                return PhpSpreadsheetDate::excelToDateTimeObject($value)->format('d-m-Y');
+            }
             return fmod($value, 1.0) === 0.0
                 ? sprintf('%.0f', $value)
                 : (string) $value;
