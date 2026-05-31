@@ -2,21 +2,19 @@
 
 namespace App\Support\Traits;
 
-use Illuminate\Support\Facades\Auth;
-
 trait BlameableTrait
 {
     public static function bootBlameableTrait(): void
     {
         static::creating(function ($model) {
-            if (Auth::check() && !$model->created_by) {
-                $model->created_by = Auth::id();
+            if (auth()->check() && !$model->created_by) {
+                $model->created_by = auth()->id();
             }
         });
 
         static::updating(function ($model) {
-            if (Auth::check()) {
-                $model->updated_by = Auth::id();
+            if (auth()->check()) {
+                $model->updated_by = auth()->id();
             }
         });
     }

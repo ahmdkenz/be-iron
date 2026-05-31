@@ -298,7 +298,7 @@ class RestoController extends Controller
             $rowErrors    = [];
 
             if ($namaInvestor) {
-                $investor = Investor::where('nama_investor', $namaInvestor)->first();
+                $investor = Investor::whereRaw('LOWER(nama_investor) = ?', [strtolower($namaInvestor)])->first();
                 if (!$investor) {
                     $rowErrors[] = "Investor '{$namaInvestor}' tidak ditemukan";
                 } else {
@@ -307,8 +307,8 @@ class RestoController extends Controller
             }
 
             if ($namaPerusahaan) {
-                $perusahaan = Perusahaan::where('nama_perusahaan', $namaPerusahaan)
-                    ->orWhere('nama_singkatan_perusahaan', $namaPerusahaan)
+                $perusahaan = Perusahaan::whereRaw('LOWER(nama_perusahaan) = ?', [strtolower($namaPerusahaan)])
+                    ->orWhereRaw('LOWER(nama_singkatan_perusahaan) = ?', [strtolower($namaPerusahaan)])
                     ->first();
                 if (!$perusahaan) {
                     $rowErrors[] = "Entitas '{$namaPerusahaan}' tidak ditemukan";
@@ -318,7 +318,7 @@ class RestoController extends Controller
             }
 
             if ($namaBrand) {
-                $brand = Brand::where('nama_brand', $namaBrand)->first();
+                $brand = Brand::whereRaw('LOWER(nama_brand) = ?', [strtolower($namaBrand)])->first();
                 if (!$brand) {
                     $rowErrors[] = "Brand '{$namaBrand}' tidak ditemukan";
                 } else {
@@ -327,7 +327,7 @@ class RestoController extends Controller
             }
 
             if ($namaPic) {
-                $karyawan = Karyawan::where('nama_karyawan', $namaPic)->first();
+                $karyawan = Karyawan::whereRaw('LOWER(nama_karyawan) = ?', [strtolower($namaPic)])->first();
                 if (!$karyawan) {
                     $rowErrors[] = "PIC (karyawan) '{$namaPic}' tidak ditemukan";
                 } else {
@@ -390,12 +390,16 @@ class RestoController extends Controller
                 continue;
             }
 
-            if ($existing) {
-                $this->service->update($existing, RestoDTO::fromRequest($data));
-                $updatedCount++;
-            } else {
-                $this->service->create(RestoDTO::fromRequest($data));
-                $insertedCount++;
+            try {
+                if ($existing) {
+                    $this->service->update($existing, RestoDTO::fromRequest($data));
+                    $updatedCount++;
+                } else {
+                    $this->service->create(RestoDTO::fromRequest($data));
+                    $insertedCount++;
+                }
+            } catch (\Exception $e) {
+                $errors[] = ['row' => $lineNumber, 'message' => 'Gagal menyimpan: ' . $e->getMessage()];
             }
         }
 

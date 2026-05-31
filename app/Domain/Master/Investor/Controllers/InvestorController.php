@@ -299,12 +299,16 @@ class InvestorController extends Controller
                 continue;
             }
 
-            if ($existing) {
-                $this->service->update($existing, InvestorDTO::fromRequest($data));
-                $updatedCount++;
-            } else {
-                $this->service->create(InvestorDTO::fromRequest($data));
-                $insertedCount++;
+            try {
+                if ($existing) {
+                    $this->service->update($existing, InvestorDTO::fromRequest($data));
+                    $updatedCount++;
+                } else {
+                    $this->service->create(InvestorDTO::fromRequest($data));
+                    $insertedCount++;
+                }
+            } catch (\Exception $e) {
+                $errors[] = ['row' => $lineNumber, 'message' => 'Gagal menyimpan: ' . $e->getMessage()];
             }
         }
 
