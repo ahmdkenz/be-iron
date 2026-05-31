@@ -131,7 +131,9 @@ class BankStatementController extends Controller
             $invoice        = $pembayaran?->invoice;
             $kelebihanBayar = null;
             if ($invoice) {
-                $total = max(0, round((float) $invoice->total_pembayaran - (float) $invoice->total_tagihan, 2));
+                $kelebihanFromInvoice = max(0, round((float) $invoice->total_pembayaran - (float) $invoice->total_tagihan, 2));
+                $kelebihanFromBank    = max(0, round($updated->kredit - (float) $pembayaran->jumlah_pembayaran, 2));
+                $total                = max($kelebihanFromInvoice, $kelebihanFromBank);
                 if ($total > 0) {
                     $dialokasi      = (float) $pembayaran->alokasiKelebihan->sum('jumlah_pembayaran');
                     $kelebihanBayar = [

@@ -195,7 +195,9 @@ class BankStatementService
 
                 $kelebihanBayar = null;
                 if ($invoice) {
-                    $total = max(0, round((float) $invoice->total_pembayaran - (float) $invoice->total_tagihan, 2));
+                    $kelebihanFromInvoice = max(0, round((float) $invoice->total_pembayaran - (float) $invoice->total_tagihan, 2));
+                    $kelebihanFromBank    = max(0, round($d->kredit - (float) $pembayaran->jumlah_pembayaran, 2));
+                    $total                = max($kelebihanFromInvoice, $kelebihanFromBank);
                     if ($total > 0) {
                         $dialokasi = (float) $pembayaran->alokasiKelebihan->sum('jumlah_pembayaran');
                         $kelebihanBayar = [
@@ -372,9 +374,11 @@ class BankStatementService
         $pembayaran = $detail->pembayaranAr;
         abort_if(!$pembayaran, 422, 'Transaksi belum memiliki pembayaran yang dicocokkan.');
 
-        $inv   = $pembayaran->invoice;
-        $total = max(0, (float) $inv->total_pembayaran - (float) $inv->total_tagihan);
-        $sudah = (float) $pembayaran->alokasiKelebihan()->sum('jumlah_pembayaran');
+        $inv                  = $pembayaran->invoice;
+        $kelebihanFromInvoice = max(0, (float) $inv->total_pembayaran - (float) $inv->total_tagihan);
+        $kelebihanFromBank    = max(0, (float) $detail->kredit - (float) $pembayaran->jumlah_pembayaran);
+        $total                = max($kelebihanFromInvoice, $kelebihanFromBank);
+        $sudah                = (float) $pembayaran->alokasiKelebihan()->sum('jumlah_pembayaran');
         $sisa  = max(0, round($total - $sudah, 2));
 
         abort_if($jumlah <= 0, 422, 'Jumlah harus lebih dari 0.');
