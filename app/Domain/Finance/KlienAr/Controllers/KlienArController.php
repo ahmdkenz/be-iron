@@ -398,7 +398,7 @@ class KlienArController extends Controller
         $sheet->setTitle('Data Client');
 
         $cols = [
-            'A' => ['kode_resto',       20],
+            'A' => ['kode_klien',       20],
             'B' => ['nama_klien',       28],
             'C' => ['tipe_klien',       14],
             'D' => ['nama_resto',       28],
