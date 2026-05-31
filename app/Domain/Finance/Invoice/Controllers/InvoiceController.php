@@ -449,7 +449,7 @@ class InvoiceController extends Controller
                     'periode_akhir'              => $periodeAkhir,
                     'klien_ar_id'                => $klien->id,
                     'perusahaan_id'              => $klien->perusahaan_id,
-                    'karyawan_id'                => $user->karyawan->id,
+                    'karyawan_id'                => $this->service->resolveInvoiceKaryawanId($user, $klien),
                     'no_surat_jalan'             => $noSuratJalan,
                     'subtotal'                   => 0,
                     'tagihan_periode_sebelumnya' => $tagihanSblm,

@@ -9,6 +9,8 @@ use App\Models\Invoice;
 use App\Models\InvoiceApprovalLog;
 use App\Models\KlienAr;
 use App\Models\OpeningBalanceDetail;
+use App\Models\User;
+use App\Support\Helpers\RoleHelper;
 use Carbon\Carbon;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
@@ -109,7 +111,7 @@ class InvoiceService
             'periode_akhir'              => $dto->periode_akhir,
             'klien_ar_id'                => $dto->klien_ar_id,
             'perusahaan_id'              => $klien->perusahaan_id,
-            'karyawan_id'                => auth()->user()->karyawan->id,
+            'karyawan_id'                => $this->resolveInvoiceKaryawanId(auth()->user(), $klien),
             'no_surat_jalan'             => $dto->no_surat_jalan,
             'subtotal'                   => $subtotal,
             'tagihan_periode_sebelumnya' => $carryover,
@@ -165,7 +167,7 @@ class InvoiceService
                 'periode_akhir'              => $data['periode_akhir'],
                 'klien_ar_id'                => $data['klien_ar_id'],
                 'perusahaan_id'              => $klien->perusahaan_id,
-                'karyawan_id'                => $user->karyawan->id,
+                'karyawan_id'                => $this->resolveInvoiceKaryawanId($user, $klien),
                 'subtotal'                   => $saldoAwal,
                 'tagihan_periode_sebelumnya' => 0,
                 'total_tagihan'              => $saldoAwal,
@@ -529,6 +531,18 @@ class InvoiceService
             'actor_id'   => auth()->id(),
             'note'       => $note,
         ]);
+    }
+
+    public function resolveInvoiceKaryawanId(User $user, KlienAr $klien): int
+    {
+        $user->loadMissing('karyawan');
+
+        // Jika Manager/Supervisor yang membuat dan klien punya PIC AR, gunakan karyawan AR klien
+        if (RoleHelper::hasAnyRole($user, ['MANAGER', 'SUPERVISOR']) && $klien->karyawan_ar_id) {
+            return $klien->karyawan_ar_id;
+        }
+
+        return $user->karyawan->id;
     }
 
     private function resolveInvoiceSegment(KlienAr $klien): string
