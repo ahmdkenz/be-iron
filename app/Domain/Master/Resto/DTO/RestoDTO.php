@@ -6,6 +6,7 @@ class RestoDTO
 {
     public function __construct(
         public readonly string  $nama_resto,
+        public readonly ?string $kode_resto,
         public readonly ?int    $perusahaan_id,
         public readonly ?int    $brand_id,
         public readonly ?int    $investor_id,
@@ -26,6 +27,7 @@ class RestoDTO
     {
         return new self(
             nama_resto:    $data['nama_resto'],
+            kode_resto:    $data['kode_resto'] ?? null,
             perusahaan_id: isset($data['perusahaan_id']) ? (int) $data['perusahaan_id'] : null,
             brand_id:      isset($data['brand_id']) ? (int) $data['brand_id'] : null,
             investor_id:   isset($data['investor_id']) ? (int) $data['investor_id'] : null,

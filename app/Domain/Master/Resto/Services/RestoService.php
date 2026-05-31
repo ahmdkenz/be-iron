@@ -29,17 +29,10 @@ class RestoService
         return $resto;
     }
 
-    public function generateKodeResto(string $namaResto): string
-    {
-        return 'OT-' . $namaResto;
-    }
-
     public function create(RestoDTO $dto): Resto
     {
-        $kode = $this->generateKodeResto($dto->nama_resto);
-
         return $this->repository->create([
-            'kode_resto'    => $kode,
+            'kode_resto'    => $dto->kode_resto,
             'nama_resto'    => $dto->nama_resto,
             'perusahaan_id' => $dto->perusahaan_id,
             'brand_id'      => $dto->brand_id,

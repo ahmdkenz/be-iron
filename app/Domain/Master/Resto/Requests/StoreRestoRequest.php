@@ -11,6 +11,7 @@ class StoreRestoRequest extends FormRequest
     public function rules(): array
     {
         return [
+            'kode_resto'    => ['required', 'string', 'max:100', 'unique:tb_resto,kode_resto'],
             'nama_resto'    => ['required', 'string', 'max:150'],
             'perusahaan_id' => ['nullable', 'integer', 'exists:tb_perusahaan,id'],
             'brand_id'      => ['nullable', 'integer', 'exists:tb_brand,id'],
