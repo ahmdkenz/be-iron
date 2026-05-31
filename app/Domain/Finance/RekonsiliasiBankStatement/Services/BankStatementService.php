@@ -333,23 +333,34 @@ class BankStatementService
 
     public function getInvoiceB2CKlien(BankStatementDetail $detail): \Illuminate\Support\Collection
     {
-        $klienArId = $detail->pembayaranAr?->invoice?->klien_ar_id;
-        abort_if(!$klienArId, 422, 'Belum ada pembayaran yang dicocokkan.');
+        $sourceInvoice = $detail->pembayaranAr?->invoice;
+        abort_if(!$sourceInvoice, 422, 'Belum ada pembayaran yang dicocokkan.');
 
-        return Invoice::with('klienAr')
-            ->where('klien_ar_id', $klienArId)
+        $sourceInvoice->loadMissing('klienAr.resto');
+        $investorId = $sourceInvoice->klienAr?->resto?->investor_id;
+
+        $query = Invoice::with('klienAr.resto.investor')
             ->whereNotIn('status', ['LUNAS'])
             ->whereHas('klienAr', fn($q) => $q->where('tipe_klien', 'RESTO'))
-            ->orderByDesc('tanggal_invoice')
-            ->get()
-            ->map(fn($inv) => [
-                'id'            => $inv->id,
-                'no_invoice'    => $inv->no_invoice,
-                'tanggal'       => $inv->tanggal_invoice?->toDateString(),
-                'total_tagihan' => $inv->total_tagihan,
-                'sisa_tagihan'  => $inv->sisa_tagihan,
-                'status'        => $inv->status,
-            ]);
+            ->orderByDesc('tanggal_invoice');
+
+        if ($investorId) {
+            $query->whereHas('klienAr.resto', fn($q) => $q->where('investor_id', $investorId));
+        } else {
+            $query->where('klien_ar_id', $sourceInvoice->klien_ar_id);
+        }
+
+        return $query->get()->map(fn($inv) => [
+            'id'             => $inv->id,
+            'no_invoice'     => $inv->no_invoice,
+            'tanggal'        => $inv->tanggal_invoice?->toDateString(),
+            'total_tagihan'  => $inv->total_tagihan,
+            'sisa_tagihan'   => $inv->sisa_tagihan,
+            'status'         => $inv->status,
+            'nama_klien'     => $inv->klienAr?->nama_klien,
+            'nama_resto'     => $inv->klienAr?->resto?->nama_resto,
+            'nama_investor'  => $inv->klienAr?->resto?->investor?->nama_investor,
+        ]);
     }
 
     public function applyKelebihan(
@@ -373,12 +384,24 @@ class BankStatementService
             'Jumlah melebihi sisa kelebihan (Rp ' . number_format($sisa, 0, ',', '.') . ').'
         );
 
-        $target = Invoice::with('klienAr')->findOrFail($invoiceId);
-        abort_if(
-            $target->klien_ar_id !== $inv->klien_ar_id,
-            422,
-            'Invoice tujuan harus milik klien yang sama.'
-        );
+        $target = Invoice::with('klienAr.resto')->findOrFail($invoiceId);
+        $inv->loadMissing('klienAr.resto');
+        $sourceInvestorId = $inv->klienAr?->resto?->investor_id;
+        $targetInvestorId = $target->klienAr?->resto?->investor_id;
+
+        if ($sourceInvestorId && $targetInvestorId) {
+            abort_if(
+                $sourceInvestorId !== $targetInvestorId,
+                422,
+                'Invoice tujuan harus milik investor yang sama.'
+            );
+        } else {
+            abort_if(
+                $target->klien_ar_id !== $inv->klien_ar_id,
+                422,
+                'Invoice tujuan harus milik klien yang sama.'
+            );
+        }
         abort_if($target->status === 'LUNAS', 422, 'Invoice ini sudah LUNAS.');
         abort_if(
             $target->requiresApproval() && !$target->isApprovedForFinanceFlow(),
