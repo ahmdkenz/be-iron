@@ -283,7 +283,8 @@ class RestoController extends Controller
 
             $totalData++;
 
-            $kodeResto      = $this->importValue($row[1] ?? '') ?? '';
+            $kodeResto      = $this->importValue($row[0] ?? '') ?? '';
+            $namaResto      = trim((string) ($row[1] ?? ''));
             $namaInvestor   = $this->importValue($row[2] ?? '') ?? '';
             $namaPerusahaan = $this->importValue($row[3] ?? '') ?? '';
             $namaBrand      = $this->importValue($row[4] ?? '') ?? '';
@@ -339,15 +340,15 @@ class RestoController extends Controller
                 continue;
             }
 
-            $existing = \App\Models\Resto::where('nama_resto', $firstCell)->latest()->first();
+            $existing = \App\Models\Resto::where('nama_resto', $namaResto)->latest()->first();
 
             if (!$existing && $kodeResto === '') {
-                $errors[] = ['row' => $lineNumber, 'message' => "kode_resto wajib diisi untuk data baru '{$firstCell}'"];
+                $errors[] = ['row' => $lineNumber, 'message' => "kode_resto wajib diisi untuk data baru '{$namaResto}'"];
                 continue;
             }
 
             $data = [
-                'nama_resto'       => $firstCell,
+                'nama_resto'       => $namaResto,
                 'kode_resto'       => $kodeResto ?: null,
                 'investor_id'      => $investorId,
                 'perusahaan_id'    => $perusahaanId,
@@ -429,7 +430,7 @@ class RestoController extends Controller
             $firstCell = trim($cells[0] ?? '');
 
             if (!$headerFound) {
-                if (strtolower($firstCell) === 'nama_resto') {
+                if (strtolower($firstCell) === 'kode_resto') {
                     $headerFound = true;
                     $rows[]      = $cells;
                 }
@@ -479,8 +480,8 @@ class RestoController extends Controller
         $sheet->setTitle('Data Resto');
 
         $cols = [
-            'A' => ['nama_resto',        28],
-            'B' => ['kode_resto',        20],
+            'A' => ['kode_resto',        20],
+            'B' => ['nama_resto',        28],
             'C' => ['nama_investor',     26],
             'D' => ['nama_entitas',      26],
             'E' => ['nama_brand',        20],
@@ -537,8 +538,8 @@ class RestoController extends Controller
 
         // Row 5 — Example row
         $example = [
-            'A' => '[CONTOH] Resto Contoh',
-            'B' => 'KD-001',
+            'A' => '[CONTOH] KD-001',
+            'B' => 'Resto Contoh',
             'C' => 'Nama Investor',
             'D' => 'Nama Entitas',
             'E' => 'Nama Brand',
@@ -671,8 +672,8 @@ class RestoController extends Controller
         $row++;
 
         $colInfos = [
-            ['nama_resto',        'Nama lengkap restoran',                         'Ya',               'Teks, maks 150 karakter. Contoh: Resto Maju Jaya'],
             ['kode_resto',        'Kode unik restoran (diisi manual)',             'Ya (data baru)',   'Teks, maks 100 karakter. Contoh: KD-001. Tidak diperbarui saat update.'],
+            ['nama_resto',        'Nama lengkap restoran',                         'Ya',               'Teks, maks 150 karakter. Contoh: Resto Maju Jaya'],
             ['nama_investor',     'Nama investor pemilik resto',                   'Opsional',         'Harus SAMA PERSIS dengan nama investor di sistem'],
             ['nama_entitas',      'Nama atau singkatan entitas pengelola',         'Opsional',         'Boleh nama lengkap atau singkatan. Contoh: PT Maju Jaya'],
             ['nama_brand',        'Nama brand / merek resto',                      'Opsional',         'Harus SAMA PERSIS dengan nama brand di sistem'],
