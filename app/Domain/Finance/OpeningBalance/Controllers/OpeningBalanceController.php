@@ -278,6 +278,8 @@ class OpeningBalanceController extends Controller
         $obMap = [];
         // Map: "no_urut_ob|no_invoice_asal" → detail_id
         $detailMap = [];
+        // Set: no_urut yang ditemukan di Sheet 2 (untuk cleanup OB tanpa detail)
+        $noUrutObWithSheet2Rows = [];
 
         // ── Pass 1: Opening Balance utama ────────────────────────────────────
         $sheet1Rows = $isCsv
@@ -384,6 +386,9 @@ class OpeningBalanceController extends Controller
                 $totalDetail++;
 
                 $noUrutOb = $firstCell;
+                // Catat setiap no_urut_ob yang muncul di Sheet 2 (untuk cleanup nanti)
+                $noUrutObWithSheet2Rows[$noUrutOb] = true;
+
                 if (!isset($obMap[$noUrutOb])) {
                     $errors[] = ['sheet' => 'Sheet 2', 'row' => $lineNumber, 'message' => "no_urut_ob '{$noUrutOb}' tidak ditemukan atau Opening Balance-nya gagal dibuat."];
                     continue;
@@ -439,6 +444,26 @@ class OpeningBalanceController extends Controller
                         'total_tagihan' => $sumSisa,
                         'sisa_tagihan'  => max(0, $sumSisa - (float) $obInvoice->total_pembayaran),
                     ]);
+                }
+            }
+        }
+
+        // ── Cleanup: hapus OB yang Sheet 2-nya ada tapi semua detail gagal dibuat ──
+        // Mencegah direktur men-approve OB yang tidak memiliki rincian sama sekali
+        if (!$isCsv && !empty($noUrutObWithSheet2Rows)) {
+            foreach ($noUrutObWithSheet2Rows as $noUrut => $_) {
+                if (!isset($obMap[$noUrut])) continue;
+                $obInvoice  = $obMap[$noUrut];
+                $hasDetail  = OpeningBalanceDetail::where('invoice_id', $obInvoice->id)->exists();
+                if (!$hasDetail) {
+                    $obInvoice->forceDelete();
+                    $insertedOb--;
+                    unset($obMap[$noUrut]);
+                    $errors[] = [
+                        'sheet'   => 'Sheet 1',
+                        'row'     => '-',
+                        'message' => "OB '{$obInvoice->no_invoice}' dibatalkan: semua baris rincian di Sheet 2 untuk no_urut '{$noUrut}' gagal diimport.",
+                    ];
                 }
             }
         }
