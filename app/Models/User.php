@@ -46,6 +46,11 @@ class User extends Authenticatable
         return $this->belongsTo(Karyawan::class, 'karyawan_id');
     }
 
+    public function getNameAttribute(): ?string
+    {
+        return $this->karyawan?->nama_karyawan ?? $this->username;
+    }
+
     public function createdBy()
     {
         return $this->belongsTo(User::class, 'created_by');

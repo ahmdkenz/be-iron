@@ -21,7 +21,7 @@ class BankStatementController extends Controller
 
     public function index(Request $request): JsonResponse
     {
-        $statements = BankStatement::with('uploader')
+        $statements = BankStatement::with('uploader.karyawan')
             ->orderByDesc('created_at')
             ->paginate($request->integer('per_page', 15));
 
@@ -124,7 +124,8 @@ class BankStatementController extends Controller
 
             $updated->load([
                 'pembayaranAr.alokasiKelebihan.invoice.klienAr',
-                'pembayaranAr.alokasiKelebihan.createdBy',
+                'pembayaranAr.alokasiKelebihan.createdBy.karyawan',
+                'matchedBy.karyawan',
             ]);
 
             $pembayaran     = $updated->pembayaranAr;

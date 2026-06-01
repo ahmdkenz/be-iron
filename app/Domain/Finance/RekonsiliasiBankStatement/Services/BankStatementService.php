@@ -136,7 +136,8 @@ class BankStatementService
             $detail->pembayaran_ar_id = $top['candidate']->id;
 
             if ($status === 'MATCHED') {
-                $usedPembayaranIds[] = $top['candidate']->id;
+                $detail->matched_by       = $statement->uploaded_by;
+                $usedPembayaranIds[]      = $top['candidate']->id;
             }
 
             $detail->save();
@@ -174,13 +175,13 @@ class BankStatementService
 
     public function getDetail(int $bankStatementId): array
     {
-        $statement = BankStatement::with('uploader')->findOrFail($bankStatementId);
+        $statement = BankStatement::with('uploader.karyawan')->findOrFail($bankStatementId);
 
         $details = BankStatementDetail::with([
                 'pembayaranAr.invoice.klienAr',
                 'pembayaranAr.alokasiKelebihan.invoice.klienAr',
-                'pembayaranAr.alokasiKelebihan.createdBy',
-                'matchedBy',
+                'pembayaranAr.alokasiKelebihan.createdBy.karyawan',
+                'matchedBy.karyawan',
             ])
             ->where('bank_statement_id', $bankStatementId)
             ->orderBy('tanggal')
