@@ -16,6 +16,7 @@ use App\Support\Helpers\RoleHelper;
 use App\Support\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 use PhpOffice\PhpSpreadsheet\Cell\DataType;
 use PhpOffice\PhpSpreadsheet\IOFactory;
@@ -280,6 +281,9 @@ class OpeningBalanceController extends Controller
         $detailMap = [];
         // Set: no_urut yang ditemukan di Sheet 2 (untuk cleanup OB tanpa detail)
         $noUrutObWithSheet2Rows = [];
+
+        DB::beginTransaction();
+        try {
 
         // ── Pass 1: Opening Balance utama ────────────────────────────────────
         $sheet1Rows = $isCsv
@@ -554,29 +558,54 @@ class OpeningBalanceController extends Controller
         $failedDetail = $totalDetail - $insertedDetail;
         $failedItem   = $totalItem - $insertedItem;
 
+        // Jika ada baris yang gagal validasi, rollback SEMUA — tidak ada yang tersimpan
+        if (!empty($errors)) {
+            DB::rollBack();
+
+            $totalFailed = $failedOb + $failedDetail + $failedItem;
+            $message = "Import dibatalkan. Terdapat {$totalFailed} baris bermasalah. Tidak ada data yang disimpan.";
+
+            return $this->errorResponse($message, 422, [
+                'total_ob'        => $totalOb,
+                'inserted_ob'     => 0,
+                'failed_ob'       => $failedOb,
+                'total_detail'    => $totalDetail,
+                'inserted_detail' => 0,
+                'failed_detail'   => $failedDetail,
+                'total_item'      => $totalItem,
+                'inserted_item'   => 0,
+                'failed_item'     => $failedItem,
+                'is_csv'          => $isCsv,
+                'errors'          => $errors,
+            ]);
+        }
+
+        DB::commit();
+
         $message = "Import selesai. {$insertedOb} OB ditambahkan";
         if (!$isCsv) {
             $message .= ", {$insertedDetail} detail, {$insertedItem} item";
-        }
-        $totalFailed = $failedOb + $failedDetail + $failedItem;
-        if ($totalFailed > 0) {
-            $message .= ", {$totalFailed} baris gagal";
         }
         $message .= '.';
 
         return $this->successResponse([
             'total_ob'       => $totalOb,
             'inserted_ob'    => $insertedOb,
-            'failed_ob'      => $failedOb,
+            'failed_ob'      => 0,
             'total_detail'   => $totalDetail,
             'inserted_detail'=> $insertedDetail,
-            'failed_detail'  => $failedDetail,
+            'failed_detail'  => 0,
             'total_item'     => $totalItem,
             'inserted_item'  => $insertedItem,
-            'failed_item'    => $failedItem,
+            'failed_item'    => 0,
             'is_csv'         => $isCsv,
-            'errors'         => $errors,
+            'errors'         => [],
         ], $message);
+
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            return $this->errorResponse('Terjadi kesalahan sistem saat proses import: ' . $e->getMessage(), 500);
+        }
     }
 
     // ─── Private: Export Sheet Builders ──────────────────────────────────────
