@@ -32,19 +32,22 @@ class RekapPembayaranService
             ->when($segmentTypes, fn($q) => $q->whereIn('tb_klien_ar.tipe_klien', $segmentTypes));
 
         // Rekap per metode (untuk summary cards)
+        // Gunakan COUNT/SUM DISTINCT untuk menghindari duplikasi akibat LEFT JOIN bsd
         $perMetode = (clone $query)
             ->select(
                 'tb_pembayaran_ar.metode_pembayaran',
-                DB::raw('COUNT(*) as jumlah_transaksi'),
-                DB::raw('SUM(tb_pembayaran_ar.jumlah_pembayaran) as total')
+                DB::raw('COUNT(DISTINCT tb_pembayaran_ar.id) as jumlah_transaksi'),
+                DB::raw('SUM(DISTINCT tb_pembayaran_ar.jumlah_pembayaran) as total')
             )
             ->groupBy('tb_pembayaran_ar.metode_pembayaran')
             ->get()
             ->keyBy('metode_pembayaran');
 
-        // Data per record individual
+        // Data per record individual — groupBy id agar tidak ada baris ganda jika satu
+        // pembayaran cocok dengan lebih dari satu baris bank statement detail
         $perRecord = (clone $query)
             ->select(
+                'tb_pembayaran_ar.id',
                 'tb_pembayaran_ar.tanggal_pembayaran',
                 'tb_klien_ar.nama_klien',
                 'tb_invoice.no_invoice',
@@ -52,7 +55,17 @@ class RekapPembayaranService
                 'tb_pembayaran_ar.metode_pembayaran',
                 'tb_pembayaran_ar.jumlah_pembayaran',
                 DB::raw('COALESCE(pic_karyawan.nama_karyawan, "") as pic_ar'),
-                DB::raw('IF(bsd.id IS NOT NULL, 1, 0) as is_rekon')
+                DB::raw('MAX(IF(bsd.id IS NOT NULL, 1, 0)) as is_rekon')
+            )
+            ->groupBy(
+                'tb_pembayaran_ar.id',
+                'tb_pembayaran_ar.tanggal_pembayaran',
+                'tb_klien_ar.nama_klien',
+                'tb_invoice.no_invoice',
+                'tb_pembayaran_ar.no_referensi',
+                'tb_pembayaran_ar.metode_pembayaran',
+                'tb_pembayaran_ar.jumlah_pembayaran',
+                'pic_karyawan.nama_karyawan'
             )
             ->orderBy('tb_pembayaran_ar.tanggal_pembayaran', 'asc')
             ->get();
