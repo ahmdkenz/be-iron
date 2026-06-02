@@ -644,15 +644,30 @@ class InvoiceController extends Controller
                 ->get();
         }
 
+        if ($regularInvoicesInPeriod->isNotEmpty()) {
+            $regularInvoicesInPeriod->load([
+                'klienAr.karyawanAr',
+                'perusahaan',
+                'items.barang',
+                'pembayarans',
+                'createdBy.karyawan',
+                'submittedBy.karyawan',
+                'approvedBy.karyawan',
+            ]);
+        }
+
         $signatureData = $this->buildSignatureData($invoice);
+        $regularInvoicesSignatureData = $regularInvoicesInPeriod
+            ->mapWithKeys(fn ($inv) => [$inv->id => $this->buildSignatureData($inv)])
+            ->all();
 
         if ($request->has('html')) {
-            return view('finance.invoice-print', compact('invoice', 'signatureData', 'regularInvoicesInPeriod'))->render();
+            return view('finance.invoice-print', compact('invoice', 'signatureData', 'regularInvoicesInPeriod', 'regularInvoicesSignatureData'))->render();
         }
 
         $filename = 'Invoice-' . str_replace(['/', '\\', ' '], '-', $invoice->no_invoice) . '.pdf';
 
-        return Pdf::loadView('finance.invoice-print', compact('invoice', 'signatureData', 'regularInvoicesInPeriod'))
+        return Pdf::loadView('finance.invoice-print', compact('invoice', 'signatureData', 'regularInvoicesInPeriod', 'regularInvoicesSignatureData'))
             ->setPaper('a4', 'portrait')
             ->setOptions([
                 'isHtml5ParserEnabled' => true,

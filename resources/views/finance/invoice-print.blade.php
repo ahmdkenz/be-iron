@@ -513,5 +513,233 @@
 
 </div>
 
+{{-- ======== HALAMAN 2+: Invoice Reguler Lengkap (hanya untuk print OB) ======== --}}
+@if($invoice->is_opening_balance && isset($regularInvoicesSignatureData) && $regularInvoicesInPeriod->isNotEmpty())
+  @foreach($regularInvoicesInPeriod as $regInv)
+  @php
+    $regSigData     = $regularInvoicesSignatureData[$regInv->id] ?? [];
+    $regSubtotal    = (float) $regInv->subtotal;
+    $regTagihanSblm = (float) $regInv->tagihan_periode_sebelumnya;
+  @endphp
+
+  <div style="page-break-before: always;"></div>
+
+  <div class="print-container">
+
+    <!-- Header -->
+    <table>
+      <tr>
+        <td style="width: 20%; vertical-align: middle;">
+          @if(!empty($logoUrl))
+          <img src="{{ $logoUrl }}" style="max-width:80px; max-height:80px;" alt="Logo SMA">
+          @endif
+        </td>
+        <td style="width: 60%; vertical-align: middle;" class="text-center">
+          <div class="company-name">{{ $regInv->perusahaan->nama_perusahaan }}</div>
+          <div class="company-address">
+            Jl. Moh. Kahfi 1, RT.6/RW.1, Cipedak, Kec. Jagakarsa<br>
+            Kota Jakarta Selatan, Daerah Khusus Ibukota Jakarta 12630
+          </div>
+        </td>
+        <td style="width: 20%;"></td>
+      </tr>
+    </table>
+
+    <div class="divider-thick"></div>
+    <div class="divider-thin"></div>
+
+    <div class="doc-title">INVOICE</div>
+
+    <!-- Info Box -->
+    <div class="info-container">
+      <div class="info-header">Informasi Invoice</div>
+      <table>
+        <tr>
+          <td class="info-col info-col-left">
+            <table class="dl-table">
+              <tr>
+                <td class="dl-lbl">No. Invoice</td><td class="dl-colon">:</td>
+                <td class="dl-val">{{ $regInv->no_invoice }}</td>
+              </tr>
+              <tr>
+                <td class="dl-lbl">Tgl. Invoice</td><td class="dl-colon">:</td>
+                <td class="dl-val">{{ \Carbon\Carbon::parse($regInv->tanggal_invoice)->isoFormat('D MMMM YYYY') }}</td>
+              </tr>
+              @if($regInv->tanggal_jatuh_tempo)
+              <tr>
+                <td class="dl-lbl">Jatuh Tempo</td><td class="dl-colon">:</td>
+                <td class="dl-val">{{ \Carbon\Carbon::parse($regInv->tanggal_jatuh_tempo)->isoFormat('D MMMM YYYY') }}</td>
+              </tr>
+              @endif
+              <tr>
+                <td class="dl-lbl">Periode</td><td class="dl-colon">:</td>
+                <td class="dl-val">{{ \Carbon\Carbon::parse($regInv->periode_awal)->isoFormat('D MMM YYYY') }} &ndash; {{ \Carbon\Carbon::parse($regInv->periode_akhir)->isoFormat('D MMM YYYY') }}</td>
+              </tr>
+              <tr>
+                <td class="dl-lbl">No. Surat Jalan</td><td class="dl-colon">:</td>
+                <td class="dl-val">{{ $regInv->no_surat_jalan ?: '-' }}</td>
+              </tr>
+              <tr>
+                <td class="dl-lbl">Status</td><td class="dl-colon">:</td>
+                <td class="dl-val"><span class="badge badge-{{ $regInv->status }}">{{ $regInv->status }}</span></td>
+              </tr>
+            </table>
+          </td>
+          <td class="info-col">
+            <table class="dl-table">
+              <tr>
+                <td class="dl-lbl">Kepada</td><td class="dl-colon">:</td>
+                <td class="dl-val"><strong style="color:#b71c1c;">{{ $regInv->klienAr->nama_klien }}</strong> @if($regInv->klienAr->alias)<span style="color:#666;">({{ $regInv->klienAr->alias }})</span>@endif</td>
+              </tr>
+              <tr>
+                <td class="dl-lbl">No. NPWP</td><td class="dl-colon">:</td>
+                <td class="dl-val">{{ $regInv->klienAr->no_npwp ?: '-' }}</td>
+              </tr>
+              <tr>
+                <td class="dl-lbl">Tipe Klien</td><td class="dl-colon">:</td>
+                <td class="dl-val">{{ $regInv->klienAr->tipe_klien ?: '-' }}</td>
+              </tr>
+              <tr>
+                <td class="dl-lbl">Staff AR</td><td class="dl-colon">:</td>
+                <td class="dl-val">{{ $regInv->klienAr->karyawanAr->nama_karyawan ?? '-' }}</td>
+              </tr>
+              <tr>
+                <td class="dl-lbl">Penagih</td><td class="dl-colon">:</td>
+                <td class="dl-val">{{ $regInv->perusahaan->nama_perusahaan }}</td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+    </div>
+
+    <!-- Items Table -->
+    <table class="items-table">
+      <thead>
+        <tr>
+          <th class="col-no text-center">No</th>
+          <th class="col-kode text-left">Kode Barang</th>
+          <th class="col-desc text-left">Nama Barang</th>
+          <th class="col-qty text-center">Qty</th>
+          <th class="col-sat text-center">Satuan</th>
+          <th class="col-harga text-right">Harga Satuan</th>
+          <th class="col-sub text-right">Subtotal</th>
+        </tr>
+      </thead>
+      <tbody>
+        @forelse($regInv->items as $i => $item)
+        <tr>
+          <td class="col-no text-center" style="color:#777;">{{ $i + 1 }}</td>
+          <td class="col-kode" style="color:#555; font-size:14px;">{{ $item->barang?->kode_barang ?? '-' }}</td>
+          <td class="col-desc">
+            <span class="font-bold" style="color:#111;">{{ $item->nama_barang }}</span>
+            @if($item->keterangan)<span class="item-desc">{{ $item->keterangan }}</span>@endif
+          </td>
+          <td class="col-qty text-center">{{ rtrim(rtrim(number_format((float)$item->qty, 4, '.', ''), '0'), '.') }}</td>
+          <td class="col-sat text-center" style="color:#555;">{{ $item->satuan }}</td>
+          <td class="col-harga text-right">Rp {{ number_format((float)$item->harga_satuan, 0, ',', '.') }}</td>
+          <td class="col-sub text-right font-bold">Rp {{ number_format((float)$item->subtotal, 0, ',', '.') }}</td>
+        </tr>
+        @empty
+        <tr>
+          <td colspan="7" class="text-center" style="padding: 24px; color: #777; font-style: italic;">
+            Tidak ada data barang untuk invoice ini.
+          </td>
+        </tr>
+        @endforelse
+      </tbody>
+    </table>
+
+    <!-- Summary -->
+    <table>
+      <tr>
+        <td class="summary-left">
+          <div class="terbilang-box">
+            <div class="terbilang-lbl">Terbilang</div>
+            <div class="terbilang-val">"{{ \App\Support\Helpers\Terbilang::convert((int) $regInv->total_tagihan) }} Rupiah"</div>
+          </div>
+          @if($regInv->keterangan)
+          <div class="note-box">
+            <div class="note-lbl">Catatan Invoice</div>
+            <div class="note-val">{{ $regInv->keterangan }}</div>
+          </div>
+          @endif
+        </td>
+        <td class="summary-right">
+          <table class="totals-table">
+            <tr>
+              <td class="totals-lbl">Total Barang</td>
+              <td class="totals-val">Rp {{ number_format($regSubtotal, 0, ',', '.') }}</td>
+            </tr>
+            @if($regTagihanSblm > 0)
+            <tr>
+              <td class="totals-lbl">Tagihan Sebelumnya</td>
+              <td class="totals-val">Rp {{ number_format($regTagihanSblm, 0, ',', '.') }}</td>
+            </tr>
+            @endif
+            <tr class="totals-grand">
+              <td class="totals-lbl">GRAND TOTAL</td>
+              <td class="totals-val">Rp {{ number_format((float)$regInv->total_tagihan, 0, ',', '.') }}</td>
+            </tr>
+            @if((float)$regInv->total_pembayaran > 0)
+            <tr>
+              <td class="totals-lbl" style="color:#166534;">Sudah Dibayar</td>
+              <td class="totals-val" style="color:#166534;">- Rp {{ number_format((float)$regInv->total_pembayaran, 0, ',', '.') }}</td>
+            </tr>
+            @endif
+            <tr class="totals-sisa">
+              <td class="totals-lbl">SISA BAYAR</td>
+              <td class="totals-val">Rp {{ number_format((float)$regInv->sisa_tagihan, 0, ',', '.') }}</td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+
+    <!-- Signatures -->
+    <table class="signatures">
+      <tr>
+        <td class="sig-col">
+          <div class="sig-title">Disiapkan Oleh</div>
+          @if(!empty($regSigData['prepared_qr_src']))
+          <div class="sig-barcode-wrap">
+            <div class="sig-barcode"><img src="{{ $regSigData['prepared_qr_src'] }}" alt="QR verifikasi penyiap dokumen"></div>
+          </div>
+          @else
+          <div class="sig-placeholder"></div>
+          @endif
+          <div class="sig-name">{{ $regSigData['prepared_by_name'] ?? '___________________' }}</div>
+          <div class="sig-role">Staff AR</div>
+        </td>
+        <td class="sig-col">
+          <div class="sig-title">Disetujui Oleh</div>
+          @if(!empty($regSigData['approved_qr_src']))
+          <div class="sig-barcode-wrap">
+            <div class="sig-barcode"><img src="{{ $regSigData['approved_qr_src'] }}" alt="QR verifikasi persetujuan dokumen"></div>
+          </div>
+          @else
+          <div class="sig-placeholder"></div>
+          @endif
+          <div class="sig-name">{{ $regSigData['approved_by_name'] ?? '___________________' }}</div>
+          <div class="sig-role">Direktur</div>
+          <div class="sig-role" style="font-size:10px; margin-top:2px;">{{ $regInv->perusahaan->nama_perusahaan }}</div>
+        </td>
+        <td class="sig-col">
+          <div class="sig-title">Diterima Oleh</div>
+          <div class="sig-placeholder"></div>
+          <div class="sig-name">___________________</div>
+        </td>
+      </tr>
+    </table>
+
+    <!-- Footer -->
+    <div class="footer">
+      Dicetak pada {{ now()->isoFormat('D MMMM YYYY HH:mm') }} &bull; {{ $regInv->perusahaan->nama_perusahaan }}
+    </div>
+
+  </div>
+  @endforeach
+@endif
+
 </body>
 </html>
