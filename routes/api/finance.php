@@ -12,6 +12,7 @@ use App\Domain\Finance\RekeningKoran\Controllers\RekeningKoranController;
 use App\Domain\Finance\RekonsiliasiBankStatement\Controllers\BankStatementController;
 use App\Domain\Finance\OpeningBalance\Controllers\OpeningBalanceController;
 use App\Domain\Finance\PembayaranAr\Controllers\PembayaranArController;
+use App\Domain\Finance\PendapatanDiMuka\Controllers\PendapatanDiMukaController;
 use App\Domain\Finance\RekapPembayaran\Controllers\RekapPembayaranController;
 use Illuminate\Support\Facades\Route;
 
@@ -105,6 +106,12 @@ Route::prefix('rekonsiliasi-bank')->group(function () {
     Route::get('/detail/{detail}/invoice-b2c',       [BankStatementController::class, 'invoiceB2C']);
     Route::post('/detail/{detail}/kelebihan',        [BankStatementController::class, 'applyKelebihanBayar']);
 });
+
+// ─── Pendapatan di Muka ───────────────────────────────────────────
+Route::get('/pendapatan-di-muka',                           [PendapatanDiMukaController::class, 'index']);
+Route::get('/pendapatan-di-muka/export-excel',              [PendapatanDiMukaController::class, 'exportExcel']);
+Route::post('/pendapatan-di-muka/detail/{detail}/catat',    [PendapatanDiMukaController::class, 'store']);
+Route::delete('/pendapatan-di-muka/{pdm}/batal',            [PendapatanDiMukaController::class, 'cancel']);
 
 // ─── Opening Balance ──────────────────────────────────────────────
 Route::prefix('opening-balance')->group(function () {

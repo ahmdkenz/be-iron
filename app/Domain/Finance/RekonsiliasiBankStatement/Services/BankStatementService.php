@@ -8,6 +8,7 @@ use App\Models\BankStatement;
 use App\Models\BankStatementDetail;
 use App\Models\Invoice;
 use App\Models\PembayaranAr;
+use App\Models\PendapatanDiMuka;
 use Carbon\Carbon;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
@@ -201,6 +202,7 @@ class BankStatementService
                     $total                = max($kelebihanFromInvoice, $kelebihanFromBank);
                     if ($total > 0) {
                         $dialokasi = (float) $pembayaran->alokasiKelebihan->sum('jumlah_pembayaran');
+                        $pdm       = PendapatanDiMuka::where('sumber_pembayaran_ar_id', $pembayaran->id)->first();
                         $kelebihanBayar = [
                             'total'           => $total,
                             'sudah_dialokasi' => round($dialokasi, 2),
@@ -214,6 +216,14 @@ class BankStatementService
                                 'created_by' => $p->createdBy?->name,
                                 'tanggal'    => $p->tanggal_pembayaran?->toDateString(),
                             ])->values(),
+                            'pdm'             => $pdm ? [
+                                'id'                 => $pdm->id,
+                                'jumlah'             => (float) $pdm->jumlah,
+                                'status'             => $pdm->status,
+                                'tanggal_pencatatan' => $pdm->tanggal_pencatatan?->toDateString(),
+                                'keterangan'         => $pdm->keterangan,
+                                'created_by'         => $pdm->createdBy?->name,
+                            ] : null,
                         ];
                     }
                 }
