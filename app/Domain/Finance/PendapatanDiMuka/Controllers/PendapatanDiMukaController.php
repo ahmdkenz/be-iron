@@ -30,7 +30,7 @@ class PendapatanDiMukaController extends Controller
             'tanggal_sampai' => ['nullable', 'date', 'after_or_equal:tanggal_dari'],
             'investor_id'    => ['nullable', 'integer', 'exists:tb_investor,id'],
             'klien_ar_id'    => ['nullable', 'integer', 'exists:tb_klien_ar,id'],
-            'status'         => ['nullable', 'in:AKTIF,DIBATALKAN'],
+            'status'         => ['nullable', 'in:AKTIF,DIBATALKAN,TERPAKAI'],
             'per_page'       => ['nullable', 'integer', 'min:1', 'max:100'],
         ]);
 
@@ -77,6 +77,24 @@ class PendapatanDiMukaController extends Controller
         return $this->successResponse(null, 'Pendapatan di Muka berhasil dibatalkan.');
     }
 
+    public function gunakan(Request $request, PendapatanDiMuka $pdm): JsonResponse
+    {
+        $request->validate([
+            'invoice_id' => ['required', 'integer', 'exists:tb_invoice,id'],
+            'jumlah'     => ['required', 'numeric', 'min:0.01'],
+            'keterangan' => ['nullable', 'string', 'max:500'],
+        ]);
+
+        $this->service->gunakan(
+            $pdm,
+            (int) $request->invoice_id,
+            (float) $request->jumlah,
+            $request->keterangan,
+        );
+
+        return $this->successResponse(null, 'PDM berhasil digunakan untuk melunasi invoice.');
+    }
+
     public function exportExcel(Request $request): BinaryFileResponse|JsonResponse
     {
         if (!class_exists('ZipArchive')) {
@@ -88,7 +106,7 @@ class PendapatanDiMukaController extends Controller
             'tanggal_sampai' => ['nullable', 'date', 'after_or_equal:tanggal_dari'],
             'investor_id'    => ['nullable', 'integer', 'exists:tb_investor,id'],
             'klien_ar_id'    => ['nullable', 'integer', 'exists:tb_klien_ar,id'],
-            'status'         => ['nullable', 'in:AKTIF,DIBATALKAN'],
+            'status'         => ['nullable', 'in:AKTIF,DIBATALKAN,TERPAKAI'],
         ]);
 
         $filters = $request->only(['tanggal_dari', 'tanggal_sampai', 'investor_id', 'klien_ar_id', 'status']);

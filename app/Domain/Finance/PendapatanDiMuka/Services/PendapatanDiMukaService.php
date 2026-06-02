@@ -3,9 +3,11 @@
 namespace App\Domain\Finance\PendapatanDiMuka\Services;
 
 use App\Models\BankStatementDetail;
+use App\Models\Invoice;
+use App\Models\PembayaranAr;
 use App\Models\PendapatanDiMuka;
 use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Facades\DB;
 
 class PendapatanDiMukaService
 {
@@ -49,7 +51,7 @@ class PendapatanDiMukaService
                 'tanggal_pencatatan'       => $tanggalPencatatan,
                 'keterangan'               => $keterangan,
                 'status'                   => 'AKTIF',
-                'updated_by'               => auth()->id(),
+                'updated_by'               => auth()->user()?->id,
             ]
         );
     }
@@ -61,13 +63,87 @@ class PendapatanDiMukaService
         $pdm->update(['status' => 'DIBATALKAN']);
     }
 
+    public function gunakan(PendapatanDiMuka $pdm, int $invoiceId, float $jumlah, ?string $keterangan): void
+    {
+        abort_if($pdm->status !== 'AKTIF', 422, 'PDM ini sudah tidak aktif.');
+
+        $sumber = $pdm->sumberPembayaran;
+        abort_if(!$sumber, 422, 'Sumber pembayaran tidak ditemukan.');
+
+        // Hitung sisa PDM: jumlah PDM dikurangi alokasi yang sudah dibuat via PDM (suffix /PDM-)
+        $sudahDigunakan = (float) $sumber->alokasiKelebihan()
+            ->where('no_referensi', 'LIKE', '%/PDM-%')
+            ->sum('jumlah_pembayaran');
+        $sisa = max(0, round((float) $pdm->jumlah - $sudahDigunakan, 2));
+
+        abort_if($sisa <= 0.01, 422, 'PDM sudah habis terpakai.');
+        abort_if(
+            $jumlah > $sisa + 0.01,
+            422,
+            'Jumlah melebihi sisa PDM (Rp ' . number_format($sisa, 0, ',', '.') . ').'
+        );
+
+        $invoice = Invoice::findOrFail($invoiceId);
+        abort_if((int) $invoice->klien_ar_id !== (int) $pdm->klien_ar_id, 422, 'Invoice bukan milik klien yang sama dengan PDM.');
+        abort_if($invoice->status === 'LUNAS', 422, 'Invoice sudah lunas.');
+        abort_if($invoice->is_opening_balance && $invoice->approval_status !== 'APPROVED', 422, 'Opening Balance belum disetujui.');
+
+        // Tentukan suffix /PDM-N berikutnya
+        $prefix     = ($sumber->no_referensi ?? '') . '/PDM-';
+        $maxSuffix  = $sumber->alokasiKelebihan()
+            ->where('no_referensi', 'LIKE', $prefix . '%')
+            ->get(['no_referensi'])
+            ->map(function ($a) use ($prefix) {
+                $n = substr($a->no_referensi ?? '', strlen($prefix));
+                return is_numeric($n) ? (int) $n : 0;
+            })
+            ->max() ?? 0;
+        $nextSuffix = $maxSuffix + 1;
+
+        DB::transaction(function () use ($sumber, $invoice, $jumlah, $keterangan, $nextSuffix, $pdm, $sisa) {
+            PembayaranAr::create([
+                'invoice_id'              => $invoice->id,
+                'tanggal_pembayaran'      => now()->toDateString(),
+                'jumlah_pembayaran'       => $jumlah,
+                'metode_pembayaran'       => $sumber->metode_pembayaran,
+                'no_referensi'            => $sumber->no_referensi
+                                                ? $sumber->no_referensi . '/PDM-' . $nextSuffix
+                                                : null,
+                'keterangan'              => $keterangan ?? 'Pelunasan dari Pendapatan di Muka',
+                'sumber_pembayaran_ar_id' => $sumber->id,
+                'created_by'              => auth()->user()?->id,
+            ]);
+
+            // Update status invoice target
+            $fresh     = $invoice->fresh();
+            $newTotal  = (float) $fresh->pembayarans()->sum('jumlah_pembayaran');
+            $newSisa   = max(0, (float) $fresh->total_tagihan - $newTotal);
+            $newStatus = match (true) {
+                $newSisa <= 0  => 'LUNAS',
+                $newTotal > 0  => 'SEBAGIAN',
+                default        => 'TERKIRIM',
+            };
+            $fresh->update([
+                'total_pembayaran' => $newTotal,
+                'sisa_tagihan'     => $newSisa,
+                'status'           => $newStatus,
+                'updated_by'       => auth()->user()?->id,
+            ]);
+
+            // Tandai PDM TERPAKAI jika sisa habis
+            if (($sisa - $jumlah) < 0.01) {
+                $pdm->update(['status' => 'TERPAKAI', 'updated_by' => auth()->user()?->id]);
+            }
+        });
+    }
+
     public function getReport(array $filters): array
     {
         $query = PendapatanDiMuka::query()
             ->with([
                 'klienAr',
                 'investor',
-                'sumberPembayaran',
+                'sumberPembayaran.alokasiKelebihan',
                 'createdBy.karyawan',
             ])
             ->when(
@@ -145,13 +221,20 @@ class PendapatanDiMukaService
 
     private function formatRow(PendapatanDiMuka $pdm): array
     {
+        $sudahDigunakan = (float) ($pdm->sumberPembayaran?->alokasiKelebihan
+            ->filter(fn($a) => str_contains($a->no_referensi ?? '', '/PDM-'))
+            ->sum('jumlah_pembayaran') ?? 0);
+        $sisaPdm = max(0, round((float) $pdm->jumlah - $sudahDigunakan, 2));
+
         return [
             'id'                  => $pdm->id,
             'tanggal_pencatatan'  => $pdm->tanggal_pencatatan?->toDateString(),
             'klien'               => $pdm->klienAr?->nama_klien,
+            'klien_ar_id'         => $pdm->klien_ar_id,
             'investor'            => $pdm->investor?->nama_investor,
             'no_referensi_sumber' => $pdm->sumberPembayaran?->no_referensi,
             'jumlah'              => (float) $pdm->jumlah,
+            'sisa_pdm'            => $sisaPdm,
             'status'              => $pdm->status,
             'keterangan'          => $pdm->keterangan,
             'created_by'          => $pdm->createdBy?->name,

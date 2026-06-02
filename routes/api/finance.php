@@ -112,6 +112,7 @@ Route::get('/pendapatan-di-muka',                           [PendapatanDiMukaCon
 Route::get('/pendapatan-di-muka/export-excel',              [PendapatanDiMukaController::class, 'exportExcel']);
 Route::post('/pendapatan-di-muka/detail/{detail}/catat',    [PendapatanDiMukaController::class, 'store']);
 Route::delete('/pendapatan-di-muka/{pdm}/batal',            [PendapatanDiMukaController::class, 'cancel']);
+Route::post('/pendapatan-di-muka/{pdm}/gunakan',            [PendapatanDiMukaController::class, 'gunakan']);
 
 // ─── Opening Balance ──────────────────────────────────────────────
 Route::prefix('opening-balance')->group(function () {
