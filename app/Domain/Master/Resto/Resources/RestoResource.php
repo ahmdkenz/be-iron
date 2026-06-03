@@ -47,15 +47,15 @@ class RestoResource extends JsonResource
             'kota'           => $this->kota,
             'alamat'         => $this->alamat,
             'no_telp'        => $this->no_telp,
-            'tgl_aktif'      => $this->tgl_aktif?->format('Y-m-d'),
+            'tgl_aktif'      => $this->tgl_aktif?->format('d-m-Y'),
             'keterangan'     => $this->keterangan,
             'status'         => $this->status,
             'created_by'     => $this->created_by,
             'created_by_name' => $this->whenLoaded('createdBy', fn() => $this->createdBy?->username),
             'updated_by'     => $this->updated_by,
             'updated_by_name' => $this->whenLoaded('updatedBy', fn() => $this->updatedBy?->username),
-            'created_at'     => $this->created_at?->format('Y-m-d H:i:s'),
-            'updated_at'     => $this->updated_at?->format('Y-m-d H:i:s'),
+            'created_at'     => $this->created_at?->setTimezone('Asia/Jakarta')->format('d-m-Y H:i'),
+            'updated_at'     => $this->updated_at?->setTimezone('Asia/Jakarta')->format('d-m-Y H:i'),
         ];
     }
 }

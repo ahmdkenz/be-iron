@@ -26,8 +26,8 @@ class KaryawanResource extends JsonResource
             'created_by_name' => $this->whenLoaded('createdBy', fn() => $this->createdBy?->username),
             'updated_by'      => $this->updated_by,
             'updated_by_name' => $this->whenLoaded('updatedBy', fn() => $this->updatedBy?->username),
-            'created_at'      => $this->created_at?->format('Y-m-d H:i:s'),
-            'updated_at'      => $this->updated_at?->format('Y-m-d H:i:s'),
+            'created_at'      => $this->created_at?->setTimezone('Asia/Jakarta')->format('d-m-Y H:i'),
+            'updated_at'      => $this->updated_at?->setTimezone('Asia/Jakarta')->format('d-m-Y H:i'),
         ];
     }
 }

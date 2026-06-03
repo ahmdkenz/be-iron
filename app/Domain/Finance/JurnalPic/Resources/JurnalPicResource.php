@@ -15,7 +15,7 @@ class JurnalPicResource extends JsonResource
         return [
             'id'                   => $this->id,
             'no_referensi'         => $this->no_referensi,
-            'tanggal_pembayaran'   => $this->tanggal_pembayaran?->format('Y-m-d'),
+            'tanggal_pembayaran'   => $this->tanggal_pembayaran?->format('d-m-Y'),
             'jumlah_pembayaran'    => (float) $this->jumlah_pembayaran,
             'metode_pembayaran'    => $this->metode_pembayaran,
             'keterangan'           => $this->keterangan,
@@ -23,7 +23,7 @@ class JurnalPicResource extends JsonResource
             // Info Invoice
             'invoice_id'           => $this->invoice_id,
             'no_invoice'           => $this->whenLoaded('invoice', fn() => $this->invoice?->no_invoice),
-            'tanggal_invoice'      => $this->whenLoaded('invoice', fn() => $this->invoice?->tanggal_invoice?->format('Y-m-d')),
+            'tanggal_invoice'      => $this->whenLoaded('invoice', fn() => $this->invoice?->tanggal_invoice?->format('d-m-Y')),
             'invoice_status'       => $this->whenLoaded('invoice', fn() => $this->invoice?->status),
             'total_tagihan'        => $this->whenLoaded('invoice', fn() => (float) ($this->invoice?->total_tagihan ?? 0)),
             'sisa_piutang'         => $this->whenLoaded('invoice', fn() => (float) ($this->invoice?->sisa_tagihan ?? 0)),
@@ -42,11 +42,11 @@ class JurnalPicResource extends JsonResource
 
             // Info yang input pembayaran
             'input_oleh'           => $this->whenLoaded('createdBy', fn() => $this->createdBy?->username),
-            'created_at'           => $this->created_at?->format('Y-m-d H:i:s'),
+            'created_at'           => $this->created_at?->setTimezone('Asia/Jakarta')->format('d-m-Y H:i'),
 
             // Status rekonsiliasi bank
             'status_rekonsiliasi'  => $bankDetail ? $bankDetail->status_cocok : null,
-            'tgl_rekonsiliasi'     => $bankDetail ? $bankDetail->tanggal?->format('Y-m-d') : null,
+            'tgl_rekonsiliasi'     => $bankDetail ? $bankDetail->tanggal?->format('d-m-Y') : null,
             'no_ref_bank'          => $bankDetail ? $bankDetail->no_referensi : null,
         ];
     }

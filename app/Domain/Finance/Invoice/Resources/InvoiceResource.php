@@ -15,9 +15,9 @@ class InvoiceResource extends JsonResource
         return [
             'id'                         => $this->id,
             'no_invoice'                 => $this->no_invoice,
-            'tanggal_invoice'            => $this->tanggal_invoice?->format('Y-m-d'),
-            'periode_awal'               => $this->periode_awal?->format('Y-m-d'),
-            'periode_akhir'              => $this->periode_akhir?->format('Y-m-d'),
+            'tanggal_invoice'            => $this->tanggal_invoice?->format('d-m-Y'),
+            'periode_awal'               => $this->periode_awal?->format('d-m-Y'),
+            'periode_akhir'              => $this->periode_akhir?->format('d-m-Y'),
             'klien_ar_id'                => $this->klien_ar_id,
             'klien_ar'                   => $this->whenLoaded('klienAr', fn() => [
                 'id'           => $this->klienAr->id,
@@ -86,7 +86,7 @@ class InvoiceResource extends JsonResource
             'pembayarans'                => $this->whenLoaded('pembayarans', fn() =>
                 $this->pembayarans->map(fn($p) => [
                     'id'                  => $p->id,
-                    'tanggal_pembayaran'  => $p->tanggal_pembayaran?->format('Y-m-d'),
+                    'tanggal_pembayaran'  => $p->tanggal_pembayaran?->format('d-m-Y'),
                     'jumlah_pembayaran'   => (float) $p->jumlah_pembayaran,
                     'metode_pembayaran'   => $p->metode_pembayaran,
                     'no_referensi'        => $p->no_referensi,
