@@ -191,9 +191,18 @@ class BankStatementService
             ->map(function ($d) {
                 $pembayaran    = $d->pembayaranAr;
                 $invoice       = $pembayaran?->invoice;
-                $selisihBank   = $pembayaran
-                    ? round($d->kredit - (float) $pembayaran->jumlah_pembayaran, 2)
-                    : null;
+                if ($pembayaran && $invoice) {
+                    $sisaSebelumBayar = max(0, round(
+                        (float) $invoice->total_tagihan
+                        - ((float) $invoice->total_pembayaran - (float) $pembayaran->jumlah_pembayaran),
+                        2
+                    ));
+                    $selisihBank = round($d->kredit - $sisaSebelumBayar, 2);
+                } elseif ($pembayaran) {
+                    $selisihBank = round($d->kredit - (float) $pembayaran->jumlah_pembayaran, 2);
+                } else {
+                    $selisihBank = null;
+                }
 
                 $kelebihanBayar = null;
                 if ($invoice) {
