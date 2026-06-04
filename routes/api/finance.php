@@ -33,6 +33,7 @@ Route::prefix('klien-ar')->group(function () {
     Route::get('/{klien_ar}', [KlienArController::class, 'show']);
     Route::put('/{klien_ar}', [KlienArController::class, 'update']);
     Route::patch('/{klien_ar}/wa', [KlienArController::class, 'updateNoWa']);
+    Route::post('/{klien_ar}/generate-bundle-token', [KlienArController::class, 'generateBundleToken']);
     Route::delete('/{klien_ar}', [KlienArController::class, 'destroy']);
 });
 

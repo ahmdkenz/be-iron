@@ -14,6 +14,7 @@ class InvoiceRepository
         return $this->applyFilters(
             Invoice::with([
                 'klienAr',
+                'resto',
                 'perusahaan',
                 'karyawan',
                 'submittedBy',
@@ -31,6 +32,7 @@ class InvoiceRepository
         return $this->applyFilters(
             Invoice::with([
                 'klienAr',
+                'resto',
                 'perusahaan',
                 'createdBy',
                 'openingBalanceDetails.items',

@@ -158,7 +158,7 @@ class InvoiceController extends Controller
         $invoices = $this->service->paginate(array_merge($filters, ['per_page' => 9999]))->items();
 
         $headers = [
-            'No Invoice', 'Klien', 'Perusahaan', 'Tanggal Invoice',
+            'No Invoice', 'Klien', 'Resto', 'Perusahaan', 'Tanggal Invoice',
             'Periode Awal', 'Periode Akhir', 'Subtotal', 'Tagihan Sebelumnya',
             'Total Tagihan', 'Total Pembayaran', 'Sisa Tagihan', 'Status',
         ];
@@ -172,6 +172,7 @@ class InvoiceController extends Controller
                 fputcsv($handle, [
                     $inv->no_invoice,
                     $inv->klienAr?->nama_klien,
+                    $inv->resto?->nama_resto ?? '-',
                     $inv->perusahaan?->nama_singkatan_perusahaan,
                     $inv->tanggal_invoice?->format('d-m-Y'),
                     $inv->periode_awal?->format('d-m-Y'),
@@ -216,18 +217,19 @@ class InvoiceController extends Controller
         $cols = [
             'A' => ['No Invoice',             24],
             'B' => ['Klien',                  32],
-            'C' => ['Perusahaan',             18],
-            'D' => ['Tanggal Invoice',        18],
-            'E' => ['Periode Awal',           16],
-            'F' => ['Periode Akhir',          16],
-            'G' => ['Subtotal',               18],
-            'H' => ['Tagihan Sebelumnya',     22],
-            'I' => ['Total Tagihan',          18],
-            'J' => ['Total Pembayaran',       20],
-            'K' => ['Sisa Tagihan',           18],
-            'L' => ['Status',                 14],
+            'C' => ['Resto',                  28],
+            'D' => ['Perusahaan',             18],
+            'E' => ['Tanggal Invoice',        18],
+            'F' => ['Periode Awal',           16],
+            'G' => ['Periode Akhir',          16],
+            'H' => ['Subtotal',               18],
+            'I' => ['Tagihan Sebelumnya',     22],
+            'J' => ['Total Tagihan',          18],
+            'K' => ['Total Pembayaran',       20],
+            'L' => ['Sisa Tagihan',           18],
+            'M' => ['Status',                 14],
         ];
-        $lastCol = 'L';
+        $lastCol = 'M';
 
         $sheet->mergeCells("A1:{$lastCol}1");
         $sheet->setCellValue('A1', 'DATA TAGIHAN INVOICE');
@@ -273,24 +275,25 @@ class InvoiceController extends Controller
 
             $rowData = [
                 'A' => [$inv->no_invoice,                                   DataType::TYPE_STRING],
-                'B' => [$inv->klienAr?->nama_klien ?? '-',                   DataType::TYPE_STRING],
-                'C' => [$inv->perusahaan?->nama_singkatan_perusahaan ?? '-', DataType::TYPE_STRING],
-                'D' => [$inv->tanggal_invoice?->format('d-m-Y') ?? '-',     DataType::TYPE_STRING],
-                'E' => [$inv->periode_awal?->format('d-m-Y') ?? '-',        DataType::TYPE_STRING],
-                'F' => [$inv->periode_akhir?->format('d-m-Y') ?? '-',       DataType::TYPE_STRING],
-                'G' => [(float) $inv->subtotal,                              DataType::TYPE_NUMERIC],
-                'H' => [(float) $inv->tagihan_periode_sebelumnya,            DataType::TYPE_NUMERIC],
-                'I' => [(float) $inv->total_tagihan,                         DataType::TYPE_NUMERIC],
-                'J' => [(float) $inv->total_pembayaran,                      DataType::TYPE_NUMERIC],
-                'K' => [(float) $inv->sisa_tagihan,                          DataType::TYPE_NUMERIC],
-                'L' => [$inv->status,                                        DataType::TYPE_STRING],
+                'B' => [$inv->klienAr?->nama_klien ?? '-',                  DataType::TYPE_STRING],
+                'C' => [$inv->resto?->nama_resto ?? '-',                    DataType::TYPE_STRING],
+                'D' => [$inv->perusahaan?->nama_singkatan_perusahaan ?? '-', DataType::TYPE_STRING],
+                'E' => [$inv->tanggal_invoice?->format('d-m-Y') ?? '-',    DataType::TYPE_STRING],
+                'F' => [$inv->periode_awal?->format('d-m-Y') ?? '-',       DataType::TYPE_STRING],
+                'G' => [$inv->periode_akhir?->format('d-m-Y') ?? '-',      DataType::TYPE_STRING],
+                'H' => [(float) $inv->subtotal,                             DataType::TYPE_NUMERIC],
+                'I' => [(float) $inv->tagihan_periode_sebelumnya,           DataType::TYPE_NUMERIC],
+                'J' => [(float) $inv->total_tagihan,                        DataType::TYPE_NUMERIC],
+                'K' => [(float) $inv->total_pembayaran,                     DataType::TYPE_NUMERIC],
+                'L' => [(float) $inv->sisa_tagihan,                         DataType::TYPE_NUMERIC],
+                'M' => [$inv->status,                                       DataType::TYPE_STRING],
             ];
 
             foreach ($rowData as $col => [$val, $type]) {
                 $sheet->getCell("{$col}{$rowNum}")->setValueExplicit($val, $type);
             }
 
-            foreach (['G', 'H', 'I', 'J', 'K'] as $c) {
+            foreach (['H', 'I', 'J', 'K', 'L'] as $c) {
                 $sheet->getStyle("{$c}{$rowNum}")->getNumberFormat()->setFormatCode('#,##0');
             }
 
@@ -301,7 +304,7 @@ class InvoiceController extends Controller
             ]);
 
             $statusColor = $statusColors[$inv->status] ?? 'FF000000';
-            $sheet->getStyle("L{$rowNum}")->getFont()
+            $sheet->getStyle("M{$rowNum}")->getFont()
                 ->setColor(new \PhpOffice\PhpSpreadsheet\Style\Color($statusColor))
                 ->setBold(true);
 
@@ -409,6 +412,7 @@ class InvoiceController extends Controller
             $noSuratJalan = $this->invoiceImportStr($row[7] ?? '');
             $tagihanSblm  = $this->invoiceImportNum($row[8] ?? '');
             $keterangan   = $this->invoiceImportStr($row[9] ?? '');
+            $namaResto    = $this->invoiceImportStr($row[10] ?? '');
 
             $validated = Validator::make(
                 [
@@ -440,6 +444,16 @@ class InvoiceController extends Controller
                 continue;
             }
 
+            $restoId = null;
+            if ($namaResto) {
+                $resto = \App\Models\Resto::where('nama_resto', $namaResto)->latest()->first();
+                if (!$resto) {
+                    $errors[] = ['sheet' => 'Invoice', 'row' => $lineNumber, 'message' => "Resto '{$namaResto}' tidak ditemukan di sistem (kolom nama_resto). Biarkan kosong jika tidak spesifik per resto."];
+                    continue;
+                }
+                $restoId = $resto->id;
+            }
+
             try {
                 $invoice = Invoice::create([
                     'no_invoice'                 => $noInvoice,
@@ -448,6 +462,7 @@ class InvoiceController extends Controller
                     'periode_awal'               => $periodeAwal,
                     'periode_akhir'              => $periodeAkhir,
                     'klien_ar_id'                => $klien->id,
+                    'resto_id'                   => $restoId,
                     'perusahaan_id'              => $klien->perusahaan_id,
                     'karyawan_id'                => $this->service->resolveInvoiceKaryawanId($user, $klien),
                     'no_surat_jalan'             => $noSuratJalan,
@@ -692,8 +707,9 @@ class InvoiceController extends Controller
             'H' => ['no_surat_jalan',              22],
             'I' => ['tagihan_periode_sebelumnya',  26],
             'J' => ['keterangan',                  32],
+            'K' => ['nama_resto',                  28],
         ];
-        $lastCol = 'J';
+        $lastCol = 'K';
 
         $sheet->mergeCells("A1:{$lastCol}1");
         $sheet->setCellValue('A1', 'TEMPLATE TAGIHAN INVOICE — SHEET 1: DATA INVOICE');
@@ -737,6 +753,7 @@ class InvoiceController extends Controller
             'H' => 'SJ-001',
             'I' => '0',
             'J' => 'Invoice bulan ini',
+            'K' => '',
         ];
         foreach ($example as $col => $val) {
             $sheet->getCell("{$col}5")->setValueExplicit($val, DataType::TYPE_STRING);
@@ -756,6 +773,7 @@ class InvoiceController extends Controller
                 'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_HAIR, 'color' => ['argb' => 'FFE0E0E0']]],
             ]);
             $sheet->getStyle("I{$row}")->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
+            $sheet->getStyle("K{$row}")->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
             foreach (['D', 'E', 'F', 'G'] as $dateCol) {
                 $sheet->getStyle("{$dateCol}{$row}")->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
             }
@@ -949,7 +967,7 @@ class InvoiceController extends Controller
         return [
             ['no_urut',                    'Nomor urut baris (penghubung ke Sheet Item Invoice)',     'Ya',       'Angka unik per baris. Contoh: 1, 2, 3'],
             ['no_invoice',                 'Nomor invoice unik',                                      'Ya',       'Harus unik di sistem. Contoh: SI-B2C-21052026-001'],
-            ['nama_klien',                 'Nama Client sesuai data di sistem',                     'Ya',       'Harus persis sesuai nama klien di sistem'],
+            ['nama_klien',                 'Nama Client sesuai data di sistem',                       'Ya',       'Harus persis sesuai nama klien di sistem'],
             ['tanggal_invoice',            'Tanggal pembuatan invoice',                               'Ya',       'Format YYYY-MM-DD. Contoh: 2025-06-15'],
             ['tanggal_jatuh_tempo',        'Tanggal jatuh tempo pembayaran invoice',                  'Opsional', 'Format YYYY-MM-DD. Contoh: 2025-07-15. Kosongkan jika tidak ada.'],
             ['periode_awal',               'Tanggal awal periode tagihan',                            'Ya',       'Format YYYY-MM-DD. Contoh: 2025-06-01'],
@@ -957,6 +975,7 @@ class InvoiceController extends Controller
             ['no_surat_jalan',             'Nomor surat jalan',                                       'Opsional', 'Teks bebas. Contoh: SJ-001/VI/2025'],
             ['tagihan_periode_sebelumnya', 'Saldo tagihan dari periode sebelumnya',                   'Opsional', 'Angka, default: 0. Contoh: 150000'],
             ['keterangan',                 'Catatan tambahan untuk invoice',                          'Opsional', 'Teks bebas'],
+            ['nama_resto',                 'Nama Resto yang ditagihkan (khusus klien B2B/PT)',        'Opsional', 'Harus persis sesuai nama resto di sistem. Kosongkan untuk B2C atau jika tidak spesifik per resto.'],
         ];
     }
 

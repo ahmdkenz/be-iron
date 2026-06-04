@@ -19,6 +19,12 @@ class InvoiceResource extends JsonResource
             'periode_awal'               => $this->periode_awal?->format('d-m-Y'),
             'periode_akhir'              => $this->periode_akhir?->format('d-m-Y'),
             'klien_ar_id'                => $this->klien_ar_id,
+            'resto_id'                   => $this->resto_id,
+            'resto'                      => $this->whenLoaded('resto', fn() => $this->resto ? [
+                'id'         => $this->resto->id,
+                'kode_resto' => $this->resto->kode_resto,
+                'nama_resto' => $this->resto->nama_resto,
+            ] : null),
             'klien_ar'                   => $this->whenLoaded('klienAr', fn() => [
                 'id'           => $this->klienAr->id,
                 'kode_klien'   => $this->klienAr->kode_klien,

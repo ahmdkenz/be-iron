@@ -13,6 +13,7 @@ class StoreInvoiceRequest extends FormRequest
         return [
             'no_invoice'        => ['required', 'string', 'max:100', 'unique:tb_invoice,no_invoice'],
             'klien_ar_id'       => ['required', 'integer', 'exists:tb_klien_ar,id'],
+            'resto_id'          => ['nullable', 'integer', 'exists:tb_resto,id'],
             'tanggal_invoice'      => ['required', 'date'],
             'tanggal_jatuh_tempo'  => ['nullable', 'date'],
             'periode_awal'         => ['required', 'date'],

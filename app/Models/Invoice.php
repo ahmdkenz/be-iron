@@ -5,6 +5,7 @@ namespace App\Models;
 use App\Support\Traits\BlameableTrait;
 use App\Support\Traits\SoftDeletesTrait;
 use Illuminate\Database\Eloquent\Model;
+use App\Models\Resto;
 
 class Invoice extends Model
 {
@@ -19,6 +20,7 @@ class Invoice extends Model
         'periode_awal',
         'periode_akhir',
         'klien_ar_id',
+        'resto_id',
         'perusahaan_id',
         'karyawan_id',
         'no_surat_jalan',
@@ -64,6 +66,11 @@ class Invoice extends Model
     public function klienAr()
     {
         return $this->belongsTo(KlienAr::class, 'klien_ar_id');
+    }
+
+    public function resto()
+    {
+        return $this->belongsTo(Resto::class, 'resto_id');
     }
 
     public function perusahaan()
