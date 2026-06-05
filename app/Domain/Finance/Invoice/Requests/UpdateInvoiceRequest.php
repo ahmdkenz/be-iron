@@ -2,6 +2,7 @@
 
 namespace App\Domain\Finance\Invoice\Requests;
 
+use App\Models\KlienAr;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -29,5 +30,15 @@ class UpdateInvoiceRequest extends FormRequest
             'items.*.harga_satuan'=> ['required', 'numeric', 'min:0'],
             'items.*.keterangan'  => ['nullable', 'string', 'max:255'],
         ];
+    }
+
+    public function withValidator(\Illuminate\Contracts\Validation\Validator $validator): void
+    {
+        $validator->after(function ($validator) {
+            $klien = KlienAr::find($this->input('klien_ar_id'));
+            if ($klien && $klien->tipe_klien === 'PT' && !$this->input('resto_id')) {
+                $validator->errors()->add('resto_id', 'Resto yang ditagihkan wajib diisi untuk klien B2B (PT).');
+            }
+        });
     }
 }

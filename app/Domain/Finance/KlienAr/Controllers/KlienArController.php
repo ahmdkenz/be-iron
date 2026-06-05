@@ -35,7 +35,7 @@ class KlienArController extends Controller
 
     public function index(Request $request): JsonResponse
     {
-        $filters = $request->only(['search', 'status', 'perusahaan_id', 'karyawan_ar_id']);
+        $filters = $request->only(['search', 'status', 'perusahaan_id', 'karyawan_ar_id', 'segment']);
         $this->applyPicArScope($filters);
 
         if ($request->boolean('all')) {
