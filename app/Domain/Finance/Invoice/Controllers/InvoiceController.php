@@ -43,12 +43,11 @@ class InvoiceController extends Controller
         $user    = auth()->user()->load('karyawan');
         $filters = $request->only([
             'search', 'status', 'klien_ar_id', 'karyawan_id',
-            'tanggal_dari', 'tanggal_sampai',
+            'tanggal_dari', 'tanggal_sampai', 'segment',
         ]);
         $filters['is_opening_balance'] = false;
 
-        // Scope: non-admin hanya bisa lihat invoice PT-nya sendiri
-        if ($user->karyawan && !RoleHelper::hasGlobalFinanceAccess($user)) {
+        if ($user->karyawan && !RoleHelper::hasGlobalArAccess($user)) {
             $filters['perusahaan_id'] = $user->karyawan->perusahaan_id;
         }
 
@@ -63,11 +62,11 @@ class InvoiceController extends Controller
         $user    = auth()->user()->load('karyawan');
         $filters = $request->only([
             'search', 'status', 'klien_ar_id', 'karyawan_id',
-            'tanggal_dari', 'tanggal_sampai',
+            'tanggal_dari', 'tanggal_sampai', 'segment',
         ]);
         $filters['is_opening_balance'] = false;
 
-        if ($user->karyawan && !RoleHelper::hasGlobalFinanceAccess($user)) {
+        if ($user->karyawan && !RoleHelper::hasGlobalArAccess($user)) {
             $filters['perusahaan_id'] = $user->karyawan->perusahaan_id;
         }
 
@@ -100,7 +99,7 @@ class InvoiceController extends Controller
         $user    = auth()->user()->load('karyawan');
         $filters = $request->only(['klien_ar_id', 'periode_bulan', 'periode_tahun']);
 
-        if ($user->karyawan && !RoleHelper::hasGlobalFinanceAccess($user)) {
+        if ($user->karyawan && !RoleHelper::hasGlobalArAccess($user)) {
             $filters['perusahaan_id'] = $user->karyawan->perusahaan_id;
         }
 
@@ -147,11 +146,11 @@ class InvoiceController extends Controller
         $user    = auth()->user()->load('karyawan');
         $filters = $request->only([
             'search', 'status', 'klien_ar_id', 'karyawan_id',
-            'tanggal_dari', 'tanggal_sampai',
+            'tanggal_dari', 'tanggal_sampai', 'segment',
         ]);
         $filters['is_opening_balance'] = false;
 
-        if ($user->karyawan && !RoleHelper::hasGlobalFinanceAccess($user)) {
+        if ($user->karyawan && !RoleHelper::hasGlobalArAccess($user)) {
             $filters['perusahaan_id'] = $user->karyawan->perusahaan_id;
         }
 
@@ -200,11 +199,11 @@ class InvoiceController extends Controller
         $user    = auth()->user()->load('karyawan');
         $filters = $request->only([
             'search', 'status', 'klien_ar_id', 'karyawan_id',
-            'tanggal_dari', 'tanggal_sampai',
+            'tanggal_dari', 'tanggal_sampai', 'segment',
         ]);
         $filters['is_opening_balance'] = false;
 
-        if ($user->karyawan && !RoleHelper::hasGlobalFinanceAccess($user)) {
+        if ($user->karyawan && !RoleHelper::hasGlobalArAccess($user)) {
             $filters['perusahaan_id'] = $user->karyawan->perusahaan_id;
         }
 

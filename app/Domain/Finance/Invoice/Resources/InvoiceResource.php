@@ -25,11 +25,12 @@ class InvoiceResource extends JsonResource
                 'kode_resto' => $this->resto->kode_resto,
                 'nama_resto' => $this->resto->nama_resto,
             ] : null),
-            'klien_ar'                   => $this->whenLoaded('klienAr', fn() => [
+            'klien_ar'                   => $this->whenLoaded('klienAr', fn() => $this->klienAr ? [
                 'id'           => $this->klienAr->id,
                 'kode_klien'   => $this->klienAr->kode_klien,
                 'nama_klien'   => $this->klienAr->nama_klien,
                 'tipe_klien'   => $this->klienAr->tipe_klien,
+                'perusahaan_id'=> $this->klienAr->perusahaan_id,
                 'no_npwp'      => $this->klienAr->no_npwp,
                 'no_wa'        => $this->klienAr->no_wa,
                 'karyawan_ar'  => $this->klienAr->relationLoaded('karyawanAr') ? [
@@ -49,7 +50,7 @@ class InvoiceResource extends JsonResource
                         'no_hp_pengelola' => $this->klienAr->resto->investor->no_hp_pengelola,
                     ] : null,
                 ] : null,
-            ]),
+            ] : null),
             'perusahaan_id'              => $this->perusahaan_id,
             'perusahaan'                 => $this->whenLoaded('perusahaan', fn() => [
                 'id'                        => $this->perusahaan->id,

@@ -13,7 +13,7 @@ class InvoiceRepository
     {
         return $this->applyFilters(
             Invoice::with([
-                'klienAr',
+                'klienAr' => fn($q) => $q->withTrashed(),
                 'resto',
                 'perusahaan',
                 'karyawan.perusahaan',
@@ -31,7 +31,7 @@ class InvoiceRepository
     {
         return $this->applyFilters(
             Invoice::with([
-                'klienAr',
+                'klienAr' => fn($q) => $q->withTrashed(),
                 'resto',
                 'perusahaan',
                 'createdBy',
@@ -49,6 +49,7 @@ class InvoiceRepository
             'klienAr.perusahaan',
             'klienAr.karyawanAr',
             'klienAr.resto.investor',
+            'resto',
             'perusahaan',
             'karyawan.perusahaan',
             'items.barang',
@@ -172,7 +173,9 @@ class InvoiceRepository
                 $q->where('tanggal_invoice', '<=', $v)
             )
             ->when($filters['segment'] ?? null, fn($q, $v) =>
-                $q->whereHas('klienAr', fn($q) => $q->whereIn('tipe_klien', $this->resolveSegmentTypes($v)))
+                $q->whereHas('klienAr', fn($q) => $q
+                    ->withTrashed()
+                    ->whereIn('tipe_klien', $this->resolveSegmentTypes($v)))
             );
     }
 

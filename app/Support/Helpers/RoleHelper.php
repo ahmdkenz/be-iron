@@ -37,6 +37,11 @@ class RoleHelper
         return self::hasAnyRole($user, [RoleEnum::ADMIN, RoleEnum::DIREKTUR]);
     }
 
+    public static function hasGlobalArAccess(?User $user): bool
+    {
+        return self::hasAnyRole($user, [RoleEnum::ADMIN, RoleEnum::DIREKTUR, RoleEnum::MANAGER, RoleEnum::SUPERVISOR]);
+    }
+
     public static function hasGlobalDashboardAccess(?User $user): bool
     {
         return self::hasAnyRole($user, [
