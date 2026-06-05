@@ -43,7 +43,7 @@ class InvoiceController extends Controller
         $user    = auth()->user()->load('karyawan');
         $filters = $request->only([
             'search', 'status', 'klien_ar_id', 'karyawan_id',
-            'periode_bulan', 'periode_tahun',
+            'tanggal_dari', 'tanggal_sampai',
         ]);
         $filters['is_opening_balance'] = false;
 
@@ -63,7 +63,7 @@ class InvoiceController extends Controller
         $user    = auth()->user()->load('karyawan');
         $filters = $request->only([
             'search', 'status', 'klien_ar_id', 'karyawan_id',
-            'periode_bulan', 'periode_tahun',
+            'tanggal_dari', 'tanggal_sampai',
         ]);
         $filters['is_opening_balance'] = false;
 
@@ -147,7 +147,7 @@ class InvoiceController extends Controller
         $user    = auth()->user()->load('karyawan');
         $filters = $request->only([
             'search', 'status', 'klien_ar_id', 'karyawan_id',
-            'periode_bulan', 'periode_tahun',
+            'tanggal_dari', 'tanggal_sampai',
         ]);
         $filters['is_opening_balance'] = false;
 
@@ -200,7 +200,7 @@ class InvoiceController extends Controller
         $user    = auth()->user()->load('karyawan');
         $filters = $request->only([
             'search', 'status', 'klien_ar_id', 'karyawan_id',
-            'periode_bulan', 'periode_tahun',
+            'tanggal_dari', 'tanggal_sampai',
         ]);
         $filters['is_opening_balance'] = false;
 
@@ -635,6 +635,8 @@ class InvoiceController extends Controller
         $invoice->load([
             'klienAr.karyawanAr',
             'perusahaan',
+            'karyawan.perusahaan',
+            'resto',
             'items.barang',
             'openingBalanceDetails.items.barang',
             'pembayarans',
@@ -663,6 +665,8 @@ class InvoiceController extends Controller
             $regularInvoicesInPeriod->load([
                 'klienAr.karyawanAr',
                 'perusahaan',
+                'karyawan.perusahaan',
+                'resto',
                 'items.barang',
                 'pembayarans',
                 'createdBy.karyawan',

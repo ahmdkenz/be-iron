@@ -42,7 +42,7 @@ class OpeningBalanceController extends Controller
         $user    = auth()->user()->load('karyawan');
         $filters = $request->only([
             'search', 'status', 'klien_ar_id', 'karyawan_id',
-            'periode_bulan', 'periode_tahun', 'approval_status',
+            'tanggal_dari', 'tanggal_sampai', 'approval_status',
         ]);
         $filters['is_opening_balance'] = true;
 
@@ -64,7 +64,7 @@ class OpeningBalanceController extends Controller
         $user    = auth()->user()->load('karyawan');
         $filters = $request->only([
             'search', 'status', 'klien_ar_id', 'karyawan_id',
-            'periode_bulan', 'periode_tahun', 'approval_status',
+            'tanggal_dari', 'tanggal_sampai', 'approval_status',
         ]);
         $filters['is_opening_balance'] = true;
 
@@ -177,7 +177,7 @@ class OpeningBalanceController extends Controller
         $user    = auth()->user()->load('karyawan');
         $filters = $request->only([
             'search', 'status', 'klien_ar_id', 'karyawan_id',
-            'periode_bulan', 'periode_tahun', 'approval_status',
+            'tanggal_dari', 'tanggal_sampai', 'approval_status',
         ]);
         $filters['is_opening_balance'] = true;
 

@@ -16,7 +16,7 @@ class InvoiceRepository
                 'klienAr',
                 'resto',
                 'perusahaan',
-                'karyawan',
+                'karyawan.perusahaan',
                 'submittedBy',
                 'createdBy',
                 'updatedBy',
@@ -50,7 +50,7 @@ class InvoiceRepository
             'klienAr.karyawanAr',
             'klienAr.resto.investor',
             'perusahaan',
-            'karyawan',
+            'karyawan.perusahaan',
             'items.barang',
             'openingBalanceDetails.items.barang',
             'pembayarans.createdBy',
@@ -165,11 +165,11 @@ class InvoiceRepository
             ->when($filters['karyawan_id'] ?? null, fn($q, $v) => $q->where('karyawan_id', $v))
             ->when($filters['status'] ?? null, fn($q, $v) => $q->where('status', $v))
             ->when($filters['approval_status'] ?? null, fn($q, $v) => $q->where('approval_status', $v))
-            ->when($filters['periode_bulan'] ?? null, fn($q, $v) =>
-                $q->whereMonth('tanggal_invoice', $v)
+            ->when($filters['tanggal_dari'] ?? null, fn($q, $v) =>
+                $q->where('tanggal_invoice', '>=', $v)
             )
-            ->when($filters['periode_tahun'] ?? null, fn($q, $v) =>
-                $q->whereYear('tanggal_invoice', $v)
+            ->when($filters['tanggal_sampai'] ?? null, fn($q, $v) =>
+                $q->where('tanggal_invoice', '<=', $v)
             )
             ->when($filters['segment'] ?? null, fn($q, $v) =>
                 $q->whereHas('klienAr', fn($q) => $q->whereIn('tipe_klien', $this->resolveSegmentTypes($v)))

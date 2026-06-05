@@ -62,6 +62,10 @@ class InvoiceResource extends JsonResource
                 'id'           => $this->karyawan->id,
                 'nik'          => $this->karyawan->nik,
                 'nama_karyawan'=> $this->karyawan->nama_karyawan,
+                'perusahaan'   => $this->karyawan->relationLoaded('perusahaan') && $this->karyawan->perusahaan ? [
+                    'id'              => $this->karyawan->perusahaan->id,
+                    'nama_perusahaan' => $this->karyawan->perusahaan->nama_perusahaan,
+                ] : null,
             ]),
             'no_surat_jalan'             => $this->no_surat_jalan,
             'subtotal'                   => (float) $this->subtotal,

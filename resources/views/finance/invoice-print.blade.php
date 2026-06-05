@@ -235,9 +235,21 @@
               <td class="dl-lbl">Staff AR</td><td class="dl-colon">:</td>
               <td class="dl-val">{{ $invoice->klienAr->karyawanAr->nama_karyawan ?? '-' }}</td>
             </tr>
+            @if($invoice->klienAr->tipe_klien === 'PT' && $invoice->resto)
+            <tr>
+              <td class="dl-lbl">Resto Tagihan</td><td class="dl-colon">:</td>
+              <td class="dl-val">{{ $invoice->resto->nama_resto }} ({{ $invoice->resto->kode_resto }})</td>
+            </tr>
+            @endif
             <tr>
               <td class="dl-lbl">Penagih</td><td class="dl-colon">:</td>
-              <td class="dl-val">{{ $invoice->perusahaan->nama_perusahaan }}</td>
+              <td class="dl-val">
+                @if($invoice->klienAr->tipe_klien === 'PT')
+                  {{ $invoice->karyawan?->perusahaan?->nama_perusahaan ?? '-' }}
+                @else
+                  {{ $invoice->perusahaan->nama_perusahaan }}
+                @endif
+              </td>
             </tr>
           </table>
         </td>
@@ -548,7 +560,14 @@
     <div class="divider-thick"></div>
     <div class="divider-thin"></div>
 
-    <div class="doc-title">INVOICE</div>
+    <div class="doc-title">
+      INVOICE
+      @if($regInv->klienAr->tipe_klien === 'PT')
+        <span style="font-size:14px; letter-spacing:2px; color:#b71c1c;"> — B2B</span>
+      @else
+        <span style="font-size:14px; letter-spacing:2px; color:#555555;"> — B2C</span>
+      @endif
+    </div>
 
     <!-- Info Box -->
     <div class="info-container">
@@ -603,9 +622,21 @@
                 <td class="dl-lbl">Staff AR</td><td class="dl-colon">:</td>
                 <td class="dl-val">{{ $regInv->klienAr->karyawanAr->nama_karyawan ?? '-' }}</td>
               </tr>
+              @if($regInv->klienAr->tipe_klien === 'PT' && $regInv->resto)
+              <tr>
+                <td class="dl-lbl">Resto Tagihan</td><td class="dl-colon">:</td>
+                <td class="dl-val">{{ $regInv->resto->nama_resto }} ({{ $regInv->resto->kode_resto }})</td>
+              </tr>
+              @endif
               <tr>
                 <td class="dl-lbl">Penagih</td><td class="dl-colon">:</td>
-                <td class="dl-val">{{ $regInv->perusahaan->nama_perusahaan }}</td>
+                <td class="dl-val">
+                  @if($regInv->klienAr->tipe_klien === 'PT')
+                    {{ $regInv->karyawan?->perusahaan?->nama_perusahaan ?? '-' }}
+                  @else
+                    {{ $regInv->perusahaan->nama_perusahaan }}
+                  @endif
+                </td>
               </tr>
             </table>
           </td>
