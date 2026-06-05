@@ -329,25 +329,28 @@ class InvoiceController extends Controller
             ->deleteFileAfterSend(true);
     }
 
-    public function importTemplate(): BinaryFileResponse|JsonResponse
+    public function importTemplate(Request $request): BinaryFileResponse|JsonResponse
     {
         if (!class_exists('ZipArchive')) {
             return $this->errorResponse('Ekstensi PHP "zip" tidak aktif. Aktifkan extension=zip pada php.ini lalu restart server.', 500);
         }
 
+        $type = in_array($request->query('type'), ['b2b', 'b2c']) ? $request->query('type') : 'b2c';
+
         $spreadsheet = new Spreadsheet();
 
-        $this->buildInvoiceDataSheet($spreadsheet->getActiveSheet());
+        $this->buildInvoiceDataSheet($spreadsheet->getActiveSheet(), $type);
         $this->buildInvoiceItemSheet($spreadsheet->createSheet());
-        $this->buildInvoiceInstructionSheet($spreadsheet->createSheet());
+        $this->buildInvoiceInstructionSheet($spreadsheet->createSheet(), $type);
 
         $spreadsheet->setActiveSheetIndex(0);
 
-        $temp = tempnam(sys_get_temp_dir(), 'tpl_invoice_') . '.xlsx';
+        $temp     = tempnam(sys_get_temp_dir(), 'tpl_invoice_') . '.xlsx';
+        $filename = $type === 'b2b' ? 'Template Tagihan Invoice B2B.xlsx' : 'Template Tagihan Invoice B2C.xlsx';
         (new XlsxWriter($spreadsheet))->save($temp);
 
         return response()
-            ->download($temp, 'Template Tagihan Invoice.xlsx', [
+            ->download($temp, $filename, [
                 'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             ])
             ->deleteFileAfterSend(true);
@@ -696,8 +699,9 @@ class InvoiceController extends Controller
             ->stream($filename);
     }
 
-    private function buildInvoiceDataSheet(Worksheet $sheet): void
+    private function buildInvoiceDataSheet(Worksheet $sheet, string $type = 'b2c'): void
     {
+        $isB2B = $type === 'b2b';
         $sheet->setTitle('Invoice');
         $cols = [
             'A' => ['no_urut',                    12],
@@ -710,12 +714,16 @@ class InvoiceController extends Controller
             'H' => ['no_surat_jalan',              22],
             'I' => ['tagihan_periode_sebelumnya',  26],
             'J' => ['keterangan',                  32],
-            'K' => ['nama_resto',                  28],
         ];
-        $lastCol = 'K';
+        if ($isB2B) {
+            $cols['K'] = ['nama_resto *', 28];
+        }
+        $lastCol = $isB2B ? 'K' : 'J';
 
         $sheet->mergeCells("A1:{$lastCol}1");
-        $sheet->setCellValue('A1', 'TEMPLATE TAGIHAN INVOICE — SHEET 1: DATA INVOICE');
+        $sheet->setCellValue('A1', $isB2B
+            ? 'TEMPLATE TAGIHAN INVOICE B2B — SHEET 1: DATA INVOICE'
+            : 'TEMPLATE TAGIHAN INVOICE B2C — SHEET 1: DATA INVOICE');
         $sheet->getStyle('A1')->applyFromArray([
             'font'      => ['bold' => true, 'size' => 13, 'color' => ['argb' => 'FFFFFFFF']],
             'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF0D47A1']],
@@ -747,17 +755,19 @@ class InvoiceController extends Controller
 
         $example = [
             'A' => '[CONTOH] 1',
-            'B' => 'SI-B2C-' . date('dmY') . '-001',
-            'C' => 'Budi Santoso',
-            'D' => date('Y-m-d'),
+            'B' => $isB2B ? 'SI-B2B-' . date('dmY') . '-001' : 'SI-B2C-' . date('dmY') . '-001',
+            'C' => $isB2B ? 'PT Maju Jaya' : 'Budi Santoso',
+            'D' => date('d-m-Y'),
             'E' => '',
-            'F' => date('Y-m-01'),
-            'G' => date('Y-m-t'),
+            'F' => date('01-m-Y'),
+            'G' => date('t-m-Y'),
             'H' => 'SJ-001',
             'I' => '0',
             'J' => 'Invoice bulan ini',
-            'K' => '',
         ];
+        if ($isB2B) {
+            $example['K'] = 'Resto Makmur';
+        }
         foreach ($example as $col => $val) {
             $sheet->getCell("{$col}5")->setValueExplicit($val, DataType::TYPE_STRING);
         }
@@ -864,7 +874,7 @@ class InvoiceController extends Controller
         $sheet->setAutoFilter("A4:{$lastCol}4");
     }
 
-    private function buildInvoiceInstructionSheet(Worksheet $sheet): void
+    private function buildInvoiceInstructionSheet(Worksheet $sheet, string $type = 'b2c'): void
     {
         $sheet->setTitle('Petunjuk Pengisian');
         $sheet->getColumnDimension('A')->setWidth(28);
@@ -875,7 +885,9 @@ class InvoiceController extends Controller
         $row = 1;
 
         $sheet->mergeCells("A{$row}:D{$row}");
-        $sheet->setCellValue("A{$row}", 'PETUNJUK PENGISIAN — TEMPLATE TAGIHAN INVOICE');
+        $sheet->setCellValue("A{$row}", $type === 'b2b'
+            ? 'PETUNJUK PENGISIAN — TEMPLATE TAGIHAN INVOICE B2B'
+            : 'PETUNJUK PENGISIAN — TEMPLATE TAGIHAN INVOICE B2C');
         $sheet->getStyle("A{$row}")->applyFromArray([
             'font'      => ['bold' => true, 'size' => 13, 'color' => ['argb' => 'FFFFFFFF']],
             'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF0D47A1']],
@@ -901,7 +913,7 @@ class InvoiceController extends Controller
             '4. Sheet "Invoice": satu baris per invoice. Kolom no_urut digunakan untuk menghubungkan ke item.',
             '5. Sheet "Item Invoice": satu baris per item. no_urut_invoice harus sesuai no_urut di Sheet "Invoice".',
             '6. Satu invoice dapat memiliki lebih dari satu item (lebih dari satu baris dengan no_urut_invoice sama).',
-            '7. Format tanggal: YYYY-MM-DD (contoh: 2025-06-01).',
+            '7. Format tanggal: DD-MM-YYYY (contoh: 01-06-2025). Berlaku untuk tanggal_invoice, tanggal_jatuh_tempo, periode_awal, dan periode_akhir.',
             '8. Kolom opsional dapat dikosongkan.',
             '9. Simpan file sebagai .xlsx sebelum diupload. CSV hanya mengimpor Sheet "Invoice" tanpa item.',
         ];
@@ -922,7 +934,7 @@ class InvoiceController extends Controller
         $row++;
 
         foreach ([
-            ['  KETERANGAN KOLOM — SHEET "INVOICE"',      'FF1565C0', $this->getInvoiceColInfos()],
+            ['  KETERANGAN KOLOM — SHEET "INVOICE"',      'FF1565C0', $this->getInvoiceColInfos($type)],
             ['  KETERANGAN KOLOM — SHEET "ITEM INVOICE"', 'FF2E7D32', $this->getItemColInfos()],
         ] as [$sectionTitle, $sectionColor, $colInfos]) {
             $sheet->mergeCells("A{$row}:D{$row}");
@@ -965,21 +977,26 @@ class InvoiceController extends Controller
         }
     }
 
-    private function getInvoiceColInfos(): array
+    private function getInvoiceColInfos(string $type = 'b2c'): array
     {
-        return [
-            ['no_urut',                    'Nomor urut baris (penghubung ke Sheet Item Invoice)',     'Ya',       'Angka unik per baris. Contoh: 1, 2, 3'],
-            ['no_invoice',                 'Nomor invoice unik',                                      'Ya',       'Harus unik di sistem. Contoh: SI-B2C-21052026-001'],
-            ['nama_klien',                 'Nama Client sesuai data di sistem',                       'Ya',       'Harus persis sesuai nama klien di sistem'],
-            ['tanggal_invoice',            'Tanggal pembuatan invoice',                               'Ya',       'Format YYYY-MM-DD. Contoh: 2025-06-15'],
-            ['tanggal_jatuh_tempo',        'Tanggal jatuh tempo pembayaran invoice',                  'Opsional', 'Format YYYY-MM-DD. Contoh: 2025-07-15. Kosongkan jika tidak ada.'],
-            ['periode_awal',               'Tanggal awal periode tagihan',                            'Ya',       'Format YYYY-MM-DD. Contoh: 2025-06-01'],
-            ['periode_akhir',              'Tanggal akhir periode tagihan',                           'Ya',       'Format YYYY-MM-DD. Contoh: 2025-06-30'],
-            ['no_surat_jalan',             'Nomor surat jalan',                                       'Opsional', 'Teks bebas. Contoh: SJ-001/VI/2025'],
-            ['tagihan_periode_sebelumnya', 'Saldo tagihan dari periode sebelumnya',                   'Opsional', 'Angka, default: 0. Contoh: 150000'],
-            ['keterangan',                 'Catatan tambahan untuk invoice',                          'Opsional', 'Teks bebas'],
-            ['nama_resto',                 'Nama Resto yang ditagihkan (khusus klien B2B/PT)',        'Opsional', 'Harus persis sesuai nama resto di sistem. Kosongkan untuk B2C atau jika tidak spesifik per resto.'],
+        $infos = [
+            ['no_urut',                    'Nomor urut baris (penghubung ke Sheet Item Invoice)',                     'Ya',       'Angka unik per baris. Contoh: 1, 2, 3'],
+            ['no_invoice',                 'Nomor invoice unik',                                                      'Ya',       $type === 'b2b' ? 'Harus unik di sistem. Contoh: SI-B2B-21052026-001' : 'Harus unik di sistem. Contoh: SI-B2C-21052026-001'],
+            ['nama_klien',                 'Nama Client sesuai data di sistem',                                       'Ya',       'Harus persis sesuai nama klien di sistem'],
+            ['tanggal_invoice',            'Tanggal pembuatan invoice',                                               'Ya',       'Format DD-MM-YYYY. Contoh: 15-06-2025'],
+            ['tanggal_jatuh_tempo',        'Tanggal jatuh tempo pembayaran invoice',                                  'Opsional', 'Format DD-MM-YYYY. Contoh: 15-07-2025. Kosongkan jika tidak ada.'],
+            ['periode_awal',               'Tanggal awal periode tagihan',                                            'Ya',       'Format DD-MM-YYYY. Contoh: 01-06-2025'],
+            ['periode_akhir',              'Tanggal akhir periode tagihan',                                           'Ya',       'Format DD-MM-YYYY. Contoh: 30-06-2025'],
+            ['no_surat_jalan',             'Nomor surat jalan',                                                       'Opsional', 'Teks bebas. Contoh: SJ-001/VI/2025'],
+            ['tagihan_periode_sebelumnya', 'Saldo tagihan dari periode sebelumnya',                                   'Opsional', 'Angka, default: 0. Contoh: 150000'],
+            ['keterangan',                 'Catatan tambahan untuk invoice',                                          'Opsional', 'Teks bebas'],
         ];
+
+        if ($type === 'b2b') {
+            $infos[] = ['nama_resto *', 'Nama Resto yang ditagihkan (wajib untuk klien B2B/PT)', 'Ya', 'Harus persis sesuai nama resto di sistem. Contoh: Resto Makmur'];
+        }
+
+        return $infos;
     }
 
     private function getItemColInfos(): array
