@@ -105,6 +105,7 @@ Route::prefix('rekonsiliasi-bank')->group(function () {
     Route::patch('/detail/{detail}/match',           [BankStatementController::class, 'matchDetail']);
     Route::patch('/detail/{detail}/unmatch',         [BankStatementController::class, 'unmatchDetail']);
     Route::get('/detail/{detail}/invoice-b2c',       [BankStatementController::class, 'invoiceB2C']);
+    Route::get('/detail/{detail}/invoice-b2b',       [BankStatementController::class, 'invoiceB2B']);
     Route::post('/detail/{detail}/kelebihan',        [BankStatementController::class, 'applyKelebihanBayar']);
 });
 

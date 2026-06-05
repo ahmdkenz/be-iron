@@ -385,6 +385,28 @@ class BankStatementService
         ]);
     }
 
+    public function getInvoiceB2BKlien(BankStatementDetail $detail): \Illuminate\Support\Collection
+    {
+        $sourceInvoice = $detail->pembayaranAr?->invoice;
+        abort_if(!$sourceInvoice, 422, 'Belum ada pembayaran yang dicocokkan.');
+
+        return Invoice::with('klienAr')
+            ->whereNotIn('status', ['LUNAS'])
+            ->where('klien_ar_id', $sourceInvoice->klien_ar_id)
+            ->whereHas('klienAr', fn($q) => $q->where('tipe_klien', '!=', 'RESTO'))
+            ->orderByDesc('tanggal_invoice')
+            ->get()
+            ->map(fn($inv) => [
+                'id'            => $inv->id,
+                'no_invoice'    => $inv->no_invoice,
+                'tanggal'       => $inv->tanggal_invoice?->toDateString(),
+                'total_tagihan' => $inv->total_tagihan,
+                'sisa_tagihan'  => $inv->sisa_tagihan,
+                'status'        => $inv->status,
+                'nama_klien'    => $inv->klienAr?->nama_klien,
+            ]);
+    }
+
     public function applyKelebihan(
         BankStatementDetail $detail,
         int $invoiceId,

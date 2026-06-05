@@ -196,6 +196,15 @@ class BankStatementController extends Controller
         }
     }
 
+    public function invoiceB2B(BankStatementDetail $detail): JsonResponse
+    {
+        try {
+            return $this->successResponse($this->service->getInvoiceB2BKlien($detail));
+        } catch (\Symfony\Component\HttpKernel\Exception\HttpException $e) {
+            return $this->errorResponse($e->getMessage(), $e->getStatusCode());
+        }
+    }
+
     public function applyKelebihanBayar(Request $request, BankStatementDetail $detail): JsonResponse
     {
         $request->validate([
