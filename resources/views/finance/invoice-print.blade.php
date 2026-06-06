@@ -164,7 +164,13 @@
         @endif
       </td>
       <td style="width: 60%; vertical-align: middle;" class="text-center">
-        <div class="company-name">{{ $invoice->perusahaan->nama_perusahaan }}</div>
+        <div class="company-name">
+          @if($invoice->klienAr->tipe_klien === 'PT')
+            {{ $invoice->karyawan?->perusahaan?->nama_perusahaan ?? $invoice->perusahaan->nama_perusahaan }}
+          @else
+            {{ $invoice->perusahaan->nama_perusahaan }}
+          @endif
+        </div>
         <div class="company-address">
           Jl. Moh. Kahfi 1, RT.6/RW.1, Cipedak, Kec. Jagakarsa<br>
           Kota Jakarta Selatan, Daerah Khusus Ibukota Jakarta 12630
