@@ -72,6 +72,7 @@ class InvoiceResource extends JsonResource
                     'nama_perusahaan' => $this->karyawan->perusahaan->nama_perusahaan,
                 ] : null,
             ]),
+            'tanggal_kirim_barang'       => $this->tanggal_kirim_barang?->format('d-m-Y'),
             'no_surat_jalan'             => $this->no_surat_jalan,
             'subtotal'                   => (float) $this->subtotal,
             'tagihan_periode_sebelumnya' => (float) $this->tagihan_periode_sebelumnya,

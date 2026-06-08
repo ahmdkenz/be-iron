@@ -196,6 +196,12 @@
               <td class="dl-lbl">No. Invoice</td><td class="dl-colon">:</td>
               <td class="dl-val">{{ $invoice->no_invoice }}</td>
             </tr>
+            @if($invoice->tanggal_kirim_barang)
+            <tr>
+              <td class="dl-lbl">Tanggal Kirim Barang</td><td class="dl-colon">:</td>
+              <td class="dl-val" style="font-weight:bold;">{{ \Carbon\Carbon::parse($invoice->tanggal_kirim_barang)->isoFormat('D MMMM YYYY') }}</td>
+            </tr>
+            @endif
             <tr>
               <td class="dl-lbl">Tgl. Invoice</td><td class="dl-colon">:</td>
               <td class="dl-val">{{ \Carbon\Carbon::parse($invoice->tanggal_invoice)->isoFormat('D MMMM YYYY') }}</td>
@@ -247,7 +253,7 @@
               <td class="dl-lbl">Staff AR</td><td class="dl-colon">:</td>
               <td class="dl-val">{{ $invoice->klienAr->karyawanAr->nama_karyawan ?? '-' }}</td>
             </tr>
-            @if($invoice->klienAr->tipe_klien === 'PT' && $invoice->resto)
+            @if($invoice->klienAr->tipe_klien === 'PT' && $invoice->resto && !$invoice->tanggal_kirim_barang)
             <tr>
               <td class="dl-lbl">Resto Tagihan</td><td class="dl-colon">:</td>
               <td class="dl-val">{{ $invoice->resto->nama_resto }} ({{ $invoice->resto->kode_resto }})</td>
@@ -634,7 +640,7 @@
                 <td class="dl-lbl">Staff AR</td><td class="dl-colon">:</td>
                 <td class="dl-val">{{ $regInv->klienAr->karyawanAr->nama_karyawan ?? '-' }}</td>
               </tr>
-              @if($regInv->klienAr->tipe_klien === 'PT' && $regInv->resto)
+              @if($regInv->klienAr->tipe_klien === 'PT' && $regInv->resto && !$regInv->tanggal_kirim_barang)
               <tr>
                 <td class="dl-lbl">Resto Tagihan</td><td class="dl-colon">:</td>
                 <td class="dl-val">{{ $regInv->resto->nama_resto }} ({{ $regInv->resto->kode_resto }})</td>
