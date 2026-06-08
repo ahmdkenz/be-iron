@@ -597,9 +597,9 @@ class InvoiceController extends Controller
         ]);
 
         $regularInvoicesInPeriod = collect();
-        if ($invoice->is_opening_balance && $invoice->klien_ar_id && $invoice->periode_awal && $invoice->periode_akhir) {
-            $bulanAwal = \Carbon\Carbon::parse($invoice->periode_awal)->startOfMonth();
-            $bulanAkhir = \Carbon\Carbon::parse($invoice->periode_akhir)->endOfMonth();
+        if ($invoice->is_opening_balance && $invoice->klien_ar_id && $invoice->tanggal_invoice) {
+            $bulanAwal = \Carbon\Carbon::parse($invoice->tanggal_invoice)->startOfMonth();
+            $bulanAkhir = \Carbon\Carbon::parse($invoice->tanggal_invoice)->endOfMonth();
             $regularInvoicesInPeriod = Invoice::query()
                 ->where('klien_ar_id', $invoice->klien_ar_id)
                 ->where('perusahaan_id', $invoice->perusahaan_id)
@@ -650,9 +650,9 @@ class InvoiceController extends Controller
         ]);
 
         $regularInvoicesInPeriod = collect();
-        if ($invoice->is_opening_balance && $invoice->klien_ar_id && $invoice->periode_awal && $invoice->periode_akhir) {
-            $bulanAwal = \Carbon\Carbon::parse($invoice->periode_awal)->startOfMonth();
-            $bulanAkhir = \Carbon\Carbon::parse($invoice->periode_akhir)->endOfMonth();
+        if ($invoice->is_opening_balance && $invoice->klien_ar_id && $invoice->tanggal_invoice) {
+            $bulanAwal = \Carbon\Carbon::parse($invoice->tanggal_invoice)->startOfMonth();
+            $bulanAkhir = \Carbon\Carbon::parse($invoice->tanggal_invoice)->endOfMonth();
             $regularInvoicesInPeriod = Invoice::query()
                 ->where('klien_ar_id', $invoice->klien_ar_id)
                 ->where('perusahaan_id', $invoice->perusahaan_id)
