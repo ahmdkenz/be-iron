@@ -321,6 +321,116 @@ class InvoiceController extends Controller
 
         $sheet->freezePane('A5');
 
+        // ─── Sheet 2: Data Detail Tagihan Invoice ───
+        $details = InvoiceItem::with(['invoice.klienAr', 'invoice.perusahaan', 'barang'])
+            ->whereNotNull('no_invoice_resto')
+            ->whereHas('invoice', function ($q) use ($filters) {
+                $q->where('is_opening_balance', false)
+                  ->when($filters['tanggal_dari'] ?? null, fn($q, $v) => $q->where('tanggal_invoice', '>=', $v))
+                  ->when($filters['tanggal_sampai'] ?? null, fn($q, $v) => $q->where('tanggal_invoice', '<=', $v))
+                  ->when($filters['klien_ar_id'] ?? null, fn($q, $v) => $q->where('klien_ar_id', $v))
+                  ->when($filters['perusahaan_id'] ?? null, fn($q, $v) => $q->where('perusahaan_id', $v));
+            })
+            ->orderBy('invoice_id')
+            ->orderBy('id')
+            ->get();
+
+        $sheet2   = $spreadsheet->createSheet();
+        $sheet2->setTitle('Data Detail Tagihan Invoice');
+
+        $cols2   = [
+            'A' => ['NOMOR INVOICE',   28],
+            'B' => ['Kode Barang',     16],
+            'C' => ['Nama Barang',     36],
+            'D' => ['Satuan',          12],
+            'E' => ['QTY',             10],
+            'F' => ['Harga Satuan',    18],
+            'G' => ['TOTAL',           18],
+            'H' => ['Stokis / Resto',  28],
+            'I' => ['Tanggal Kirim',   16],
+            'J' => ['Kode Resto',      16],
+            'K' => ['Nama Klien',      32],
+            'L' => ['Entitas',         24],
+            'M' => ['NOMOR INVOICE 2', 28],
+        ];
+        $lastCol2 = 'M';
+
+        $sheet2->mergeCells("A1:{$lastCol2}1");
+        $sheet2->setCellValue('A1', 'DATA DETAIL TAGIHAN INVOICE');
+        $sheet2->getStyle('A1')->applyFromArray([
+            'font'      => ['bold' => true, 'size' => 14, 'color' => ['argb' => 'FFFFFFFF']],
+            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF0D47A1']],
+            'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
+        ]);
+        $sheet2->getRowDimension(1)->setRowHeight(36);
+
+        $sheet2->mergeCells("A2:{$lastCol2}2");
+        $sheet2->setCellValue('A2', 'Diekspor pada: ' . now()->format('d-m-Y H:i') . '   |   Total baris: ' . $details->count());
+        $sheet2->getStyle('A2')->applyFromArray([
+            'font'      => ['italic' => true, 'size' => 9, 'color' => ['argb' => 'FF1565C0']],
+            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFE3F2FD']],
+            'alignment' => ['horizontal' => Alignment::HORIZONTAL_LEFT, 'vertical' => Alignment::VERTICAL_CENTER],
+        ]);
+        $sheet2->getRowDimension(2)->setRowHeight(22);
+        $sheet2->getRowDimension(3)->setRowHeight(6);
+
+        foreach ($cols2 as $col => [$label, $width]) {
+            $sheet2->setCellValue("{$col}4", $label);
+            $sheet2->getColumnDimension($col)->setWidth($width);
+        }
+        $sheet2->getStyle("A4:{$lastCol2}4")->applyFromArray([
+            'font'      => ['bold' => true, 'size' => 10, 'color' => ['argb' => 'FFFFFFFF']],
+            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF1565C0']],
+            'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
+            'borders'   => ['allBorders' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FF0D47A1']]],
+        ]);
+        $sheet2->getRowDimension(4)->setRowHeight(22);
+
+        $rowNum2 = 5;
+        foreach ($details as $d) {
+            $inv2 = $d->invoice;
+            $bg2  = $rowNum2 % 2 === 0 ? 'FFE3F2FD' : 'FFFFFFFF';
+
+            $rowData2 = [
+                'A' => [$d->no_invoice_resto                                 ?? '-', DataType::TYPE_STRING],
+                'B' => [$d->barang?->kode_barang                             ?? '-', DataType::TYPE_STRING],
+                'C' => [$d->nama_barang,                                            DataType::TYPE_STRING],
+                'D' => [$d->satuan                                           ?? '-', DataType::TYPE_STRING],
+                'E' => [(float) $d->qty,                                            DataType::TYPE_NUMERIC],
+                'F' => [(float) $d->harga_satuan,                                   DataType::TYPE_NUMERIC],
+                'G' => [(float) $d->subtotal,                                       DataType::TYPE_NUMERIC],
+                'H' => [$d->nama_resto                                       ?? '-', DataType::TYPE_STRING],
+                'I' => [$inv2?->tanggal_kirim_barang?->format('d-m-Y')      ?? '-', DataType::TYPE_STRING],
+                'J' => [$d->kode_resto                                       ?? '-', DataType::TYPE_STRING],
+                'K' => [$inv2?->klienAr?->nama_klien                        ?? '-', DataType::TYPE_STRING],
+                'L' => [$inv2?->perusahaan?->nama_singkatan_perusahaan      ?? '-', DataType::TYPE_STRING],
+                'M' => [$inv2?->no_invoice                                  ?? '-', DataType::TYPE_STRING],
+            ];
+
+            foreach ($rowData2 as $col => [$val, $type]) {
+                $sheet2->getCell("{$col}{$rowNum2}")->setValueExplicit($val, $type);
+            }
+            foreach (['E', 'F', 'G'] as $numCol) {
+                $sheet2->getStyle("{$numCol}{$rowNum2}")->getNumberFormat()->setFormatCode('#,##0');
+            }
+            $sheet2->getStyle("A{$rowNum2}:{$lastCol2}{$rowNum2}")->applyFromArray([
+                'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => $bg2]],
+                'borders'   => ['allBorders' => ['borderStyle' => Border::BORDER_HAIR, 'color' => ['argb' => 'FFCFD8DC']]],
+                'alignment' => ['vertical' => Alignment::VERTICAL_CENTER],
+            ]);
+            $sheet2->getRowDimension($rowNum2)->setRowHeight(18);
+            $rowNum2++;
+        }
+
+        if ($rowNum2 > 5) {
+            $sheet2->getStyle("A4:{$lastCol2}" . ($rowNum2 - 1))->applyFromArray([
+                'borders' => ['outline' => ['borderStyle' => Border::BORDER_MEDIUM, 'color' => ['argb' => 'FF1565C0']]],
+            ]);
+        }
+
+        $sheet2->freezePane('A5');
+        $spreadsheet->setActiveSheetIndex(0);
+
         $temp = tempnam(sys_get_temp_dir(), 'export_invoice_') . '.xlsx';
         (new XlsxWriter($spreadsheet))->save($temp);
 
