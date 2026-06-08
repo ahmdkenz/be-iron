@@ -235,7 +235,7 @@
               <td class="dl-lbl">Kepada</td><td class="dl-colon">:</td>
               <td class="dl-val"><strong style="color:#b71c1c;">{{ $invoice->klienAr->nama_klien }}</strong> @if($invoice->klienAr->alias)<span style="color:#666;">({{ $invoice->klienAr->alias }})</span>@endif</td>
             </tr>
-            @if($invoice->klienAr->perusahaan)
+            @if($invoice->klienAr->perusahaan && $invoice->klienAr->tipe_klien === 'PT')
             <tr>
               <td class="dl-lbl">Penerima Tagihan</td><td class="dl-colon">:</td>
               <td class="dl-val"><strong>{{ $invoice->klienAr->perusahaan->nama_perusahaan }}</strong></td>
