@@ -22,7 +22,6 @@ class KlienAr extends Model
         'karyawan_ar_id',
         'resto_id',
         'status',
-        'bundle_share_token',
         'created_by',
         'updated_by',
     ];

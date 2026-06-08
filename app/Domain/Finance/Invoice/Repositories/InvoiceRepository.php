@@ -11,6 +11,10 @@ class InvoiceRepository
 {
     public function paginate(array $filters = [], int $perPage = 15): LengthAwarePaginator
     {
+        if (isset($filters['per_page']) && is_numeric($filters['per_page'])) {
+            $perPage = max(1, (int) $filters['per_page']);
+        }
+
         return $this->applyFilters(
             Invoice::with([
                 'klienAr' => fn($q) => $q->withTrashed(),

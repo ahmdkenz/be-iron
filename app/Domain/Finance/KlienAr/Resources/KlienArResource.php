@@ -41,10 +41,7 @@ class KlienArResource extends JsonResource
                     'no_hp_pengelola' => $this->resto->investor->no_hp_pengelola,
                 ] : null,
             ] : null),
-            'status'             => $this->status,
-            'bundle_share_url'   => $this->bundle_share_token
-                ? rtrim(config('app.frontend_url', config('app.url')), '/') . '/public/klien/' . $this->bundle_share_token
-                : null,
+            'status'          => $this->status,
             'created_by'      => $this->created_by,
             'created_by_name' => $this->whenLoaded('createdBy', fn() => $this->createdBy?->username),
             'updated_by'      => $this->updated_by,

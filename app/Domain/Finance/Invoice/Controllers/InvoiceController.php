@@ -586,6 +586,7 @@ class InvoiceController extends Controller
 
         $invoice->load([
             'klienAr.karyawanAr',
+            'klienAr.perusahaan',
             'perusahaan',
             'items.barang',
             'openingBalanceDetails.items.barang',
@@ -636,6 +637,7 @@ class InvoiceController extends Controller
 
         $invoice->load([
             'klienAr.karyawanAr',
+            'klienAr.perusahaan',
             'perusahaan',
             'karyawan.perusahaan',
             'resto',
@@ -666,6 +668,7 @@ class InvoiceController extends Controller
         if ($regularInvoicesInPeriod->isNotEmpty()) {
             $regularInvoicesInPeriod->load([
                 'klienAr.karyawanAr',
+                'klienAr.perusahaan',
                 'perusahaan',
                 'karyawan.perusahaan',
                 'resto',

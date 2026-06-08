@@ -120,25 +120,6 @@ class KlienArController extends Controller
         return $this->successResponse(null, 'Client berhasil dihapus');
     }
 
-    public function generateBundleToken(int $id): JsonResponse
-    {
-        $klien   = $this->service->findOrFail($id);
-        $updated = $this->service->generateBundleToken($klien);
-
-        $frontendUrl = rtrim(config('app.frontend_url', config('app.url')), '/');
-
-        return $this->successResponse([
-            'bundle_share_url' => $frontendUrl . '/public/klien/' . $updated->bundle_share_token,
-        ], 'Bundle link berhasil dibuat');
-    }
-
-    public function showPublicBundle(string $token): JsonResponse
-    {
-        $data = $this->service->getPublicBundleData($token);
-
-        return $this->successResponse($data);
-    }
-
     public function export(Request $request): BinaryFileResponse|JsonResponse
     {
         if (!class_exists('ZipArchive')) {

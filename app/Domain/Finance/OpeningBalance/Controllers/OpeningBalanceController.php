@@ -42,11 +42,11 @@ class OpeningBalanceController extends Controller
         $user    = auth()->user()->load('karyawan');
         $filters = $request->only([
             'search', 'status', 'klien_ar_id', 'karyawan_id',
-            'tanggal_dari', 'tanggal_sampai', 'approval_status',
+            'tanggal_dari', 'tanggal_sampai', 'approval_status', 'per_page',
         ]);
         $filters['is_opening_balance'] = true;
 
-        if ($user->karyawan && !RoleHelper::hasGlobalFinanceAccess($user)) {
+        if ($user->karyawan && !RoleHelper::hasGlobalArAccess($user)) {
             $filters['perusahaan_id'] = $user->karyawan->perusahaan_id;
         }
 
@@ -68,7 +68,7 @@ class OpeningBalanceController extends Controller
         ]);
         $filters['is_opening_balance'] = true;
 
-        if ($user->karyawan && !RoleHelper::hasGlobalFinanceAccess($user)) {
+        if ($user->karyawan && !RoleHelper::hasGlobalArAccess($user)) {
             $filters['perusahaan_id'] = $user->karyawan->perusahaan_id;
         }
 
@@ -181,7 +181,7 @@ class OpeningBalanceController extends Controller
         ]);
         $filters['is_opening_balance'] = true;
 
-        if ($user->karyawan && !RoleHelper::hasGlobalFinanceAccess($user)) {
+        if ($user->karyawan && !RoleHelper::hasGlobalArAccess($user)) {
             $filters['perusahaan_id'] = $user->karyawan->perusahaan_id;
         }
 

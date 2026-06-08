@@ -18,11 +18,6 @@ Route::prefix('v1')->group(function () {
         'publicPrint',
     ]);
 
-    Route::get('/klien-ar/public/{token}', [
-        \App\Domain\Finance\KlienAr\Controllers\KlienArController::class,
-        'showPublicBundle',
-    ]);
-
     // ─── Protected Routes ─────────────────────────────────────────────
     Route::middleware(['auth:sanctum', 'throttle:60,1'])->group(function () {
 
