@@ -17,6 +17,9 @@ class InvoiceItem extends Model
         'harga_satuan',
         'subtotal',
         'keterangan',
+        'no_invoice_resto',
+        'kode_resto',
+        'nama_resto',
     ];
 
     protected $casts = [

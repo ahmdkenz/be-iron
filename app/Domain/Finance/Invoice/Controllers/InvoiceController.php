@@ -10,7 +10,9 @@ use App\Domain\Finance\Invoice\Resources\InvoiceResource;
 use App\Domain\Finance\Invoice\Services\InvoiceService;
 use App\Http\Controllers\Controller;
 use App\Models\Invoice;
+use App\Models\InvoiceItem;
 use App\Models\KlienAr;
+use Carbon\Carbon;
 use App\Support\Helpers\RoleHelper;
 use App\Support\Helpers\SignatureBarcodeHelper;
 use App\Support\Traits\ApiResponse;
@@ -340,8 +342,7 @@ class InvoiceController extends Controller
         $spreadsheet = new Spreadsheet();
 
         if ($type === 'b2b') {
-            $this->buildB2BInvoiceDataSheet($spreadsheet->getActiveSheet());
-            $this->buildB2BItemSheet($spreadsheet->createSheet());
+            $this->buildB2BFlatSheet($spreadsheet->getActiveSheet());
             $this->buildB2BInstructionSheet($spreadsheet->createSheet());
         } else {
             $this->buildInvoiceDataSheet($spreadsheet->getActiveSheet(), $type);
@@ -387,11 +388,16 @@ class InvoiceController extends Controller
             $rows2 = [];
         } else {
             $spreadsheet = IOFactory::load($path);
-            $sheet2Header = $type === 'b2b' ? 'no_urut_invoice' : 'no_urut_invoice';
-            $rows1 = $this->invoiceParseXlsxSheet($spreadsheet->getSheet(0), 'no_urut');
-            $rows2 = $spreadsheet->getSheetCount() > 1
-                ? $this->invoiceParseXlsxSheet($spreadsheet->getSheet(1), $sheet2Header)
-                : [];
+            if ($type === 'b2b') {
+                // B2B flat single-sheet — kolom pertama adalah no_invoice_konsolidasi
+                $rows1 = $this->invoiceParseXlsxSheet($spreadsheet->getSheet(0), 'no_invoice_konsolidasi');
+                $rows2 = [];
+            } else {
+                $rows1 = $this->invoiceParseXlsxSheet($spreadsheet->getSheet(0), 'no_urut');
+                $rows2 = $spreadsheet->getSheetCount() > 1
+                    ? $this->invoiceParseXlsxSheet($spreadsheet->getSheet(1), 'no_urut_invoice')
+                    : [];
+            }
         }
 
         if ($type === 'b2b') {
@@ -403,195 +409,158 @@ class InvoiceController extends Controller
 
     private function importB2B(array $rows1, array $rows2, $user): JsonResponse
     {
-        $insertedCount  = 0;
-        $totalData      = 0;
-        $errors         = [];
-        $invoiceMapping = [];
-        // Buffer: no_urut_invoice => [ aggregated_key => item_row ]
-        $itemBuffer     = [];
+        $insertedCount = 0;
+        $errors        = [];
 
-        // ── Pass 1: Invoice headers (Sheet 1) ────────────────────────
-        $lineNumber    = 0;
-        $headerSkipped = false;
+        // ── Pass 1: Kelompokkan baris flat per no_invoice_konsolidasi ──
+        $groups     = [];
+        $lineNumber = 0;
 
         foreach ($rows1 as $row) {
             $lineNumber++;
             $firstCell = trim((string) ($row[0] ?? ''));
 
             if (str_starts_with($firstCell, '#')) continue;
-            if (!$headerSkipped) { $headerSkipped = true; continue; }
             if (str_starts_with($firstCell, '[CONTOH]')) continue;
             if ($firstCell === '' && count(array_filter(array_map('strval', $row))) === 0) continue;
 
-            $totalData++;
+            $noInvKons = $this->invoiceImportStr($row[0] ?? '');
+            if (!$noInvKons) {
+                $errors[] = ['sheet' => 'Data & Item Invoice', 'row' => $lineNumber, 'message' => 'no_invoice_konsolidasi wajib diisi'];
+                continue;
+            }
 
-            // Sheet 1 B2B: no_urut | no_invoice | nama_klien | tanggal_kirim_barang |
-            //              tanggal_jatuh_tempo | periode_awal | periode_akhir |
-            //              no_surat_jalan | tagihan_periode_sebelumnya | keterangan
-            $noUrut       = $this->invoiceImportStr($row[0] ?? '');
-            $noInvoice    = $this->invoiceImportStr($row[1] ?? '');
-            $namaKlien    = $this->invoiceImportStr($row[2] ?? '');
-            $tanggalKirim = $this->invoiceImportDate($row[3] ?? '');
-            $jatuhTempo   = $this->invoiceImportDate($row[4] ?? '');
-            $periodeAwal  = $this->invoiceImportDate($row[5] ?? '');
-            $periodeAkhir = $this->invoiceImportDate($row[6] ?? '');
-            $noSuratJalan = $this->invoiceImportStr($row[7] ?? '');
-            $tagihanSblm  = $this->invoiceImportNum($row[8] ?? '');
-            $keterangan   = $this->invoiceImportStr($row[9] ?? '');
+            if (!isset($groups[$noInvKons])) {
+                // Simpan data header dari baris pertama group
+                $groups[$noInvKons] = [
+                    'header_line'  => $lineNumber,
+                    'nama_klien'   => $this->invoiceImportStr($row[1] ?? ''),
+                    'tgl_kirim'    => $this->invoiceImportDate($row[2] ?? ''),
+                    'jatuh_tempo'  => $this->invoiceImportDate($row[3] ?? ''),
+                    'periode_awal' => $this->invoiceImportDate($row[4] ?? ''),
+                    'periode_akhir'=> $this->invoiceImportDate($row[5] ?? ''),
+                    'rows'         => [],
+                    'lineNumbers'  => [],
+                ];
+            }
 
-            $validated = Validator::make(
-                [
-                    'no_urut'              => $noUrut,
-                    'no_invoice'           => $noInvoice,
-                    'nama_klien'           => $namaKlien,
-                    'tanggal_kirim_barang' => $tanggalKirim,
-                    'periode_awal'         => $periodeAwal,
-                    'periode_akhir'        => $periodeAkhir,
-                ],
-                [
-                    'no_urut'              => ['required'],
-                    'no_invoice'           => ['required', 'string', 'unique:tb_invoice,no_invoice'],
-                    'nama_klien'           => ['required'],
-                    'tanggal_kirim_barang' => ['required', 'date'],
-                    'periode_awal'         => ['required', 'date'],
-                    'periode_akhir'        => ['required', 'date'],
-                ]
-            );
+            $groups[$noInvKons]['rows'][]       = $row;
+            $groups[$noInvKons]['lineNumbers'][] = $lineNumber;
+        }
 
-            if ($validated->fails()) {
-                $errors[] = ['sheet' => 'Invoice', 'row' => $lineNumber, 'message' => implode(', ', $validated->errors()->all())];
+        $totalData = count($groups);
+
+        // ── Pass 2: Buat invoice, simpan delivery detail, agregasi item ──
+        foreach ($groups as $noInvKons => $group) {
+            $headerLine  = $group['header_line'];
+            $namaKlien   = $group['nama_klien'];
+            $tanggalKirim= $group['tgl_kirim'];
+            $jatuhTempo  = $group['jatuh_tempo'];
+            $periodeAwal = $group['periode_awal'];
+            $periodeAkhir= $group['periode_akhir'];
+
+            // Validasi header invoice
+            if (!$namaKlien) {
+                $errors[] = ['sheet' => 'Data & Item Invoice', 'row' => $headerLine, 'message' => "Invoice '{$noInvKons}': nama_klien wajib diisi"];
+                continue;
+            }
+            if (!$tanggalKirim) {
+                $errors[] = ['sheet' => 'Data & Item Invoice', 'row' => $headerLine, 'message' => "Invoice '{$noInvKons}': tanggal_kirim_barang wajib diisi"];
+                continue;
+            }
+            if (Invoice::where('no_invoice', $noInvKons)->exists()) {
+                $errors[] = ['sheet' => 'Data & Item Invoice', 'row' => $headerLine, 'message' => "Invoice '{$noInvKons}': nomor invoice sudah ada di sistem"];
                 continue;
             }
 
             $klien = KlienAr::where('nama_klien', $namaKlien)->first();
             if (!$klien) {
-                $errors[] = ['sheet' => 'Invoice', 'row' => $lineNumber, 'message' => "Klien '{$namaKlien}' tidak ditemukan di sistem"];
+                $errors[] = ['sheet' => 'Data & Item Invoice', 'row' => $headerLine, 'message' => "Klien '{$namaKlien}' tidak ditemukan di sistem"];
                 continue;
             }
 
+            // Auto-derive periode jika kosong
+            if (!$periodeAwal)  $periodeAwal  = Carbon::parse($tanggalKirim)->startOfMonth()->format('Y-m-d');
+            if (!$periodeAkhir) $periodeAkhir = Carbon::parse($tanggalKirim)->endOfMonth()->format('Y-m-d');
+
             try {
                 $invoice = Invoice::create([
-                    'no_invoice'                 => $noInvoice,
+                    'no_invoice'                 => $noInvKons,
                     'tanggal_invoice'            => $tanggalKirim,
                     'tanggal_kirim_barang'       => $tanggalKirim,
-                    'tanggal_jatuh_tempo'        => $jatuhTempo,
+                    'tanggal_jatuh_tempo'        => $jatuhTempo ?: null,
                     'periode_awal'               => $periodeAwal,
                     'periode_akhir'              => $periodeAkhir,
                     'klien_ar_id'                => $klien->id,
                     'resto_id'                   => null,
                     'perusahaan_id'              => $klien->perusahaan_id,
                     'karyawan_id'                => $this->service->resolveInvoiceKaryawanId($user, $klien),
-                    'no_surat_jalan'             => $noSuratJalan,
                     'subtotal'                   => 0,
-                    'tagihan_periode_sebelumnya' => $tagihanSblm,
-                    'total_tagihan'              => $tagihanSblm,
+                    'tagihan_periode_sebelumnya' => 0,
+                    'total_tagihan'              => 0,
                     'total_pembayaran'           => 0,
-                    'sisa_tagihan'               => $tagihanSblm,
+                    'sisa_tagihan'               => 0,
                     'status'                     => 'DRAFT',
                     'is_opening_balance'         => false,
-                    'keterangan'                 => $keterangan,
                     'prepared_token'             => Str::uuid()->toString(),
                     'approved_token'             => Str::uuid()->toString(),
                     'created_by'                 => auth()->id(),
                 ]);
-
-                $invoiceMapping[$noUrut] = $invoice;
-                $itemBuffer[$noUrut]     = [];
-                $insertedCount++;
             } catch (\Throwable $e) {
-                $errors[] = ['sheet' => 'Invoice', 'row' => $lineNumber, 'message' => 'Gagal menyimpan: ' . $e->getMessage()];
-            }
-        }
-
-        // ── Pass 2: Item Invoice (Sheet 2) — aggregate by kode/nama ──────
-        $lineNumber    = 0;
-        $headerSkipped = false;
-
-        foreach ($rows2 as $row) {
-            $lineNumber++;
-            $firstCell = trim((string) ($row[0] ?? ''));
-
-            if (str_starts_with($firstCell, '#')) continue;
-            if (!$headerSkipped) { $headerSkipped = true; continue; }
-            if (str_starts_with($firstCell, '[CONTOH]')) continue;
-            if ($firstCell === '' && count(array_filter(array_map('strval', $row))) === 0) continue;
-
-            // Sheet 2 B2B: no_urut_invoice | kode_barang | nama_barang | qty | satuan | harga_satuan
-            $noUrutInvoice = $this->invoiceImportStr($row[0] ?? '');
-            $kodeBarang    = $this->invoiceImportStr($row[1] ?? '');
-            $namaBarang    = $this->invoiceImportStr($row[2] ?? '');
-            $qty           = $this->invoiceImportNum($row[3] ?? '');
-            $satuan        = $this->invoiceImportStr($row[4] ?? '');
-            $hargaSatuan   = $this->invoiceImportNum($row[5] ?? '');
-
-            if (!$noUrutInvoice) {
-                $errors[] = ['sheet' => 'Item Invoice', 'row' => $lineNumber, 'message' => 'no_urut_invoice wajib diisi'];
-                continue;
-            }
-            if (!isset($invoiceMapping[$noUrutInvoice])) {
-                $errors[] = ['sheet' => 'Item Invoice', 'row' => $lineNumber, 'message' => "no_urut_invoice '{$noUrutInvoice}' tidak ditemukan di Sheet Invoice"];
-                continue;
-            }
-            if (!$namaBarang) {
-                $errors[] = ['sheet' => 'Item Invoice', 'row' => $lineNumber, 'message' => 'nama_barang wajib diisi'];
-                continue;
-            }
-            if ($qty <= 0) {
-                $errors[] = ['sheet' => 'Item Invoice', 'row' => $lineNumber, 'message' => 'qty harus lebih dari 0'];
+                $errors[] = ['sheet' => 'Data & Item Invoice', 'row' => $headerLine, 'message' => "Gagal membuat invoice '{$noInvKons}': " . $e->getMessage()];
                 continue;
             }
 
-            // Aggregate by kode_barang / nama_barang
-            $key = $kodeBarang ?: $namaBarang;
-            if (isset($itemBuffer[$noUrutInvoice][$key])) {
-                $itemBuffer[$noUrutInvoice][$key]['qty']      += $qty;
-                $itemBuffer[$noUrutInvoice][$key]['subtotal'] += $qty * $hargaSatuan;
-            } else {
-                $itemBuffer[$noUrutInvoice][$key] = [
-                    'kode_barang'  => $kodeBarang,
-                    'nama_barang'  => $namaBarang,
-                    'qty'          => $qty,
-                    'satuan'       => $satuan,
-                    'harga_satuan' => $hargaSatuan,
-                    'subtotal'     => $qty * $hargaSatuan,
-                ];
-            }
-        }
+            // Proses baris item: simpan langsung sebagai InvoiceItem dengan kolom resto
+            foreach ($group['rows'] as $idx => $row) {
+                $rowLine    = $group['lineNumbers'][$idx];
+                $noInvResto = $this->invoiceImportStr($row[6]  ?? '');
+                $kodeResto  = $this->invoiceImportStr($row[7]  ?? '');
+                $namaResto  = $this->invoiceImportStr($row[8]  ?? '');
+                $kodeBarang = $this->invoiceImportStr($row[9]  ?? '');
+                $namaBarang = $this->invoiceImportStr($row[10] ?? '');
+                $qty        = $this->invoiceImportNum($row[11] ?? '');
+                $satuan     = $this->invoiceImportStr($row[12] ?? '');
+                $harga      = $this->invoiceImportNum($row[13] ?? '');
 
-        // ── Pass 3: Persist aggregated items & update totals ─────────
-        foreach ($invoiceMapping as $noUrut => $invoice) {
-            $aggregated = array_values($itemBuffer[$noUrut] ?? []);
-            if (empty($aggregated)) continue;
+                if (!$namaBarang) {
+                    $errors[] = ['sheet' => 'Data & Item Invoice', 'row' => $rowLine, 'message' => 'nama_barang wajib diisi'];
+                    continue;
+                }
+                if ($qty <= 0) {
+                    $errors[] = ['sheet' => 'Data & Item Invoice', 'row' => $rowLine, 'message' => 'qty harus lebih dari 0'];
+                    continue;
+                }
 
-            foreach ($aggregated as $item) {
                 $barangId = null;
-                if ($item['kode_barang']) {
-                    $barang = \App\Models\Barang::where('kode_barang', $item['kode_barang'])->first();
+                if ($kodeBarang) {
+                    $barang = \App\Models\Barang::where('kode_barang', $kodeBarang)->first();
                     if ($barang) $barangId = $barang->id;
                 }
 
                 $invoice->items()->create([
-                    'barang_id'    => $barangId,
-                    'nama_barang'  => $item['nama_barang'],
-                    'qty'          => $item['qty'],
-                    'satuan'       => $item['satuan'],
-                    'harga_satuan' => $item['harga_satuan'],
-                    'subtotal'     => $item['subtotal'],
+                    'barang_id'        => $barangId,
+                    'nama_barang'      => $namaBarang,
+                    'qty'              => $qty,
+                    'satuan'           => $satuan  ?: null,
+                    'harga_satuan'     => $harga,
+                    'subtotal'         => $qty * $harga,
+                    'no_invoice_resto' => $noInvResto ?: null,
+                    'kode_resto'       => $kodeResto  ?: null,
+                    'nama_resto'       => $namaResto  ?: null,
                 ]);
             }
 
-            $subtotal     = (float) $invoice->items()->sum('subtotal');
-            $totalTagihan = $subtotal + (float) $invoice->tagihan_periode_sebelumnya;
+            $subtotal = (float) $invoice->items()->sum('subtotal');
             $invoice->update([
                 'subtotal'      => $subtotal,
-                'total_tagihan' => $totalTagihan,
-                'sisa_tagihan'  => $totalTagihan,
+                'total_tagihan' => $subtotal,
+                'sisa_tagihan'  => $subtotal,
                 'updated_by'    => auth()->id(),
             ]);
-        }
 
-        foreach ($invoiceMapping as $invoice) {
             UploadInvoiceToGDriveJob::dispatch($invoice->id);
+            $insertedCount++;
         }
 
         $failed = $totalData - $insertedCount;
@@ -1188,25 +1157,34 @@ class InvoiceController extends Controller
         }
     }
 
-    private function buildB2BInvoiceDataSheet(Worksheet $sheet): void
+    private function buildB2BFlatSheet(Worksheet $sheet): void
     {
-        $sheet->setTitle('Invoice');
-        $cols = [
-            'A' => ['no_urut',                    12],
-            'B' => ['no_invoice',                  28],
-            'C' => ['nama_klien',                  32],
-            'D' => ['tanggal_kirim_barang *',       22],
-            'E' => ['tanggal_jatuh_tempo',          22],
-            'F' => ['periode_awal',                 20],
-            'G' => ['periode_akhir',                20],
-            'H' => ['no_surat_jalan',               22],
-            'I' => ['tagihan_periode_sebelumnya',   26],
-            'J' => ['keterangan',                   32],
-        ];
-        $lastCol = 'J';
+        $sheet->setTitle('Data & Item Invoice');
 
+        // Kolom A–F = level invoice (biru), G–N = level item (hijau)
+        $invoiceCols = [
+            'A' => ['no_invoice_konsolidasi *', 30],
+            'B' => ['nama_klien *',              30],
+            'C' => ['tanggal_kirim_barang *',    22],
+            'D' => ['tanggal_jatuh_tempo',        22],
+            'E' => ['periode_awal',               20],
+            'F' => ['periode_akhir',              20],
+        ];
+        $itemCols = [
+            'G' => ['no_invoice_resto',  28],
+            'H' => ['kode_resto',        16],
+            'I' => ['nama_resto',        28],
+            'J' => ['kode_barang',       16],
+            'K' => ['nama_barang *',     36],
+            'L' => ['qty *',             10],
+            'M' => ['satuan',            12],
+            'N' => ['harga_satuan *',    18],
+        ];
+        $lastCol = 'N';
+
+        // ── Row 1: Title ─────────────────────────────────────────────
         $sheet->mergeCells("A1:{$lastCol}1");
-        $sheet->setCellValue('A1', 'TEMPLATE TAGIHAN INVOICE B2B KONSOLIDASI — SHEET 1: DATA INVOICE');
+        $sheet->setCellValue('A1', 'TEMPLATE TAGIHAN INVOICE B2B KONSOLIDASI — FORMAT FLAT (1 SHEET)');
         $sheet->getStyle('A1')->applyFromArray([
             'font'      => ['bold' => true, 'size' => 13, 'color' => ['argb' => 'FFFFFFFF']],
             'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF0D47A1']],
@@ -1214,8 +1192,9 @@ class InvoiceController extends Controller
         ]);
         $sheet->getRowDimension(1)->setRowHeight(36);
 
+        // ── Row 2: Subtitle ──────────────────────────────────────────
         $sheet->mergeCells("A2:{$lastCol}2");
-        $sheet->setCellValue('A2', 'Satu baris = satu invoice konsolidasi ke klien PT. Gunakan no_urut yang sama di Sheet "Item Invoice" untuk menghubungkan item barang.');
+        $sheet->setCellValue('A2', 'Satu baris = satu item kiriman per resto. Baris dengan no_invoice_konsolidasi yang sama = satu invoice. Kolom A–F mengulang setiap baris. Kolom * wajib diisi.');
         $sheet->getStyle('A2')->applyFromArray([
             'font'      => ['italic' => true, 'size' => 9, 'color' => ['argb' => 'FF37474F']],
             'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFE3F2FD']],
@@ -1224,114 +1203,79 @@ class InvoiceController extends Controller
         $sheet->getRowDimension(2)->setRowHeight(28);
         $sheet->getRowDimension(3)->setRowHeight(8);
 
-        foreach ($cols as $col => [$name, $width]) {
-            $sheet->setCellValue("{$col}4", $name);
-            $sheet->getColumnDimension($col)->setWidth($width);
-        }
-        $sheet->getStyle("A4:{$lastCol}4")->applyFromArray([
-            'font'      => ['bold' => true, 'size' => 10, 'color' => ['argb' => 'FFFFFFFF']],
-            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF1565C0']],
-            'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
-            'borders'   => ['allBorders' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FF0D47A1']]],
-        ]);
-        $sheet->getRowDimension(4)->setRowHeight(24);
-
-        $example = [
-            'A' => '[CONTOH] 1',
-            'B' => 'SI-SKM' . date('dmY') . '-001',
-            'C' => 'PT. Setya Kuliner Mandiri',
-            'D' => date('d-m-Y'),
-            'E' => '',
-            'F' => date('01-m-Y'),
-            'G' => date('t-m-Y'),
-            'H' => '',
-            'I' => '0',
-            'J' => 'Invoice kiriman ' . date('M Y'),
-        ];
-        foreach ($example as $col => $val) {
-            $sheet->getCell("{$col}5")->setValueExplicit($val, DataType::TYPE_STRING);
-        }
-        $sheet->getStyle("A5:{$lastCol}5")->applyFromArray([
-            'font'      => ['italic' => true, 'size' => 9, 'color' => ['argb' => 'FFE65100']],
-            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFFFF9C4']],
-            'alignment' => ['vertical' => Alignment::VERTICAL_CENTER],
-            'borders'   => ['allBorders' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FFFFECB3']]],
-        ]);
-        $sheet->getRowDimension(5)->setRowHeight(20);
-
-        for ($row = 6; $row <= 55; $row++) {
-            $bg = $row % 2 === 0 ? 'FFF5F5F5' : 'FFFFFFFF';
-            $sheet->getStyle("A{$row}:{$lastCol}{$row}")->applyFromArray([
-                'fill'    => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => $bg]],
-                'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_HAIR, 'color' => ['argb' => 'FFE0E0E0']]],
-            ]);
-            $sheet->getStyle("I{$row}")->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
-            foreach (['D', 'E', 'F', 'G'] as $dateCol) {
-                $sheet->getStyle("{$dateCol}{$row}")->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
-            }
-            $sheet->getRowDimension($row)->setRowHeight(18);
-        }
-
-        $sheet->freezePane('A5');
-        $sheet->setAutoFilter("A4:{$lastCol}4");
-    }
-
-    private function buildB2BItemSheet(Worksheet $sheet): void
-    {
-        $sheet->setTitle('Item Invoice');
-        $cols = [
-            'A' => ['no_urut_invoice', 18],
-            'B' => ['kode_barang',     20],
-            'C' => ['nama_barang',     36],
-            'D' => ['qty',             12],
-            'E' => ['satuan',          14],
-            'F' => ['harga_satuan',    20],
-        ];
-        $lastCol = 'F';
-
-        $sheet->mergeCells("A1:{$lastCol}1");
-        $sheet->setCellValue('A1', 'TEMPLATE TAGIHAN INVOICE B2B KONSOLIDASI — SHEET 2: ITEM INVOICE');
-        $sheet->getStyle('A1')->applyFromArray([
-            'font'      => ['bold' => true, 'size' => 13, 'color' => ['argb' => 'FFFFFFFF']],
-            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF0D47A1']],
-            'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
-        ]);
-        $sheet->getRowDimension(1)->setRowHeight(36);
-
-        $sheet->mergeCells("A2:{$lastCol}2");
-        $sheet->setCellValue('A2', 'Isi item/rincian invoice konsolidasi. Kolom no_urut_invoice harus sesuai dengan no_urut di Sheet "Invoice". Satu invoice bisa memiliki beberapa baris item.');
-        $sheet->getStyle('A2')->applyFromArray([
-            'font'      => ['italic' => true, 'size' => 9, 'color' => ['argb' => 'FF37474F']],
+        // ── Row 3: Legend ────────────────────────────────────────────
+        $sheet->mergeCells("A3:F3");
+        $sheet->setCellValue('A3', '← DATA INVOICE (diulang setiap baris)');
+        $sheet->getStyle('A3')->applyFromArray([
+            'font'      => ['bold' => true, 'size' => 8, 'color' => ['argb' => 'FF1565C0']],
             'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFE3F2FD']],
-            'alignment' => ['horizontal' => Alignment::HORIZONTAL_LEFT, 'vertical' => Alignment::VERTICAL_CENTER, 'wrapText' => true],
+            'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
+            'borders'   => ['outline' => ['borderStyle' => Border::BORDER_MEDIUM, 'color' => ['argb' => 'FF1565C0']]],
         ]);
-        $sheet->getRowDimension(2)->setRowHeight(28);
-        $sheet->getRowDimension(3)->setRowHeight(8);
+        $sheet->mergeCells("G3:N3");
+        $sheet->setCellValue('G3', 'DATA ITEM KIRIMAN PER BARIS →');
+        $sheet->getStyle('G3')->applyFromArray([
+            'font'      => ['bold' => true, 'size' => 8, 'color' => ['argb' => 'FF2E7D32']],
+            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFE8F5E9']],
+            'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
+            'borders'   => ['outline' => ['borderStyle' => Border::BORDER_MEDIUM, 'color' => ['argb' => 'FF2E7D32']]],
+        ]);
+        $sheet->getRowDimension(3)->setRowHeight(16);
 
-        foreach ($cols as $col => [$name, $width]) {
+        // ── Row 4: Headers ───────────────────────────────────────────
+        foreach ($invoiceCols as $col => [$name, $width]) {
             $sheet->setCellValue("{$col}4", $name);
             $sheet->getColumnDimension($col)->setWidth($width);
         }
-        $sheet->getStyle("A4:{$lastCol}4")->applyFromArray([
-            'font'      => ['bold' => true, 'size' => 10, 'color' => ['argb' => 'FFFFFFFF']],
+        $sheet->getStyle("A4:F4")->applyFromArray([
+            'font'      => ['bold' => true, 'size' => 9, 'color' => ['argb' => 'FFFFFFFF']],
             'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF1565C0']],
             'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
             'borders'   => ['allBorders' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FF0D47A1']]],
         ]);
+
+        foreach ($itemCols as $col => [$name, $width]) {
+            $sheet->setCellValue("{$col}4", $name);
+            $sheet->getColumnDimension($col)->setWidth($width);
+        }
+        $sheet->getStyle("G4:N4")->applyFromArray([
+            'font'      => ['bold' => true, 'size' => 9, 'color' => ['argb' => 'FFFFFFFF']],
+            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF2E7D32']],
+            'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
+            'borders'   => ['allBorders' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FF1B5E20']]],
+        ]);
         $sheet->getRowDimension(4)->setRowHeight(24);
 
+        // ── Rows 5–7: Contoh data ────────────────────────────────────
         $examples = [
-            ['[CONTOH] 1', '9113', 'Ayam 1.0 - 1.1 Kg', '550', 'Ekr',  '44300'],
-            ['[CONTOH] 1', '9131', 'Minced Beef 1',      '50',  'Ktg',  '34628'],
-            ['[CONTOH] 2', '9113', 'Ayam 1.0 - 1.1 Kg', '200', 'Ekr',  '44300'],
+            // [noInvKons, namaKlien, tglKirim, jatuhTempo, periodeAwal, periodeAkhir,
+            //  noInvResto, kodeResto, namaResto, kodeBarang, namaBarang, qty, satuan, harga]
+            [
+                '[CONTOH] ABBINV-001', 'PT. Setya Kuliner Mandiri', date('01-m-Y'), '', date('01-m-Y'), date('t-m-Y'),
+                'SI-M10218381051419419', 'M1021838', 'OT-SILIWANGI3', '9113', 'Ayam 1.0 - 1.1 Kg', '75', 'Ekr', '44300',
+            ],
+            [
+                '[CONTOH] ABBINV-001', 'PT. Setya Kuliner Mandiri', date('01-m-Y'), '', date('01-m-Y'), date('t-m-Y'),
+                'SI-M10218381051419419', 'M1021838', 'OT-SILIWANGI3', '9131', 'Minced Beef 1',      '50', 'Ktg', '34628',
+            ],
+            [
+                '[CONTOH] ABBINV-002', 'PT. Arkhan Berkah Bersama', date('01-m-Y'), '', date('01-m-Y'), date('t-m-Y'),
+                'SI-M20210981051419888', 'M2021098', 'OT-CIHAMPELAS2', '9113', 'Ayam 1.0 - 1.1 Kg', '120', 'Ekr', '44300',
+            ],
         ];
-        $exampleCols = ['A','B','C','D','E','F'];
+        $exampleColKeys = ['A','B','C','D','E','F','G','H','I','J','K','L','M','N'];
         foreach ($examples as $i => $ex) {
             $rowNum = 5 + $i;
-            foreach ($exampleCols as $j => $col) {
+            foreach ($exampleColKeys as $j => $col) {
                 $sheet->getCell("{$col}{$rowNum}")->setValueExplicit($ex[$j], DataType::TYPE_STRING);
             }
-            $sheet->getStyle("A{$rowNum}:{$lastCol}{$rowNum}")->applyFromArray([
+            $sheet->getStyle("A{$rowNum}:F{$rowNum}")->applyFromArray([
+                'font'      => ['italic' => true, 'size' => 9, 'color' => ['argb' => 'FFE65100']],
+                'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFFFF9C4']],
+                'alignment' => ['vertical' => Alignment::VERTICAL_CENTER],
+                'borders'   => ['allBorders' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FFFFECB3']]],
+            ]);
+            $sheet->getStyle("G{$rowNum}:N{$rowNum}")->applyFromArray([
                 'font'      => ['italic' => true, 'size' => 9, 'color' => ['argb' => 'FFE65100']],
                 'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFFFF9C4']],
                 'alignment' => ['vertical' => Alignment::VERTICAL_CENTER],
@@ -1340,13 +1284,21 @@ class InvoiceController extends Controller
             $sheet->getRowDimension($rowNum)->setRowHeight(20);
         }
 
-        for ($row = 8; $row <= 307; $row++) {
+        // ── Rows 8–507: Data rows ─────────────────────────────────────
+        for ($row = 8; $row <= 507; $row++) {
             $bg = $row % 2 === 0 ? 'FFF5F5F5' : 'FFFFFFFF';
-            $sheet->getStyle("A{$row}:{$lastCol}{$row}")->applyFromArray([
+            $sheet->getStyle("A{$row}:F{$row}")->applyFromArray([
                 'fill'    => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => $bg]],
                 'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_HAIR, 'color' => ['argb' => 'FFE0E0E0']]],
             ]);
-            $sheet->getStyle("F{$row}")->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
+            $sheet->getStyle("G{$row}:N{$row}")->applyFromArray([
+                'fill'    => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => $bg]],
+                'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_HAIR, 'color' => ['argb' => 'FFE0E0E0']]],
+            ]);
+            foreach (['C', 'D', 'E', 'F'] as $dateCol) {
+                $sheet->getStyle("{$dateCol}{$row}")->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
+            }
+            $sheet->getStyle("N{$row}")->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
             $sheet->getRowDimension($row)->setRowHeight(18);
         }
 
@@ -1385,15 +1337,16 @@ class InvoiceController extends Controller
         $row++;
 
         $steps = [
-            '1. File memiliki 2 sheet: "Invoice" (header konsolidasi per klien PT) dan "Item Invoice" (rincian barang).',
-            '2. Sheet "Invoice": satu baris = satu invoice konsolidasi. Isi no_urut unik per baris.',
-            '3. Sheet "Item Invoice": satu baris = satu jenis barang. Satu invoice bisa memiliki banyak baris item.',
-            '4. Kolom no_urut_invoice di Sheet "Item Invoice" HARUS sesuai dengan no_urut di Sheet "Invoice".',
-            '5. Kolom tanggal_kirim_barang di Sheet "Invoice" WAJIB diisi — ini adalah tanggal pengiriman barang.',
-            '6. Format tanggal: DD-MM-YYYY (contoh: 01-03-2026). Berlaku untuk semua kolom tanggal.',
-            '7. Kolom nama_klien harus persis sesuai dengan data klien yang terdaftar di sistem.',
-            '8. Simpan file sebagai .xlsx sebelum diupload. Di halaman Import, pastikan pilih jenis "B2B Konsolidasi".',
-            '9. Hapus baris [CONTOH] sebelum melakukan import.',
+            '1. File memiliki 1 sheet data saja: "Data & Item Invoice" (format flat). Tidak perlu 2 sheet terpisah.',
+            '2. Satu baris = satu item kiriman per resto. Baris dengan no_invoice_konsolidasi yang sama = satu invoice.',
+            '3. Kolom A–F (data invoice) MENGULANG untuk setiap baris dari invoice yang sama — isi identik.',
+            '4. Kolom G–N (data item) diisi sesuai per-baris kiriman masing-masing resto.',
+            '5. Kolom no_invoice_konsolidasi WAJIB diisi — ini adalah nomor invoice konsolidasi (misal: ABBINV-46143).',
+            '6. Kolom tanggal_kirim_barang WAJIB diisi dengan format DD-MM-YYYY (contoh: 01-05-2026).',
+            '7. Kolom nama_klien harus persis sesuai dengan data klien PT yang terdaftar di sistem.',
+            '8. Kolom periode_awal dan periode_akhir opsional — jika kosong, sistem otomatis isi awal/akhir bulan tanggal_kirim.',
+            '9. Setiap baris dalam template menjadi satu baris Item Tagihan di sistem (tidak ada pengelompokan otomatis).',
+            '10. Hapus baris [CONTOH] sebelum upload. Di halaman Import, pilih jenis "B2B Konsolidasi".',
         ];
 
         foreach ($steps as $i => $step) {
@@ -1412,25 +1365,23 @@ class InvoiceController extends Controller
         $row++;
 
         $sections = [
-            ['  KETERANGAN KOLOM — SHEET "INVOICE"',      'FF1565C0', [
-                ['no_urut',                    'Nomor urut baris — penghubung ke Sheet "Item Invoice"',   'Ya',       'Angka unik per baris. Contoh: 1, 2, 3'],
-                ['no_invoice',                 'Nomor invoice konsolidasi yang unik di sistem',            'Ya',       'Harus unik di sistem. Contoh: SI-SKM01032026-001'],
-                ['nama_klien',                 'Nama Client PT sesuai data di sistem',                    'Ya',       'Harus persis sesuai nama klien. Contoh: PT. Setya Kuliner Mandiri'],
-                ['tanggal_kirim_barang',       'Tanggal pengiriman barang (menjadi tanggal invoice)',     'Ya',       'Format DD-MM-YYYY. Contoh: 01-03-2026'],
-                ['tanggal_jatuh_tempo',        'Tanggal jatuh tempo pembayaran',                          'Opsional', 'Format DD-MM-YYYY. Kosongkan jika tidak ada'],
-                ['periode_awal',               'Tanggal awal periode tagihan',                            'Ya',       'Format DD-MM-YYYY. Contoh: 01-03-2026'],
-                ['periode_akhir',              'Tanggal akhir periode tagihan',                           'Ya',       'Format DD-MM-YYYY. Contoh: 31-03-2026'],
-                ['no_surat_jalan',             'Nomor surat jalan (opsional)',                            'Opsional', 'Teks bebas. Contoh: SJ-001/III/2026'],
-                ['tagihan_periode_sebelumnya', 'Saldo tagihan dari periode sebelumnya',                   'Opsional', 'Angka, default: 0. Contoh: 500000'],
-                ['keterangan',                 'Catatan tambahan untuk invoice ini',                      'Opsional', 'Teks bebas'],
+            ['  KETERANGAN KOLOM — DATA INVOICE (A–F, diulang setiap baris)', 'FF1565C0', [
+                ['no_invoice_konsolidasi', 'Nomor invoice konsolidasi ke klien PT — KUNCI PENGELOMPOKAN', 'Ya',       'Harus unik di sistem. Contoh: ABBINV-46143'],
+                ['nama_klien',            'Nama Klien PT sesuai data di sistem',                         'Ya',       'Harus persis sesuai. Contoh: PT. Arkhan Berkah Bersama'],
+                ['tanggal_kirim_barang',  'Tanggal pengiriman barang (menjadi tanggal invoice)',          'Ya',       'Format DD-MM-YYYY. Contoh: 01-05-2026'],
+                ['tanggal_jatuh_tempo',   'Tanggal jatuh tempo pembayaran',                              'Opsional', 'Format DD-MM-YYYY. Kosongkan jika tidak ada'],
+                ['periode_awal',          'Awal periode tagihan (default: awal bulan tanggal_kirim)',     'Opsional', 'Format DD-MM-YYYY. Contoh: 01-05-2026'],
+                ['periode_akhir',         'Akhir periode tagihan (default: akhir bulan tanggal_kirim)',   'Opsional', 'Format DD-MM-YYYY. Contoh: 31-05-2026'],
             ]],
-            ['  KETERANGAN KOLOM — SHEET "ITEM INVOICE"', 'FF1565C0', [
-                ['no_urut_invoice', 'Nomor urut dari Sheet "Invoice" — penghubung antar sheet',      'Ya',       'Harus sesuai no_urut di Sheet "Invoice". Contoh: 1'],
-                ['kode_barang',     'Kode barang dari master barang di sistem',                      'Opsional', 'Contoh: 9113. Jika diisi, digunakan untuk link ke master barang.'],
-                ['nama_barang',     'Nama barang yang ditagihkan',                                   'Ya',       'Contoh: Ayam 1.0 - 1.1 Kg'],
-                ['qty',             'Jumlah/kuantitas barang (total konsolidasi)',                   'Ya',       'Angka positif. Contoh: 550'],
-                ['satuan',          'Satuan barang',                                                 'Opsional', 'Contoh: Ekr, Ktg, Kg, Pcs'],
-                ['harga_satuan',    'Harga per satuan barang',                                       'Ya',       'Angka tanpa format. Contoh: 44300'],
+            ['  KETERANGAN KOLOM — DATA ITEM KIRIMAN (G–N, per baris)', 'FF2E7D32', [
+                ['no_invoice_resto', 'Nomor invoice per-resto (NOMOR INVOICE di spreadsheet lama)',   'Opsional', 'Contoh: SI-M10218381051419419'],
+                ['kode_resto',       'Kode resto penerima (Kode Resto di spreadsheet lama)',           'Opsional', 'Contoh: M1021838'],
+                ['nama_resto',       'Nama resto atau stokis (STOKIS/ID resto di spreadsheet lama)',   'Opsional', 'Contoh: OT-SILIWANGI3'],
+                ['kode_barang',      'Kode barang dari master barang di sistem',                       'Opsional', 'Contoh: 9113. Digunakan untuk link ke master barang.'],
+                ['nama_barang',      'Nama barang yang ditagihkan',                                    'Ya',       'Contoh: Ayam 1.0 - 1.1 Kg'],
+                ['qty',              'Jumlah/kuantitas kiriman per baris ini',                         'Ya',       'Angka positif. Contoh: 75'],
+                ['satuan',           'Satuan barang',                                                  'Opsional', 'Contoh: Ekr, Ktg, Kg, bks'],
+                ['harga_satuan',     'Harga per satuan barang',                                        'Ya',       'Angka tanpa format. Contoh: 44300'],
             ]],
         ];
 
@@ -1473,6 +1424,140 @@ class InvoiceController extends Controller
             }
             $row++;
         }
+    }
+
+    public function exportB2BDelivery(Request $request): BinaryFileResponse|JsonResponse
+    {
+        if (!class_exists('ZipArchive')) {
+            return $this->errorResponse('Ekstensi PHP "zip" tidak aktif. Aktifkan extension=zip pada php.ini lalu restart server.', 500);
+        }
+
+        $filters = $request->only(['tanggal_dari', 'tanggal_sampai', 'klien_ar_id']);
+
+        $details = InvoiceItem::with(['invoice.klienAr', 'invoice.perusahaan', 'barang'])
+            ->whereNotNull('no_invoice_resto')
+            ->whereHas('invoice', function ($q) use ($filters) {
+                $q->where('is_opening_balance', false)
+                  ->whereNotNull('tanggal_kirim_barang')
+                  ->when($filters['tanggal_dari'] ?? null, fn($q, $v) =>
+                      $q->where('tanggal_kirim_barang', '>=', $v)
+                  )
+                  ->when($filters['tanggal_sampai'] ?? null, fn($q, $v) =>
+                      $q->where('tanggal_kirim_barang', '<=', $v)
+                  )
+                  ->when($filters['klien_ar_id'] ?? null, fn($q, $v) =>
+                      $q->where('klien_ar_id', $v)
+                  );
+            })
+            ->orderBy('invoice_id')
+            ->orderBy('id')
+            ->get();
+
+        $spreadsheet = new Spreadsheet();
+        $sheet       = $spreadsheet->getActiveSheet();
+        $sheet->setTitle('Data Pengiriman B2B');
+
+        $cols = [
+            'A' => ['NOMOR INVOICE',   28],
+            'B' => ['Kode Barang',     16],
+            'C' => ['Nama Barang',     36],
+            'D' => ['Satuan',          12],
+            'E' => ['QTY',             10],
+            'F' => ['Harga Satuan',    18],
+            'G' => ['TOTAL',           18],
+            'H' => ['Stokis / Resto',  28],
+            'I' => ['Tanggal Kirim',   16],
+            'J' => ['Kode Resto',      16],
+            'K' => ['Nama Klien',      32],
+            'L' => ['Entitas',         24],
+            'M' => ['NOMOR INVOICE 2', 28],
+        ];
+        $lastCol = 'M';
+
+        $sheet->mergeCells("A1:{$lastCol}1");
+        $sheet->setCellValue('A1', 'DATA PENGIRIMAN B2B KONSOLIDASI');
+        $sheet->getStyle('A1')->applyFromArray([
+            'font'      => ['bold' => true, 'size' => 14, 'color' => ['argb' => 'FFFFFFFF']],
+            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF0D47A1']],
+            'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
+        ]);
+        $sheet->getRowDimension(1)->setRowHeight(36);
+
+        $sheet->mergeCells("A2:{$lastCol}2");
+        $sheet->setCellValue('A2', 'Diekspor pada: ' . now()->format('d-m-Y H:i') . '   |   Total baris: ' . $details->count());
+        $sheet->getStyle('A2')->applyFromArray([
+            'font'      => ['italic' => true, 'size' => 9, 'color' => ['argb' => 'FF1565C0']],
+            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFE3F2FD']],
+            'alignment' => ['horizontal' => Alignment::HORIZONTAL_LEFT, 'vertical' => Alignment::VERTICAL_CENTER],
+        ]);
+        $sheet->getRowDimension(2)->setRowHeight(22);
+        $sheet->getRowDimension(3)->setRowHeight(6);
+
+        foreach ($cols as $col => [$label, $width]) {
+            $sheet->setCellValue("{$col}4", $label);
+            $sheet->getColumnDimension($col)->setWidth($width);
+        }
+        $sheet->getStyle("A4:{$lastCol}4")->applyFromArray([
+            'font'      => ['bold' => true, 'size' => 10, 'color' => ['argb' => 'FFFFFFFF']],
+            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF1565C0']],
+            'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
+            'borders'   => ['allBorders' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FF0D47A1']]],
+        ]);
+        $sheet->getRowDimension(4)->setRowHeight(22);
+
+        $rowNum = 5;
+        foreach ($details as $d) {
+            $inv = $d->invoice;
+            $bg  = $rowNum % 2 === 0 ? 'FFE3F2FD' : 'FFFFFFFF';
+
+            $rowData = [
+                'A' => [$d->no_invoice_resto          ?? '-',                         DataType::TYPE_STRING],
+                'B' => [$d->barang?->kode_barang      ?? '-',                         DataType::TYPE_STRING],
+                'C' => [$d->nama_barang,                                             DataType::TYPE_STRING],
+                'D' => [$d->satuan                    ?? '-',                         DataType::TYPE_STRING],
+                'E' => [(float) $d->qty,                                            DataType::TYPE_NUMERIC],
+                'F' => [(float) $d->harga_satuan,                                   DataType::TYPE_NUMERIC],
+                'G' => [(float) $d->subtotal,                                       DataType::TYPE_NUMERIC],
+                'H' => [$d->nama_resto       ?? '-',                                DataType::TYPE_STRING],
+                'I' => [$inv?->tanggal_kirim_barang?->format('d-m-Y') ?? '-',       DataType::TYPE_STRING],
+                'J' => [$d->kode_resto       ?? '-',                                DataType::TYPE_STRING],
+                'K' => [$inv?->klienAr?->nama_klien ?? '-',                         DataType::TYPE_STRING],
+                'L' => [$inv?->perusahaan?->nama_singkatan_perusahaan ?? '-',       DataType::TYPE_STRING],
+                'M' => [$inv?->no_invoice ?? '-',                                   DataType::TYPE_STRING],
+            ];
+
+            foreach ($rowData as $col => [$val, $type]) {
+                $sheet->getCell("{$col}{$rowNum}")->setValueExplicit($val, $type);
+            }
+            foreach (['E', 'F', 'G'] as $numCol) {
+                $sheet->getStyle("{$numCol}{$rowNum}")->getNumberFormat()->setFormatCode('#,##0');
+            }
+            $sheet->getStyle("A{$rowNum}:{$lastCol}{$rowNum}")->applyFromArray([
+                'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => $bg]],
+                'borders'   => ['allBorders' => ['borderStyle' => Border::BORDER_HAIR, 'color' => ['argb' => 'FFCFD8DC']]],
+                'alignment' => ['vertical' => Alignment::VERTICAL_CENTER],
+            ]);
+            $sheet->getRowDimension($rowNum)->setRowHeight(18);
+            $rowNum++;
+        }
+
+        if ($rowNum > 5) {
+            $sheet->getStyle("A4:{$lastCol}" . ($rowNum - 1))->applyFromArray([
+                'borders' => ['outline' => ['borderStyle' => Border::BORDER_MEDIUM, 'color' => ['argb' => 'FF1565C0']]],
+            ]);
+        }
+
+        $sheet->freezePane('A5');
+
+        $temp     = tempnam(sys_get_temp_dir(), 'export_b2b_delivery_') . '.xlsx';
+        $filename = 'Data Pengiriman B2B-' . now()->format('Ymd-His') . '.xlsx';
+        (new XlsxWriter($spreadsheet))->save($temp);
+
+        return response()
+            ->download($temp, $filename, [
+                'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            ])
+            ->deleteFileAfterSend(true);
     }
 
     private function getInvoiceColInfos(string $type = 'b2c'): array

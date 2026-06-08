@@ -41,8 +41,9 @@ Route::prefix('invoices')->group(function () {
     Route::get('/', [InvoiceController::class, 'index']);
     Route::get('/summary', [InvoiceController::class, 'summary']);
     Route::get('/rekap-klien', [InvoiceController::class, 'rekapKlien']);
-    Route::get('/export',          [InvoiceController::class, 'export']);
-    Route::get('/export-excel',    [InvoiceController::class, 'exportExcel']);
+    Route::get('/export',               [InvoiceController::class, 'export']);
+    Route::get('/export-excel',         [InvoiceController::class, 'exportExcel']);
+    Route::get('/export-b2b-delivery',  [InvoiceController::class, 'exportB2BDelivery']);
     Route::get('/import-template', [InvoiceController::class, 'importTemplate']);
     Route::post('/import',         [InvoiceController::class, 'import']);
     Route::get('/{id}/print', [InvoiceController::class, 'print']);

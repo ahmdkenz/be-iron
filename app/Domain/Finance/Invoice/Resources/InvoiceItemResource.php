@@ -23,7 +23,10 @@ class InvoiceItemResource extends JsonResource
             'satuan'       => $this->satuan,
             'harga_satuan' => (float) $this->harga_satuan,
             'subtotal'     => (float) $this->subtotal,
-            'keterangan'   => $this->keterangan,
+            'keterangan'       => $this->keterangan,
+            'no_invoice_resto' => $this->no_invoice_resto,
+            'kode_resto'       => $this->kode_resto,
+            'nama_resto'       => $this->nama_resto,
         ];
     }
 }
