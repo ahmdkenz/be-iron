@@ -278,7 +278,7 @@ class InvoiceController extends Controller
 
             $restoNama = $inv->resto?->nama_resto
                 ?? $inv->klienAr?->resto?->nama_resto
-                ?? ($inv->items->pluck('nama_resto')->filter()->unique()->values()->implode(', ') ?: '-');
+                ?? ($inv->items->pluck('nama_resto')->filter()->unique()->first() ?: '-');
 
             $entitasP = $inv->klienAr?->resto?->perusahaan ?? $inv->perusahaan;
             $entitas  = $entitasP?->nama_perusahaan ?? '-';
