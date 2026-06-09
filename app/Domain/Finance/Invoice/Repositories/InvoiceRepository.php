@@ -35,7 +35,7 @@ class InvoiceRepository
     {
         return $this->applyFilters(
             Invoice::with([
-                'klienAr' => fn($q) => $q->withTrashed(),
+                'klienAr'                  => fn($q) => $q->withTrashed()->with('resto.perusahaan'),
                 'resto',
                 'perusahaan',
                 'createdBy',

@@ -12,6 +12,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
 use App\Models\KlienAr;
+use App\Models\Resto;
 use Carbon\Carbon;
 use App\Support\Helpers\RoleHelper;
 use App\Support\Helpers\SignatureBarcodeHelper;
@@ -210,6 +211,7 @@ class InvoiceController extends Controller
         }
 
         $invoices = $this->service->getAllForExport($filters);
+        $invoices->load('items:id,invoice_id,nama_resto');
 
         $spreadsheet = new Spreadsheet();
         $sheet       = $spreadsheet->getActiveSheet();
@@ -219,7 +221,7 @@ class InvoiceController extends Controller
             'A' => ['No Invoice',             24],
             'B' => ['Klien',                  32],
             'C' => ['Resto',                  28],
-            'D' => ['Perusahaan',             18],
+            'D' => ['Entitas',               28],
             'E' => ['Tanggal Invoice',        18],
             'F' => ['Periode Awal',           16],
             'G' => ['Periode Akhir',          16],
@@ -274,11 +276,18 @@ class InvoiceController extends Controller
         foreach ($invoices as $inv) {
             $bg = $rowNum % 2 === 0 ? 'FFE3F2FD' : 'FFFFFFFF';
 
+            $restoNama = $inv->resto?->nama_resto
+                ?? $inv->klienAr?->resto?->nama_resto
+                ?? ($inv->items->pluck('nama_resto')->filter()->unique()->values()->implode(', ') ?: '-');
+
+            $entitasP = $inv->klienAr?->resto?->perusahaan ?? $inv->perusahaan;
+            $entitas  = $entitasP?->nama_perusahaan ?? '-';
+
             $rowData = [
                 'A' => [$inv->no_invoice,                                   DataType::TYPE_STRING],
                 'B' => [$inv->klienAr?->nama_klien ?? '-',                  DataType::TYPE_STRING],
-                'C' => [$inv->resto?->nama_resto ?? '-',                    DataType::TYPE_STRING],
-                'D' => [$inv->perusahaan?->nama_singkatan_perusahaan ?? '-', DataType::TYPE_STRING],
+                'C' => [$restoNama,                                         DataType::TYPE_STRING],
+                'D' => [$entitas,                                           DataType::TYPE_STRING],
                 'E' => [$inv->tanggal_invoice?->format('d-m-Y') ?? '-',    DataType::TYPE_STRING],
                 'F' => [$inv->periode_awal?->format('d-m-Y') ?? '-',       DataType::TYPE_STRING],
                 'G' => [$inv->periode_akhir?->format('d-m-Y') ?? '-',      DataType::TYPE_STRING],
@@ -322,8 +331,7 @@ class InvoiceController extends Controller
         $sheet->freezePane('A5');
 
         // ─── Sheet 2: Data Detail Tagihan Invoice ───
-        $details = InvoiceItem::with(['invoice.klienAr', 'invoice.perusahaan', 'barang'])
-            ->whereNotNull('no_invoice_resto')
+        $details = InvoiceItem::with(['invoice.klienAr.resto.perusahaan', 'invoice.perusahaan', 'invoice.resto', 'barang'])
             ->whereHas('invoice', function ($q) use ($filters) {
                 $q->where('is_opening_balance', false)
                   ->when($filters['tanggal_dari'] ?? null, fn($q, $v) => $q->where('tanggal_invoice', '>=', $v))
@@ -346,7 +354,7 @@ class InvoiceController extends Controller
             'E' => ['QTY',             10],
             'F' => ['Harga Satuan',    18],
             'G' => ['TOTAL',           18],
-            'H' => ['Stokis / Resto',  28],
+            'H' => ['Stokis',           28],
             'I' => ['Tanggal Kirim',   16],
             'J' => ['Kode Resto',      16],
             'K' => ['Nama Klien',      32],
@@ -386,24 +394,52 @@ class InvoiceController extends Controller
         ]);
         $sheet2->getRowDimension(4)->setRowHeight(22);
 
+        $kodeRestoSet = collect();
+        foreach ($details as $_d) {
+            if ($_d->kode_resto)                               $kodeRestoSet->push($_d->kode_resto);
+            if ($_d->invoice?->resto?->kode_resto)             $kodeRestoSet->push($_d->invoice->resto->kode_resto);
+            if ($_d->invoice?->klienAr?->resto?->kode_resto)   $kodeRestoSet->push($_d->invoice->klienAr->resto->kode_resto);
+        }
+        $restosByKode = Resto::whereIn('kode_resto', $kodeRestoSet->unique()->values())->get()->keyBy('kode_resto');
+
         $rowNum2 = 5;
         foreach ($details as $d) {
             $inv2 = $d->invoice;
             $bg2  = $rowNum2 % 2 === 0 ? 'FFE3F2FD' : 'FFFFFFFF';
 
+            // Prioritaskan perusahaan pemilik resto klien (B2C); fallback ke perusahaan invoice (B2B)
+            $perusahaan = $inv2?->klienAr?->resto?->perusahaan ?? $inv2?->perusahaan;
+            $entitas    = $perusahaan?->nama_perusahaan ?? '-';
+
+            $resolvedKode = $d->kode_resto
+                ?? $inv2?->resto?->kode_resto
+                ?? $inv2?->klienAr?->resto?->kode_resto;
+
+            $stokis = $inv2?->resto?->stokis
+                ?? $inv2?->klienAr?->resto?->stokis
+                ?? ($resolvedKode ? $restosByKode->get($resolvedKode)?->stokis : null)
+                ?? '-';
+
+            $kodeResto = $d->kode_resto
+                ?? $inv2?->resto?->kode_resto
+                ?? $inv2?->klienAr?->resto?->kode_resto
+                ?? '-';
+
+            $nomorInvoice = $d->no_invoice_resto ?? $inv2?->no_invoice ?? '-';
+
             $rowData2 = [
-                'A' => [$d->no_invoice_resto                                 ?? '-', DataType::TYPE_STRING],
+                'A' => [$nomorInvoice,                                              DataType::TYPE_STRING],
                 'B' => [$d->barang?->kode_barang                             ?? '-', DataType::TYPE_STRING],
                 'C' => [$d->nama_barang,                                            DataType::TYPE_STRING],
                 'D' => [$d->satuan                                           ?? '-', DataType::TYPE_STRING],
                 'E' => [(float) $d->qty,                                            DataType::TYPE_NUMERIC],
                 'F' => [(float) $d->harga_satuan,                                   DataType::TYPE_NUMERIC],
                 'G' => [(float) $d->subtotal,                                       DataType::TYPE_NUMERIC],
-                'H' => [$d->nama_resto                                       ?? '-', DataType::TYPE_STRING],
+                'H' => [$stokis,                                                    DataType::TYPE_STRING],
                 'I' => [$inv2?->tanggal_kirim_barang?->format('d-m-Y')      ?? '-', DataType::TYPE_STRING],
-                'J' => [$d->kode_resto                                       ?? '-', DataType::TYPE_STRING],
+                'J' => [$kodeResto,                                                 DataType::TYPE_STRING],
                 'K' => [$inv2?->klienAr?->nama_klien                        ?? '-', DataType::TYPE_STRING],
-                'L' => [$inv2?->perusahaan?->nama_singkatan_perusahaan      ?? '-', DataType::TYPE_STRING],
+                'L' => [$entitas,                                                   DataType::TYPE_STRING],
                 'M' => [$inv2?->no_invoice                                  ?? '-', DataType::TYPE_STRING],
             ];
 
@@ -713,16 +749,17 @@ class InvoiceController extends Controller
             if ($firstCell === '' && count(array_filter(array_map('strval', $row))) === 0) continue;
 
             $totalData++;
-            $noUrut       = $this->invoiceImportStr($row[0] ?? '');
-            $noInvoice    = $this->invoiceImportStr($row[1] ?? '');
-            $namaKlien    = $this->invoiceImportStr($row[2] ?? '');
-            $tanggal      = $this->invoiceImportDate($row[3] ?? '');
-            $jatuhTempo   = $this->invoiceImportDate($row[4] ?? '');
-            $periodeAwal  = $this->invoiceImportDate($row[5] ?? '');
-            $periodeAkhir = $this->invoiceImportDate($row[6] ?? '');
-            $noSuratJalan = $this->invoiceImportStr($row[7] ?? '');
-            $tagihanSblm  = $this->invoiceImportNum($row[8] ?? '');
-            $keterangan   = $this->invoiceImportStr($row[9] ?? '');
+            $noUrut       = $this->invoiceImportStr($row[0] ?? '');   // A
+            $noInvoice    = $this->invoiceImportStr($row[1] ?? '');   // B
+            $namaKlien    = $this->invoiceImportStr($row[2] ?? '');   // C
+            $tanggal      = $this->invoiceImportDate($row[3] ?? '');  // D: tanggal_invoice
+            $tanggalKirim = $this->invoiceImportDate($row[4] ?? '');  // E: tanggal_kirim_barang
+            $jatuhTempo   = $this->invoiceImportDate($row[5] ?? '');  // F: tanggal_jatuh_tempo
+            $periodeAwal  = $this->invoiceImportDate($row[6] ?? '');  // G: periode_awal
+            $periodeAkhir = $this->invoiceImportDate($row[7] ?? '');  // H: periode_akhir
+            $noSuratJalan = $this->invoiceImportStr($row[8] ?? '');   // I: no_surat_jalan
+            $tagihanSblm  = $this->invoiceImportNum($row[9] ?? '');   // J: tagihan_periode_sebelumnya
+            $keterangan   = $this->invoiceImportStr($row[10] ?? '');  // K: keterangan
 
             $validated = Validator::make(
                 [
@@ -758,11 +795,12 @@ class InvoiceController extends Controller
                 $invoice = Invoice::create([
                     'no_invoice'                 => $noInvoice,
                     'tanggal_invoice'            => $tanggal,
+                    'tanggal_kirim_barang'       => $tanggalKirim ?: null,
                     'tanggal_jatuh_tempo'        => $jatuhTempo,
                     'periode_awal'               => $periodeAwal,
                     'periode_akhir'              => $periodeAkhir,
                     'klien_ar_id'                => $klien->id,
-                    'resto_id'                   => null,
+                    'resto_id'                   => $klien->resto_id,
                     'perusahaan_id'              => $klien->perusahaan_id,
                     'karyawan_id'                => $this->service->resolveInvoiceKaryawanId($user, $klien),
                     'no_surat_jalan'             => $noSuratJalan,
@@ -1007,17 +1045,18 @@ class InvoiceController extends Controller
             'B' => ['no_invoice',                  26],
             'C' => ['nama_klien',                  32],
             'D' => ['tanggal_invoice',             20],
-            'E' => ['tanggal_jatuh_tempo',         20],
-            'F' => ['periode_awal',                20],
-            'G' => ['periode_akhir',               20],
-            'H' => ['no_surat_jalan',              22],
-            'I' => ['tagihan_periode_sebelumnya',  26],
-            'J' => ['keterangan',                  32],
+            'E' => ['tanggal_kirim_barang',        22],
+            'F' => ['tanggal_jatuh_tempo',         20],
+            'G' => ['periode_awal',                20],
+            'H' => ['periode_akhir',               20],
+            'I' => ['no_surat_jalan',              22],
+            'J' => ['tagihan_periode_sebelumnya',  26],
+            'K' => ['keterangan',                  32],
         ];
         if ($isB2B) {
-            $cols['K'] = ['nama_resto *', 28];
+            $cols['L'] = ['nama_resto *', 28];
         }
-        $lastCol = $isB2B ? 'K' : 'J';
+        $lastCol = $isB2B ? 'L' : 'K';
 
         $sheet->mergeCells("A1:{$lastCol}1");
         $sheet->setCellValue('A1', $isB2B
@@ -1058,14 +1097,15 @@ class InvoiceController extends Controller
             'C' => $isB2B ? 'PT Maju Jaya' : 'Budi Santoso',
             'D' => date('d-m-Y'),
             'E' => '',
-            'F' => date('01-m-Y'),
-            'G' => date('t-m-Y'),
-            'H' => 'SJ-001',
-            'I' => '0',
-            'J' => 'Invoice bulan ini',
+            'F' => '',
+            'G' => date('01-m-Y'),
+            'H' => date('t-m-Y'),
+            'I' => 'SJ-001',
+            'J' => '0',
+            'K' => 'Invoice bulan ini',
         ];
         if ($isB2B) {
-            $example['K'] = 'Resto Makmur';
+            $example['L'] = 'Resto Makmur';
         }
         foreach ($example as $col => $val) {
             $sheet->getCell("{$col}5")->setValueExplicit($val, DataType::TYPE_STRING);
@@ -1084,9 +1124,8 @@ class InvoiceController extends Controller
                 'fill'    => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => $bg]],
                 'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_HAIR, 'color' => ['argb' => 'FFE0E0E0']]],
             ]);
-            $sheet->getStyle("I{$row}")->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
-            $sheet->getStyle("K{$row}")->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
-            foreach (['D', 'E', 'F', 'G'] as $dateCol) {
+            $sheet->getStyle("J{$row}")->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
+            foreach (['D', 'E', 'F', 'G', 'H'] as $dateCol) {
                 $sheet->getStyle("{$dateCol}{$row}")->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
             }
             $sheet->getRowDimension($row)->setRowHeight(18);
@@ -1567,7 +1606,7 @@ class InvoiceController extends Controller
 
         $filters = $request->only(['tanggal_dari', 'tanggal_sampai', 'klien_ar_id']);
 
-        $details = InvoiceItem::with(['invoice.klienAr', 'invoice.perusahaan', 'barang'])
+        $details = InvoiceItem::with(['invoice.klienAr.resto', 'invoice.resto', 'invoice.perusahaan', 'barang'])
             ->whereNotNull('no_invoice_resto')
             ->whereHas('invoice', function ($q) use ($filters) {
                 $q->where('is_opening_balance', false)
@@ -1598,7 +1637,7 @@ class InvoiceController extends Controller
             'E' => ['QTY',             10],
             'F' => ['Harga Satuan',    18],
             'G' => ['TOTAL',           18],
-            'H' => ['Stokis / Resto',  28],
+            'H' => ['Stokis',           28],
             'I' => ['Tanggal Kirim',   16],
             'J' => ['Kode Resto',      16],
             'K' => ['Nama Klien',      32],
@@ -1638,10 +1677,27 @@ class InvoiceController extends Controller
         ]);
         $sheet->getRowDimension(4)->setRowHeight(22);
 
+        $b2bKodeRestoSet = collect();
+        foreach ($details as $_d) {
+            if ($_d->kode_resto)                                $b2bKodeRestoSet->push($_d->kode_resto);
+            if ($_d->invoice?->resto?->kode_resto)              $b2bKodeRestoSet->push($_d->invoice->resto->kode_resto);
+            if ($_d->invoice?->klienAr?->resto?->kode_resto)    $b2bKodeRestoSet->push($_d->invoice->klienAr->resto->kode_resto);
+        }
+        $b2bRestosByKode = Resto::whereIn('kode_resto', $b2bKodeRestoSet->unique()->values())->get()->keyBy('kode_resto');
+
         $rowNum = 5;
         foreach ($details as $d) {
             $inv = $d->invoice;
             $bg  = $rowNum % 2 === 0 ? 'FFE3F2FD' : 'FFFFFFFF';
+
+            $b2bResolvedKode = $d->kode_resto
+                ?? $inv?->resto?->kode_resto
+                ?? $inv?->klienAr?->resto?->kode_resto;
+
+            $b2bStokis = $inv?->resto?->stokis
+                ?? $inv?->klienAr?->resto?->stokis
+                ?? ($b2bResolvedKode ? $b2bRestosByKode->get($b2bResolvedKode)?->stokis : null)
+                ?? '-';
 
             $rowData = [
                 'A' => [$d->no_invoice_resto          ?? '-',                         DataType::TYPE_STRING],
@@ -1651,7 +1707,7 @@ class InvoiceController extends Controller
                 'E' => [(float) $d->qty,                                            DataType::TYPE_NUMERIC],
                 'F' => [(float) $d->harga_satuan,                                   DataType::TYPE_NUMERIC],
                 'G' => [(float) $d->subtotal,                                       DataType::TYPE_NUMERIC],
-                'H' => [$d->nama_resto       ?? '-',                                DataType::TYPE_STRING],
+                'H' => [$b2bStokis,                                                 DataType::TYPE_STRING],
                 'I' => [$inv?->tanggal_kirim_barang?->format('d-m-Y') ?? '-',       DataType::TYPE_STRING],
                 'J' => [$d->kode_resto       ?? '-',                                DataType::TYPE_STRING],
                 'K' => [$inv?->klienAr?->nama_klien ?? '-',                         DataType::TYPE_STRING],
