@@ -43,7 +43,7 @@ class OpeningBalanceController extends Controller
         $user    = auth()->user();
         $filters = $request->only([
             'search', 'status', 'klien_ar_id', 'karyawan_id',
-            'tanggal_dari', 'tanggal_sampai', 'approval_status', 'per_page',
+            'tanggal_dari', 'tanggal_sampai', 'approval_status', 'per_page', 'segment',
         ]);
         $filters['is_opening_balance'] = true;
         ArFilterScope::apply($filters, $user);
@@ -62,7 +62,7 @@ class OpeningBalanceController extends Controller
         $user    = auth()->user();
         $filters = $request->only([
             'search', 'status', 'klien_ar_id', 'karyawan_id',
-            'tanggal_dari', 'tanggal_sampai', 'approval_status',
+            'tanggal_dari', 'tanggal_sampai', 'approval_status', 'segment',
         ]);
         $filters['is_opening_balance'] = true;
         ArFilterScope::apply($filters, $user);
