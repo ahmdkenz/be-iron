@@ -565,7 +565,13 @@
           @endif
         </td>
         <td style="width: 60%; vertical-align: middle;" class="text-center">
-          <div class="company-name">{{ $regInv->perusahaan->nama_perusahaan }}</div>
+          <div class="company-name">
+            @if($regInv->klienAr->tipe_klien === 'PT')
+              {{ $regInv->karyawan?->perusahaan?->nama_perusahaan ?? $regInv->perusahaan->nama_perusahaan }}
+            @else
+              {{ $regInv->perusahaan->nama_perusahaan }}
+            @endif
+          </div>
           <div class="company-address">
             Jl. Moh. Kahfi 1, RT.6/RW.1, Cipedak, Kec. Jagakarsa<br>
             Kota Jakarta Selatan, Daerah Khusus Ibukota Jakarta 12630
