@@ -12,6 +12,7 @@ use App\Models\Invoice;
 use App\Models\KlienAr;
 use App\Models\OpeningBalanceDetail;
 use App\Models\OpeningBalanceDetailItem;
+use App\Support\Helpers\ArFilterScope;
 use App\Support\Helpers\RoleHelper;
 use App\Support\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
@@ -39,16 +40,13 @@ class OpeningBalanceController extends Controller
     {
         $this->authorizeViewOpeningBalance();
 
-        $user    = auth()->user()->load('karyawan');
+        $user    = auth()->user();
         $filters = $request->only([
             'search', 'status', 'klien_ar_id', 'karyawan_id',
             'tanggal_dari', 'tanggal_sampai', 'approval_status', 'per_page',
         ]);
         $filters['is_opening_balance'] = true;
-
-        if ($user->karyawan && !RoleHelper::hasGlobalArAccess($user)) {
-            $filters['perusahaan_id'] = $user->karyawan->perusahaan_id;
-        }
+        ArFilterScope::apply($filters, $user);
 
         $list = $this->service->paginate($filters);
 
@@ -61,16 +59,13 @@ class OpeningBalanceController extends Controller
     {
         $this->authorizeViewOpeningBalance();
 
-        $user    = auth()->user()->load('karyawan');
+        $user    = auth()->user();
         $filters = $request->only([
             'search', 'status', 'klien_ar_id', 'karyawan_id',
             'tanggal_dari', 'tanggal_sampai', 'approval_status',
         ]);
         $filters['is_opening_balance'] = true;
-
-        if ($user->karyawan && !RoleHelper::hasGlobalArAccess($user)) {
-            $filters['perusahaan_id'] = $user->karyawan->perusahaan_id;
-        }
+        ArFilterScope::apply($filters, $user);
 
         return $this->successResponse($this->service->getSummary($filters));
     }
@@ -174,16 +169,13 @@ class OpeningBalanceController extends Controller
             return $this->errorResponse('Ekstensi PHP "zip" tidak aktif. Aktifkan extension=zip pada php.ini lalu restart server.', 500);
         }
 
-        $user    = auth()->user()->load('karyawan');
+        $user    = auth()->user();
         $filters = $request->only([
             'search', 'status', 'klien_ar_id', 'karyawan_id',
             'tanggal_dari', 'tanggal_sampai', 'approval_status',
         ]);
         $filters['is_opening_balance'] = true;
-
-        if ($user->karyawan && !RoleHelper::hasGlobalArAccess($user)) {
-            $filters['perusahaan_id'] = $user->karyawan->perusahaan_id;
-        }
+        ArFilterScope::apply($filters, $user);
 
         $records = $this->service->getAllForExport($filters);
 

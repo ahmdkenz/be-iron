@@ -580,10 +580,7 @@
 
     <div class="doc-title">
       INVOICE
-      @if($regInv->klienAr->tipe_klien === 'PT')
-        <span style="font-size:14px; letter-spacing:2px; color:#b71c1c;"> — B2B</span>
-      @else
-        <span style="font-size:14px; letter-spacing:2px; color:#555555;"> — B2C</span>
+      @if(!$regInv->is_opening_balance)
       @endif
     </div>
 

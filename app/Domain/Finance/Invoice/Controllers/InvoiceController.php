@@ -14,6 +14,7 @@ use App\Models\InvoiceItem;
 use App\Models\KlienAr;
 use App\Models\Resto;
 use Carbon\Carbon;
+use App\Support\Helpers\ArFilterScope;
 use App\Support\Helpers\RoleHelper;
 use App\Support\Helpers\SignatureBarcodeHelper;
 use App\Support\Traits\ApiResponse;
@@ -43,16 +44,13 @@ class InvoiceController extends Controller
 
     public function index(Request $request): JsonResponse
     {
-        $user    = auth()->user()->load('karyawan');
+        $user    = auth()->user();
         $filters = $request->only([
             'search', 'status', 'klien_ar_id', 'karyawan_id',
             'tanggal_dari', 'tanggal_sampai', 'segment',
         ]);
         $filters['is_opening_balance'] = false;
-
-        if ($user->karyawan && !RoleHelper::hasGlobalArAccess($user)) {
-            $filters['perusahaan_id'] = $user->karyawan->perusahaan_id;
-        }
+        ArFilterScope::apply($filters, $user);
 
         $list = $this->service->paginate($filters);
         return $this->paginatedResponse(
@@ -62,16 +60,13 @@ class InvoiceController extends Controller
 
     public function summary(Request $request): JsonResponse
     {
-        $user    = auth()->user()->load('karyawan');
+        $user    = auth()->user();
         $filters = $request->only([
             'search', 'status', 'klien_ar_id', 'karyawan_id',
             'tanggal_dari', 'tanggal_sampai', 'segment',
         ]);
         $filters['is_opening_balance'] = false;
-
-        if ($user->karyawan && !RoleHelper::hasGlobalArAccess($user)) {
-            $filters['perusahaan_id'] = $user->karyawan->perusahaan_id;
-        }
+        ArFilterScope::apply($filters, $user);
 
         return $this->successResponse($this->service->getSummary($filters));
     }
@@ -99,12 +94,9 @@ class InvoiceController extends Controller
 
     public function rekapKlien(Request $request): JsonResponse
     {
-        $user    = auth()->user()->load('karyawan');
+        $user    = auth()->user();
         $filters = $request->only(['klien_ar_id', 'periode_bulan', 'periode_tahun']);
-
-        if ($user->karyawan && !RoleHelper::hasGlobalArAccess($user)) {
-            $filters['perusahaan_id'] = $user->karyawan->perusahaan_id;
-        }
+        ArFilterScope::apply($filters, $user);
 
         return $this->successResponse($this->service->getRekapKlien($filters));
     }
@@ -146,16 +138,13 @@ class InvoiceController extends Controller
 
     public function export(Request $request): StreamedResponse
     {
-        $user    = auth()->user()->load('karyawan');
+        $user    = auth()->user();
         $filters = $request->only([
             'search', 'status', 'klien_ar_id', 'karyawan_id',
             'tanggal_dari', 'tanggal_sampai', 'segment',
         ]);
         $filters['is_opening_balance'] = false;
-
-        if ($user->karyawan && !RoleHelper::hasGlobalArAccess($user)) {
-            $filters['perusahaan_id'] = $user->karyawan->perusahaan_id;
-        }
+        ArFilterScope::apply($filters, $user);
 
         $invoices = $this->service->paginate(array_merge($filters, ['per_page' => 9999]))->items();
 
@@ -199,16 +188,13 @@ class InvoiceController extends Controller
             return $this->errorResponse('Ekstensi PHP "zip" tidak aktif. Aktifkan extension=zip pada php.ini lalu restart server.', 500);
         }
 
-        $user    = auth()->user()->load('karyawan');
+        $user    = auth()->user();
         $filters = $request->only([
             'search', 'status', 'klien_ar_id', 'karyawan_id',
             'tanggal_dari', 'tanggal_sampai', 'segment',
         ]);
         $filters['is_opening_balance'] = false;
-
-        if ($user->karyawan && !RoleHelper::hasGlobalArAccess($user)) {
-            $filters['perusahaan_id'] = $user->karyawan->perusahaan_id;
-        }
+        ArFilterScope::apply($filters, $user);
 
         $invoices = $this->service->getAllForExport($filters);
         $invoices->load('items:id,invoice_id,nama_resto');
