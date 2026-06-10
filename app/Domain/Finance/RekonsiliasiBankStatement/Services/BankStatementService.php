@@ -397,13 +397,14 @@ class BankStatementService
             ->orderByDesc('tanggal_invoice')
             ->get()
             ->map(fn($inv) => [
-                'id'            => $inv->id,
-                'no_invoice'    => $inv->no_invoice,
-                'tanggal'       => $inv->tanggal_invoice?->toDateString(),
-                'total_tagihan' => $inv->total_tagihan,
-                'sisa_tagihan'  => $inv->sisa_tagihan,
-                'status'        => $inv->status,
-                'nama_klien'    => $inv->klienAr?->nama_klien,
+                'id'                 => $inv->id,
+                'no_invoice'         => $inv->no_invoice,
+                'tanggal'            => $inv->tanggal_invoice?->toDateString(),
+                'total_tagihan'      => $inv->total_tagihan,
+                'sisa_tagihan'       => $inv->sisa_tagihan,
+                'status'             => $inv->status,
+                'nama_klien'         => $inv->klienAr?->nama_klien,
+                'is_opening_balance' => (bool) $inv->is_opening_balance,
             ]);
     }
 

@@ -421,12 +421,6 @@ class InvoiceService
 
     public function recalculate(Invoice $invoice): void
     {
-        abort_if(
-            $invoice->requiresApproval() && !$invoice->isApprovedForFinanceFlow(),
-            422,
-            'Opening balance belum disetujui, pembayaran belum dapat diproses'
-        );
-
         $totalPembayaran = $invoice->pembayarans()->sum('jumlah_pembayaran');
         $sisaTagihan     = $invoice->total_tagihan - $totalPembayaran;
 
