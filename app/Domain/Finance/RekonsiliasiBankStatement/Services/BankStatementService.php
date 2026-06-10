@@ -9,7 +9,6 @@ use App\Models\BankStatementDetail;
 use App\Models\Invoice;
 use App\Models\PembayaranAr;
 use App\Models\PendapatanDiMuka;
-use Carbon\Carbon;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 
@@ -95,50 +94,25 @@ class BankStatementService
         $details = $query->get();
 
         foreach ($details as $detail) {
-            $tanggal = Carbon::parse($detail->tanggal);
-            $from    = $tanggal->copy()->subDays(7)->toDateString();
-            $to      = $tanggal->copy()->addDays(7)->toDateString();
-
-            $candidates = PembayaranAr::with(['invoice.klienAr'])
-                ->whereBetween('tanggal_pembayaran', [$from, $to])
-                ->where('jumlah_pembayaran', $detail->kredit)
-                ->where('metode_pembayaran', 'TRANSFER')
-                ->whereNotIn('id', $usedPembayaranIds)
-                ->get();
-
-            if ($candidates->isEmpty()) {
+            if (empty(trim((string) $detail->no_referensi))) {
                 $detail->status_cocok     = 'UNMATCHED';
                 $detail->pembayaran_ar_id = null;
                 $detail->save();
                 continue;
             }
 
-            $scored = $candidates
-                ->map(fn($c) => ['candidate' => $c, 'score' => $this->scoreCandidate($c, $detail->keterangan ?? '', $tanggal)])
-                ->sortByDesc('score')
-                ->values();
+            $matched = PembayaranAr::where('no_referensi', $detail->no_referensi)
+                ->whereNotIn('id', $usedPembayaranIds)
+                ->first();
 
-            $top    = $scored[0];
-            $second = $scored[1] ?? null;
-
-            if ($candidates->count() === 1) {
-                $status = 'MATCHED';
-            } elseif ($top['score'] >= 200) {
-                // Referensi ditemukan di keterangan bank — kepercayaan sangat tinggi
-                $status = 'MATCHED';
-            } elseif ($top['score'] >= 50 && ($second === null || $top['score'] > $second['score'] * 1.75)) {
-                // Kandidat terbaik jauh dominan dibanding kandidat lainnya
-                $status = 'MATCHED';
-            } else {
-                $status = 'POSSIBLE';
-            }
-
-            $detail->status_cocok     = $status;
-            $detail->pembayaran_ar_id = $top['candidate']->id;
-
-            if ($status === 'MATCHED') {
+            if ($matched) {
+                $detail->status_cocok     = 'MATCHED';
+                $detail->pembayaran_ar_id = $matched->id;
                 $detail->matched_by       = $statement->uploaded_by;
-                $usedPembayaranIds[]      = $top['candidate']->id;
+                $usedPembayaranIds[]      = $matched->id;
+            } else {
+                $detail->status_cocok     = 'UNMATCHED';
+                $detail->pembayaran_ar_id = null;
             }
 
             $detail->save();
@@ -146,32 +120,6 @@ class BankStatementService
 
         $this->refreshCounter($statement->id);
         $statement->refresh();
-    }
-
-    private function scoreCandidate(PembayaranAr $candidate, string $bankKeterangan, Carbon $bankTanggal): int
-    {
-        $score        = 0;
-        $bankKetLower = mb_strtolower($bankKeterangan);
-
-        $diffDays = abs($bankTanggal->diffInDays(Carbon::parse($candidate->tanggal_pembayaran)));
-        $score   += match (true) {
-            $diffDays === 0 => 50,
-            $diffDays === 1 => 30,
-            $diffDays === 2 => 15,
-            default         => 5,
-        };
-
-        $noRef = trim((string) ($candidate->no_referensi ?? ''));
-        if ($noRef !== '' && str_contains($bankKetLower, mb_strtolower($noRef))) {
-            $score += 200;
-        }
-
-        $namaKlien = trim((string) ($candidate->invoice?->klienAr?->nama_klien ?? ''));
-        if ($namaKlien !== '' && str_contains($bankKetLower, mb_strtolower($namaKlien))) {
-            $score += 80;
-        }
-
-        return $score;
     }
 
     public function getDetail(int $bankStatementId): array
@@ -189,20 +137,11 @@ class BankStatementService
             ->orderBy('id')
             ->get()
             ->map(function ($d) {
-                $pembayaran    = $d->pembayaranAr;
-                $invoice       = $pembayaran?->invoice;
-                if ($pembayaran && $invoice) {
-                    $sisaSebelumBayar = max(0, round(
-                        (float) $invoice->total_tagihan
-                        - ((float) $invoice->total_pembayaran - (float) $pembayaran->jumlah_pembayaran),
-                        2
-                    ));
-                    $selisihBank = round($d->kredit - $sisaSebelumBayar, 2);
-                } elseif ($pembayaran) {
-                    $selisihBank = round($d->kredit - (float) $pembayaran->jumlah_pembayaran, 2);
-                } else {
-                    $selisihBank = null;
-                }
+                $pembayaran  = $d->pembayaranAr;
+                $invoice     = $pembayaran?->invoice;
+                $selisihBank = $pembayaran
+                    ? round($d->kredit - (float) $pembayaran->jumlah_pembayaran, 2)
+                    : null;
 
                 $kelebihanBayar = null;
                 if ($invoice) {
@@ -279,10 +218,6 @@ class BankStatementService
 
     public function getKandidat(BankStatementDetail $detail): \Illuminate\Support\Collection
     {
-        $tanggal = Carbon::parse($detail->tanggal);
-        $from    = $tanggal->copy()->subDays(14)->toDateString();
-        $to      = $tanggal->copy()->addDays(14)->toDateString();
-
         $lockedIds = BankStatementDetail::where('bank_statement_id', $detail->bank_statement_id)
             ->where('status_cocok', 'MATCHED')
             ->where('id', '!=', $detail->id)
@@ -290,11 +225,10 @@ class BankStatementService
             ->pluck('pembayaran_ar_id');
 
         return PembayaranAr::with(['invoice.klienAr'])
-            ->whereBetween('tanggal_pembayaran', [$from, $to])
-            ->where('jumlah_pembayaran', $detail->kredit)
             ->where('metode_pembayaran', 'TRANSFER')
             ->whereNotIn('id', $lockedIds)
-            ->orderByRaw('ABS(DATEDIFF(tanggal_pembayaran, ?))', [$detail->tanggal])
+            ->orderByDesc('tanggal_pembayaran')
+            ->limit(50)
             ->get()
             ->map(fn($p) => [
                 'id'                 => $p->id,
