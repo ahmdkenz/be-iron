@@ -65,9 +65,9 @@ class InvoiceService
             });
         }
 
-        $lastInvoice = $query->latest('tanggal_invoice')->latest('id')->first();
-
-        return $lastInvoice ? (float) $lastInvoice->sisa_tagihan : 0.0;
+        return (float) $query
+            ->selectRaw('COALESCE(SUM(GREATEST(0, subtotal - total_pembayaran)), 0) as total')
+            ->value('total') ?? 0.0;
     }
 
     public function generateNoInvoice(KlienAr $klien, string $tanggal): string
@@ -463,6 +463,28 @@ class InvoiceService
         $this->cascadeCarryoverToNext($invoice);
     }
 
+    private function sumOwnSisaBeforeInvoice(Invoice $invoice): float
+    {
+        return (float) Invoice::where('klien_ar_id', $invoice->klien_ar_id)
+            ->whereIn('status', ['TERKIRIM', 'SEBAGIAN'])
+            ->where(function ($q) use ($invoice) {
+                $q->where('tanggal_invoice', '<', $invoice->tanggal_invoice)
+                    ->orWhere(function ($q2) use ($invoice) {
+                        $q2->where('tanggal_invoice', $invoice->tanggal_invoice)
+                            ->where('id', '<', $invoice->id);
+                    });
+            })
+            ->where(function ($q) {
+                $q->where('is_opening_balance', false)
+                    ->orWhere(function ($q2) {
+                        $q2->where('is_opening_balance', true)
+                            ->where('approval_status', 'APPROVED');
+                    });
+            })
+            ->selectRaw('COALESCE(SUM(GREATEST(0, subtotal - total_pembayaran)), 0) as total')
+            ->value('total') ?? 0.0;
+    }
+
     private function cascadeCarryoverToNext(Invoice $invoice): void
     {
         $nextInvoice = Invoice::where('klien_ar_id', $invoice->klien_ar_id)
@@ -482,7 +504,7 @@ class InvoiceService
         }
 
         $oldCarryover = (float) $nextInvoice->tagihan_periode_sebelumnya;
-        $newCarryover = (float) $invoice->sisa_tagihan;
+        $newCarryover = $this->sumOwnSisaBeforeInvoice($nextInvoice);
 
         if (abs($oldCarryover - $newCarryover) < 0.01) {
             return;
