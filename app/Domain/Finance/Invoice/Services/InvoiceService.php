@@ -438,14 +438,14 @@ class InvoiceService
         $totalPembayaran = $invoice->pembayarans()->sum('jumlah_pembayaran');
         $sisaTagihan     = $invoice->total_tagihan - $totalPembayaran;
 
-        $status = $invoice->status;
-        if ($sisaTagihan <= 0) {
+        if ($totalPembayaran <= 0) {
+            $status      = 'TERKIRIM';
+            $sisaTagihan = max(0, $sisaTagihan);
+        } elseif ($sisaTagihan <= 0) {
             $status      = 'LUNAS';
             $sisaTagihan = 0;
-        } elseif ($totalPembayaran > 0) {
-            $status = 'SEBAGIAN';
         } else {
-            $status = 'TERKIRIM';
+            $status = 'SEBAGIAN';
         }
 
         $invoice->update([
@@ -514,9 +514,9 @@ class InvoiceService
         $newSisaTagihan  = max(0, $newTotalTagihan - (float) $nextInvoice->total_pembayaran);
 
         $newStatus = match (true) {
+            (float) $nextInvoice->total_pembayaran <= 0 => 'TERKIRIM',
             $newSisaTagihan <= 0                        => 'LUNAS',
-            (float) $nextInvoice->total_pembayaran > 0  => 'SEBAGIAN',
-            default                                     => 'TERKIRIM',
+            default                                     => 'SEBAGIAN',
         };
 
         $nextInvoice->update([
@@ -556,6 +556,24 @@ class InvoiceService
         if ($prevInvoice) {
             $this->cascadeCarryoverToNext($prevInvoice->fresh());
         }
+    }
+
+    public function bulkDelete(array $ids): int
+    {
+        $deleted = 0;
+        foreach ($ids as $id) {
+            $invoice = $this->repository->findById((int) $id);
+            if (!$invoice || $invoice->status !== 'DRAFT') {
+                continue;
+            }
+            try {
+                $this->delete($invoice);
+                $deleted++;
+            } catch (\Throwable) {
+                // skip jika gagal (misalnya cascade constraint)
+            }
+        }
+        return $deleted;
     }
 
     private function ensureOpeningBalance(Invoice $invoice): void

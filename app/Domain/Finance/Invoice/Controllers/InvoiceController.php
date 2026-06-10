@@ -136,6 +136,21 @@ class InvoiceController extends Controller
         return $this->successResponse(null, 'Invoice berhasil dihapus');
     }
 
+    public function bulkDestroy(Request $request): JsonResponse
+    {
+        $request->validate([
+            'ids'   => ['required', 'array', 'min:1'],
+            'ids.*' => ['integer'],
+        ]);
+
+        $deleted = $this->service->bulkDelete($request->ids);
+
+        return $this->successResponse(
+            ['deleted' => $deleted],
+            "{$deleted} invoice berhasil dihapus"
+        );
+    }
+
     public function export(Request $request): StreamedResponse
     {
         $user    = auth()->user();
