@@ -48,21 +48,24 @@ class InvoiceService
         return $this->repository->getRekapKlien($filters);
     }
 
-    public function getCarryover(int $klienArId): float
+    public function getCarryover(int $klienArId, bool $excludeOpeningBalance = false): float
     {
-        $lastInvoice = Invoice::where('klien_ar_id', $klienArId)
-            ->whereIn('status', ['TERKIRIM', 'SEBAGIAN'])
-            ->where(function ($query) {
-                $query
-                    ->where('is_opening_balance', false)
-                    ->orWhere(function ($openingBalanceQuery) {
-                        $openingBalanceQuery
-                            ->where('is_opening_balance', true)
+        $query = Invoice::where('klien_ar_id', $klienArId)
+            ->whereIn('status', ['TERKIRIM', 'SEBAGIAN']);
+
+        if ($excludeOpeningBalance) {
+            $query->where('is_opening_balance', false);
+        } else {
+            $query->where(function ($q) {
+                $q->where('is_opening_balance', false)
+                    ->orWhere(function ($q2) {
+                        $q2->where('is_opening_balance', true)
                             ->where('approval_status', 'APPROVED');
                     });
-            })
-            ->latest('tanggal_invoice')
-            ->first();
+            });
+        }
+
+        $lastInvoice = $query->latest('tanggal_invoice')->latest('id')->first();
 
         return $lastInvoice ? (float) $lastInvoice->sisa_tagihan : 0.0;
     }
@@ -444,10 +447,14 @@ class InvoiceService
         $this->cascadeCarryoverToNext($invoice->fresh());
     }
 
+    public function propagateCarryover(Invoice $invoice): void
+    {
+        $this->cascadeCarryoverToNext($invoice);
+    }
+
     private function cascadeCarryoverToNext(Invoice $invoice): void
     {
         $nextInvoice = Invoice::where('klien_ar_id', $invoice->klien_ar_id)
-            ->where('tagihan_periode_sebelumnya', '>', 0)
             ->where(function ($q) use ($invoice) {
                 $q->where('tanggal_invoice', '>', $invoice->tanggal_invoice)
                     ->orWhere(function ($q2) use ($invoice) {

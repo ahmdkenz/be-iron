@@ -599,6 +599,8 @@ class InvoiceController extends Controller
             if (!$periodeAwal)  $periodeAwal  = Carbon::parse($tanggalKirim)->startOfMonth()->format('Y-m-d');
             if (!$periodeAkhir) $periodeAkhir = Carbon::parse($tanggalKirim)->endOfMonth()->format('Y-m-d');
 
+            $carryover = $this->service->getCarryover($klien->id, true);
+
             try {
                 $invoice = Invoice::create([
                     'no_invoice'                 => $noInvKons,
@@ -612,11 +614,11 @@ class InvoiceController extends Controller
                     'perusahaan_id'              => $klien->perusahaan_id,
                     'karyawan_id'                => $this->service->resolveInvoiceKaryawanId($user, $klien),
                     'subtotal'                   => 0,
-                    'tagihan_periode_sebelumnya' => 0,
-                    'total_tagihan'              => 0,
+                    'tagihan_periode_sebelumnya' => $carryover,
+                    'total_tagihan'              => $carryover,
                     'total_pembayaran'           => 0,
-                    'sisa_tagihan'               => 0,
-                    'status'                     => 'DRAFT',
+                    'sisa_tagihan'               => $carryover,
+                    'status'                     => 'TERKIRIM',
                     'is_opening_balance'         => false,
                     'prepared_token'             => Str::uuid()->toString(),
                     'approved_token'             => Str::uuid()->toString(),
@@ -693,15 +695,34 @@ class InvoiceController extends Controller
         // ── Post-process: Hitung subtotal untuk invoice yang punya item ──
         foreach ($invoiceMapping as $noUrut => $invoice) {
             if (isset($invoicesWithItems[$noUrut])) {
-                $subtotal = (float) $invoice->items()->sum('subtotal');
+                $subtotal     = (float) $invoice->items()->sum('subtotal');
+                $tagihanSblm  = (float) $invoice->tagihan_periode_sebelumnya;
+                $totalTagihan = $subtotal + $tagihanSblm;
                 $invoice->update([
                     'subtotal'      => $subtotal,
-                    'total_tagihan' => $subtotal,
-                    'sisa_tagihan'  => $subtotal,
+                    'total_tagihan' => $totalTagihan,
+                    'sisa_tagihan'  => $totalTagihan,
                     'updated_by'    => auth()->id(),
                 ]);
             }
             UploadInvoiceToGDriveJob::dispatch($invoice->id);
+        }
+
+        // ── Cascade carryover: propagasi tagihan_sebelumnya antar invoice dalam batch ──
+        $firstByKlien = [];
+        foreach ($invoiceMapping as $invoice) {
+            $klienId = $invoice->klien_ar_id;
+            if (
+                !isset($firstByKlien[$klienId]) ||
+                $invoice->tanggal_invoice < $firstByKlien[$klienId]->tanggal_invoice ||
+                ($invoice->tanggal_invoice === $firstByKlien[$klienId]->tanggal_invoice
+                    && $invoice->id < $firstByKlien[$klienId]->id)
+            ) {
+                $firstByKlien[$klienId] = $invoice;
+            }
+        }
+        foreach ($firstByKlien as $firstInvoice) {
+            $this->service->propagateCarryover($firstInvoice->fresh());
         }
 
         $failed = $totalData - $insertedCount;
@@ -795,7 +816,7 @@ class InvoiceController extends Controller
                     'total_tagihan'              => $tagihanSblm,
                     'total_pembayaran'           => 0,
                     'sisa_tagihan'               => $tagihanSblm,
-                    'status'                     => 'DRAFT',
+                    'status'                     => 'TERKIRIM',
                     'is_opening_balance'         => false,
                     'keterangan'                 => $keterangan,
                     'prepared_token'             => Str::uuid()->toString(),
