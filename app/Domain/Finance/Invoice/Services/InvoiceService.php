@@ -317,6 +317,8 @@ class InvoiceService
 
             $approved = $this->findOrFail($invoice->id);
 
+            $this->propagateCarryover($approved);
+
             // Dispatch di dalam transaksi: job hanya masuk queue jika transaksi commit
             UploadInvoiceToGDriveJob::dispatch($approved->id);
 
@@ -418,7 +420,16 @@ class InvoiceService
             "Invoice tidak dapat diubah dari status {$invoice->status} ke {$status}"
         );
 
-        $invoice->update(['status' => $status, 'updated_by' => auth()->id()]);
+        $updateData = ['status' => $status, 'updated_by' => auth()->id()];
+
+        if ($status === 'LUNAS') {
+            $updateData['sisa_tagihan'] = 0;
+        }
+
+        $invoice->update($updateData);
+
+        $this->cascadeCarryoverToNext($invoice->fresh());
+
         return $invoice->fresh();
     }
 
@@ -504,8 +515,25 @@ class InvoiceService
             422,
             'Hanya invoice berstatus DRAFT yang dapat dihapus'
         );
+
+        $prevInvoice = Invoice::where('klien_ar_id', $invoice->klien_ar_id)
+            ->where(function ($q) use ($invoice) {
+                $q->where('tanggal_invoice', '<', $invoice->tanggal_invoice)
+                    ->orWhere(function ($q2) use ($invoice) {
+                        $q2->where('tanggal_invoice', $invoice->tanggal_invoice)
+                            ->where('id', '<', $invoice->id);
+                    });
+            })
+            ->orderByDesc('tanggal_invoice')
+            ->orderByDesc('id')
+            ->first();
+
         $invoice->items()->delete();
         $this->repository->delete($invoice);
+
+        if ($prevInvoice) {
+            $this->cascadeCarryoverToNext($prevInvoice->fresh());
+        }
     }
 
     private function ensureOpeningBalance(Invoice $invoice): void
