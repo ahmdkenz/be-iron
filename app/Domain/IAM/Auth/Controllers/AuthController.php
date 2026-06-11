@@ -9,19 +9,34 @@ use App\Models\User;
 use App\Support\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Hash;
 
 class AuthController extends Controller
 {
     use ApiResponse;
 
+    private const MAX_ATTEMPTS    = 5;
+    private const LOCKOUT_MINUTES = 15;
+
     public function login(LoginRequest $request): JsonResponse
     {
+        $lockKey  = 'login_lock:' . $request->username;
+        $attempts = (int) Cache::get($lockKey, 0);
+
+        if ($attempts >= self::MAX_ATTEMPTS) {
+            return $this->errorResponse(
+                'Akun terkunci sementara karena terlalu banyak percobaan login. Coba lagi dalam ' . self::LOCKOUT_MINUTES . ' menit.',
+                429
+            );
+        }
+
         $user = User::with('roles', 'karyawan.perusahaan')
             ->where('username', $request->username)
             ->first();
 
         if (!$user || !Hash::check($request->password, $user->password)) {
+            Cache::put($lockKey, $attempts + 1, now()->addMinutes(self::LOCKOUT_MINUTES));
             return $this->errorResponse('Username atau password salah', 401);
         }
 
@@ -29,19 +44,31 @@ class AuthController extends Controller
             return $this->errorResponse('Akun Anda tidak aktif. Hubungi administrator.', 403);
         }
 
-        $token = $user->createToken('auth-token')->plainTextToken;
+        Cache::forget($lockKey);
+
+        $token        = $user->createToken('auth-token')->plainTextToken;
+        $isProduction = app()->isProduction();
+        $cookie       = cookie(
+            'auth_token', $token, 1440, '/', null,
+            $isProduction,
+            true,
+            false,
+            $isProduction ? 'None' : 'Lax'
+        );
 
         return $this->successResponse([
             'user' => new UserResource($user),
-            'token' => $token,
-        ], 'Login berhasil');
+        ], 'Login berhasil')->withCookie($cookie);
     }
 
     public function logout(Request $request): JsonResponse
     {
         $request->user()->currentAccessToken()->delete();
 
-        return $this->successResponse(null, 'Logout berhasil');
+        $isProduction = app()->isProduction();
+        $expired      = cookie('auth_token', '', -1, '/', null, $isProduction, true, false, $isProduction ? 'None' : 'Lax');
+
+        return $this->successResponse(null, 'Logout berhasil')->withCookie($expired);
     }
 
     public function me(Request $request): JsonResponse

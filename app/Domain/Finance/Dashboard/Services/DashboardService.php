@@ -202,14 +202,14 @@ class DashboardService
         $dateFormat = $granularity === 'daily' ? '%Y-%m-%d' : '%Y-%m';
 
         $invoiceTotals = Invoice::query()
-            ->selectRaw("DATE_FORMAT(tanggal_invoice, '{$dateFormat}') as bucket_key, SUM(total_tagihan) as total")
+            ->selectRaw("DATE_FORMAT(tanggal_invoice, ?) as bucket_key, SUM(total_tagihan) as total", [$dateFormat])
             ->whereIn('klien_ar_id', $klienIds)
             ->whereBetween('tanggal_invoice', [$startDate, $endDate])
             ->groupBy('bucket_key')
             ->pluck('total', 'bucket_key');
 
         $paymentTotals = PembayaranAr::query()
-            ->selectRaw("DATE_FORMAT(tanggal_pembayaran, '{$dateFormat}') as bucket_key, SUM(jumlah_pembayaran) as total")
+            ->selectRaw("DATE_FORMAT(tanggal_pembayaran, ?) as bucket_key, SUM(jumlah_pembayaran) as total", [$dateFormat])
             ->whereBetween('tanggal_pembayaran', [$startDate, $endDate])
             ->whereIn('invoice_id', Invoice::whereIn('klien_ar_id', $klienIds)->select('id'))
             ->groupBy('bucket_key')

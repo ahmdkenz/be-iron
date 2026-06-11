@@ -47,7 +47,7 @@ return [
     |
     */
 
-    'expiration' => null,
+    'expiration' => 1440,
 
     /*
     |--------------------------------------------------------------------------
@@ -77,7 +77,7 @@ return [
 
     'middleware' => [
         'authenticate_session' => Laravel\Sanctum\Http\Middleware\AuthenticateSession::class,
-        'encrypt_cookies' => Illuminate\Cookie\Middleware\EncryptCookies::class,
+        'encrypt_cookies' => App\Http\Middleware\EncryptCookies::class,
         'validate_csrf_token' => App\Http\Middleware\VerifyApiCsrfToken::class,
     ],
 
