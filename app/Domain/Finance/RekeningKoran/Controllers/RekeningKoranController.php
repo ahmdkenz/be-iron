@@ -22,6 +22,7 @@ class RekeningKoranController extends Controller
             'periode_awal'     => ['nullable', 'date'],
             'periode_akhir'    => ['nullable', 'date', 'after_or_equal:periode_awal'],
             'bank_type'        => ['nullable', 'in:BCA,MANDIRI,CIMB,BSI'],
+            'dk'               => ['nullable', 'in:K,D'],
             'status_posting_1' => ['nullable', 'in:MATCHED,UNMATCHED,DIABAIKAN'],
             'status_posting_2' => ['nullable', 'in:POSTED,PENDING'],
             'per_page'         => ['nullable', 'integer', 'min:5', 'max:100'],
@@ -29,7 +30,7 @@ class RekeningKoranController extends Controller
         ]);
 
         $report = $this->service->getReport(
-            $request->only(['pic_ar_id', 'periode_awal', 'periode_akhir', 'bank_type', 'status_posting_1', 'status_posting_2']),
+            $request->only(['pic_ar_id', 'periode_awal', 'periode_akhir', 'bank_type', 'dk', 'status_posting_1', 'status_posting_2']),
             (int) $request->input('per_page', 25),
             (int) $request->input('page', 1),
         );

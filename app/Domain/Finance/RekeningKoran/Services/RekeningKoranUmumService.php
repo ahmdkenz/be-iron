@@ -37,6 +37,15 @@ class RekeningKoranUmumService
             $query->where('tb_bank_statement.bank_type', $filters['bank_type']);
         }
 
+        // Filter D/K
+        if (!empty($filters['dk'])) {
+            if ($filters['dk'] === 'K') {
+                $query->where('tb_bank_statement_detail.kredit', '>', 0);
+            } elseif ($filters['dk'] === 'D') {
+                $query->where('tb_bank_statement_detail.debit', '>', 0);
+            }
+        }
+
         // Filter PIC AR (user yang melakukan match)
         if (!empty($filters['pic_ar_id'])) {
             $query->where('tb_bank_statement_detail.matched_by', $filters['pic_ar_id']);
