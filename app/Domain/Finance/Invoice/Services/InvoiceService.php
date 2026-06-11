@@ -72,15 +72,7 @@ class InvoiceService
 
     public function generateNoInvoice(KlienAr $klien, string $tanggal): string
     {
-        $segment = $this->resolveInvoiceSegment($klien);
-        $date    = Carbon::parse($tanggal);
-        $prefix  = 'SI-' . $segment . '-' . $date->format('dmY');
-        $count   = Invoice::withTrashed()
-            ->where('no_invoice', 'like', $prefix . '-%')
-            ->count();
-        $seq     = str_pad($count + 1, 3, '0', STR_PAD_LEFT);
-
-        return $prefix . '-' . $seq;
+        return $this->generateConsolidatedInvoiceNo($klien);
     }
 
     public function generateOpeningBalanceNoInvoice(KlienAr $klien, string $tanggal): string
@@ -110,9 +102,7 @@ class InvoiceService
     {
         $klien    = KlienAr::with('perusahaan')->findOrFail($dto->klien_ar_id);
         $carryover = $this->getCarryover($dto->klien_ar_id);
-        $noInvoice = ($klien->tipe_klien === 'PT')
-            ? $this->generateConsolidatedInvoiceNo($klien)
-            : $dto->no_invoice;
+        $noInvoice = $this->generateConsolidatedInvoiceNo($klien);
 
         $subtotal = collect($dto->items)->sum(
             fn($item) => ($item['qty'] ?? 0) * ($item['harga_satuan'] ?? 0)

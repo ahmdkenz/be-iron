@@ -780,20 +780,18 @@ class InvoiceController extends Controller
 
             $totalData++;
             $noUrut       = $this->invoiceImportStr($row[0] ?? '');   // A
-            $noInvoice    = $this->invoiceImportStr($row[1] ?? '');   // B
-            $namaKlien    = $this->invoiceImportStr($row[2] ?? '');   // C
-            $tanggal      = $this->invoiceImportDate($row[3] ?? '');  // D: tanggal_invoice
-            $tanggalKirim = $this->invoiceImportDate($row[4] ?? '');  // E: tanggal_kirim_barang
-            $jatuhTempo   = $this->invoiceImportDate($row[5] ?? '');  // F: tanggal_jatuh_tempo
-            $periodeAwal  = $this->invoiceImportDate($row[6] ?? '');  // G: periode_awal
-            $periodeAkhir = $this->invoiceImportDate($row[7] ?? '');  // H: periode_akhir
-            $noSuratJalan = $this->invoiceImportStr($row[8] ?? '');   // I: no_surat_jalan
-            $keterangan   = $this->invoiceImportStr($row[9] ?? '');   // J: keterangan
+            $namaKlien    = $this->invoiceImportStr($row[1] ?? '');   // B
+            $tanggal      = $this->invoiceImportDate($row[2] ?? '');  // C: tanggal_invoice
+            $tanggalKirim = $this->invoiceImportDate($row[3] ?? '');  // D: tanggal_kirim_barang
+            $jatuhTempo   = $this->invoiceImportDate($row[4] ?? '');  // E: tanggal_jatuh_tempo
+            $periodeAwal  = $this->invoiceImportDate($row[5] ?? '');  // F: periode_awal
+            $periodeAkhir = $this->invoiceImportDate($row[6] ?? '');  // G: periode_akhir
+            $noSuratJalan = $this->invoiceImportStr($row[7] ?? '');   // H: no_surat_jalan
+            $keterangan   = $this->invoiceImportStr($row[8] ?? '');   // I: keterangan
 
             $validated = Validator::make(
                 [
                     'no_urut'         => $noUrut,
-                    'no_invoice'      => $noInvoice,
                     'nama_klien'      => $namaKlien,
                     'tanggal_invoice' => $tanggal,
                     'periode_awal'    => $periodeAwal,
@@ -801,7 +799,6 @@ class InvoiceController extends Controller
                 ],
                 [
                     'no_urut'         => ['required'],
-                    'no_invoice'      => ['required', 'string', 'unique:tb_invoice,no_invoice'],
                     'nama_klien'      => ['required'],
                     'tanggal_invoice' => ['required', 'date'],
                     'periode_awal'    => ['required', 'date'],
@@ -814,12 +811,13 @@ class InvoiceController extends Controller
                 continue;
             }
 
-            $klien = KlienAr::where('nama_klien', $namaKlien)->first();
+            $klien = KlienAr::with('perusahaan')->where('nama_klien', $namaKlien)->first();
             if (!$klien) {
                 $errors[] = ['sheet' => 'Invoice', 'row' => $lineNumber, 'message' => "Klien '{$namaKlien}' tidak ditemukan di sistem"];
                 continue;
             }
 
+            $noInvoice = $this->service->generateNoInvoice($klien, $tanggal);
             $carryover = $this->service->getCarryover($klien->id);
 
             try {
@@ -1090,25 +1088,19 @@ class InvoiceController extends Controller
         $sheet->setTitle('Invoice');
         $cols = [
             'A' => ['no_urut',              12],
-            'B' => ['no_invoice',           26],
-            'C' => ['nama_klien',           32],
-            'D' => ['tanggal_invoice',      20],
-            'E' => ['tanggal_kirim_barang', 22],
-            'F' => ['tanggal_jatuh_tempo',  20],
-            'G' => ['periode_awal',         20],
-            'H' => ['periode_akhir',        20],
-            'I' => ['no_surat_jalan',       22],
-            'J' => ['keterangan',           32],
+            'B' => ['nama_klien *',         32],
+            'C' => ['tanggal_invoice *',    20],
+            'D' => ['tanggal_kirim_barang', 22],
+            'E' => ['tanggal_jatuh_tempo',  20],
+            'F' => ['periode_awal',         20],
+            'G' => ['periode_akhir',        20],
+            'H' => ['no_surat_jalan',       22],
+            'I' => ['keterangan',           32],
         ];
-        if ($isB2B) {
-            $cols['K'] = ['nama_resto *', 28];
-        }
-        $lastCol = $isB2B ? 'K' : 'J';
+        $lastCol = 'I';
 
         $sheet->mergeCells("A1:{$lastCol}1");
-        $sheet->setCellValue('A1', $isB2B
-            ? 'TEMPLATE TAGIHAN INVOICE B2B — SHEET 1: DATA INVOICE'
-            : 'TEMPLATE TAGIHAN INVOICE B2C — SHEET 1: DATA INVOICE');
+        $sheet->setCellValue('A1', 'TEMPLATE TAGIHAN INVOICE B2C — SHEET 1: DATA INVOICE');
         $sheet->getStyle('A1')->applyFromArray([
             'font'      => ['bold' => true, 'size' => 13, 'color' => ['argb' => 'FFFFFFFF']],
             'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF0D47A1']],
@@ -1117,7 +1109,7 @@ class InvoiceController extends Controller
         $sheet->getRowDimension(1)->setRowHeight(36);
 
         $sheet->mergeCells("A2:{$lastCol}2");
-        $sheet->setCellValue('A2', 'Isi data invoice. Gunakan no_urut yang sama di Sheet "Item Invoice" untuk menghubungkan item. Lihat sheet "Petunjuk Pengisian" untuk panduan.');
+        $sheet->setCellValue('A2', 'Isi data invoice. No. Invoice digenerate otomatis oleh sistem. Gunakan no_urut yang sama di Sheet "Item Invoice" untuk menghubungkan item. Lihat sheet "Petunjuk Pengisian" untuk panduan.');
         $sheet->getStyle('A2')->applyFromArray([
             'font'      => ['italic' => true, 'size' => 9, 'color' => ['argb' => 'FF37474F']],
             'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFE3F2FD']],
@@ -1140,19 +1132,15 @@ class InvoiceController extends Controller
 
         $example = [
             'A' => '[CONTOH] 1',
-            'B' => $isB2B ? 'SI-B2B-' . date('dmY') . '-001' : 'SI-B2C-' . date('dmY') . '-001',
-            'C' => $isB2B ? 'PT Maju Jaya' : 'Budi Santoso',
-            'D' => date('d-m-Y'),
+            'B' => 'Budi Santoso',
+            'C' => date('d-m-Y'),
+            'D' => '',
             'E' => '',
-            'F' => '',
-            'G' => date('01-m-Y'),
-            'H' => date('t-m-Y'),
-            'I' => 'SJ-001',
-            'J' => 'Invoice bulan ini',
+            'F' => date('01-m-Y'),
+            'G' => date('t-m-Y'),
+            'H' => 'SJ-001',
+            'I' => 'Invoice bulan ini',
         ];
-        if ($isB2B) {
-            $example['K'] = 'Resto Makmur';
-        }
         foreach ($example as $col => $val) {
             $sheet->getCell("{$col}5")->setValueExplicit($val, DataType::TYPE_STRING);
         }
@@ -1170,7 +1158,7 @@ class InvoiceController extends Controller
                 'fill'    => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => $bg]],
                 'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_HAIR, 'color' => ['argb' => 'FFE0E0E0']]],
             ]);
-            foreach (['D', 'E', 'F', 'G', 'H'] as $dateCol) {
+            foreach (['C', 'D', 'E', 'F', 'G'] as $dateCol) {
                 $sheet->getStyle("{$dateCol}{$row}")->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
             }
             $sheet->getRowDimension($row)->setRowHeight(18);
