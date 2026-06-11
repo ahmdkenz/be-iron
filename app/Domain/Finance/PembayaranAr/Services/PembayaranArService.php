@@ -9,6 +9,7 @@ use App\Models\BankStatementDetail;
 use App\Models\Invoice;
 use App\Models\PembayaranAr;
 use App\Models\PembayaranArLog;
+use App\Models\PendapatanDiMuka;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -76,6 +77,14 @@ class PembayaranArService
 
     public function delete(PembayaranAr $pembayaran): void
     {
+        $pdm = PendapatanDiMuka::where('sumber_pembayaran_ar_id', $pembayaran->id)->first();
+
+        abort_if(
+            $pdm && $pdm->status === 'TERPAKAI',
+            422,
+            'Tidak dapat menghapus pembayaran ini karena Pendapatan di Muka sudah digunakan untuk melunasi invoice. Batalkan penggunaan PDM terlebih dahulu.'
+        );
+
         // Kumpulkan alokasi anak DAN invoice tujuannya SEBELUM FK nullOnDelete berjalan.
         // Setelah $pembayaran->delete(), sumber_pembayaran_ar_id di-NULL sehingga
         // query WHERE sumber_pembayaran_ar_id = X tidak akan menemukan records lagi.
@@ -84,7 +93,7 @@ class PembayaranArService
 
         $invoiceId = $pembayaran->invoice_id;
 
-        DB::transaction(function () use ($pembayaran, $childAllocations, $affectedInvoices, $invoiceId) {
+        DB::transaction(function () use ($pembayaran, $childAllocations, $affectedInvoices, $invoiceId, $pdm) {
             PembayaranArLog::create([
                 'pembayaran_ar_id' => $pembayaran->id,
                 'aksi'             => 'DIHAPUS',
@@ -102,6 +111,10 @@ class PembayaranArService
             }
 
             $pembayaran->alokasiKelebihan()->delete();
+
+            if ($pdm) {
+                $pdm->delete();
+            }
 
             $linkedStatementIds = BankStatementDetail::where('pembayaran_ar_id', $pembayaran->id)
                 ->pluck('bank_statement_id')
