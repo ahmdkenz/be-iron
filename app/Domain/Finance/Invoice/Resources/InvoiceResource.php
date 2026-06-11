@@ -131,8 +131,8 @@ class InvoiceResource extends JsonResource
             'can_submit'                 => $this->canSubmit($request->user()),
             'can_record_payment'         => $this->isApprovedForFinanceFlow(),
             'can_print'                  => $this->isApprovedForFinanceFlow(),
-            'share_url'                  => $this->isApprovedForFinanceFlow() && $this->prepared_token
-                ? url('/api/v1/invoices/public/' . $this->prepared_token)
+            'share_url'                  => $this->isApprovedForFinanceFlow() && $this->gdrive_file_id
+                ? 'https://drive.google.com/file/d/' . $this->gdrive_file_id . '/view'
                 : null,
             'created_at'                 => $this->created_at?->toIso8601String(),
             'updated_at'                 => $this->updated_at?->toIso8601String(),

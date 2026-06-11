@@ -51,11 +51,12 @@ class UploadInvoiceToGDriveJob implements ShouldQueue
         try {
             $pdfContent = $this->generatePdf($invoice);
             $fileName   = 'Invoice-' . str_replace(['/', '\\', ' '], '-', $invoice->no_invoice) . '.pdf';
-            $clientName = $invoice->klienAr->nama_klien;
             $rootId     = config('services.google_drive.root_folder_id');
 
-            $folderId = $driveService->findOrCreateClientFolder($rootId, $clientName);
-            $fileId   = $driveService->uploadPdf($folderId, $fileName, $pdfContent);
+            $clientName = $invoice->klienAr->nama_klien;
+            $folderId   = $driveService->findOrCreateClientFolder($rootId, $clientName);
+            $fileId     = $driveService->uploadPdf($folderId, $fileName, $pdfContent);
+            $driveService->makeFilePublic($fileId);
 
             // updateQuietly agar tidak trigger event audit blameable
             $invoice->updateQuietly([

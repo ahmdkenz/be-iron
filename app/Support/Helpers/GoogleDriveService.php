@@ -104,11 +104,77 @@ class GoogleDriveService
     }
 
     /**
+     * Cari atau buat folder "archive" di dalam root folder.
+     */
+    public function findOrCreateArchiveFolder(string $rootFolderId): string
+    {
+        return $this->findOrCreateFolder($rootFolderId, 'archive');
+    }
+
+    /**
+     * Cari atau buat subfolder per-invoice di dalam archive folder.
+     */
+    public function findOrCreateInvoiceFolder(string $archiveFolderId, string $invoiceNo): string
+    {
+        $folderName = 'Invoice-' . $this->sanitizeFolderName($invoiceNo);
+        return $this->findOrCreateFolder($archiveFolderId, $folderName);
+    }
+
+    /**
+     * Set permission anyone/reader pada file sehingga bisa diakses via share link.
+     */
+    public function makeFilePublic(string $fileId): void
+    {
+        $permission = new \Google\Service\Drive\Permission([
+            'type' => 'anyone',
+            'role' => 'reader',
+        ]);
+
+        $this->drive->permissions->create($fileId, $permission);
+    }
+
+    /**
      * Hapus karakter yang tidak valid untuk nama folder Google Drive.
      */
     private function sanitizeFolderName(string $name): string
     {
         $safe = preg_replace('/[\/\\\\:*?"<>|]/', '-', $name);
         return mb_substr(trim($safe), 0, 255);
+    }
+
+    /**
+     * Cari folder berdasarkan nama di dalam parent folder, buat jika belum ada.
+     */
+    private function findOrCreateFolder(string $parentFolderId, string $folderName): string
+    {
+        $query = sprintf(
+            "mimeType='application/vnd.google-apps.folder' and name='%s' and '%s' in parents and trashed=false",
+            addslashes($folderName),
+            $parentFolderId
+        );
+
+        $results = $this->drive->files->listFiles([
+            'q'      => $query,
+            'fields' => 'files(id, name)',
+        ]);
+
+        if (count($results->getFiles()) > 0) {
+            return $results->getFiles()[0]->getId();
+        }
+
+        $folderMeta = new DriveFile([
+            'name'     => $folderName,
+            'mimeType' => 'application/vnd.google-apps.folder',
+            'parents'  => [$parentFolderId],
+        ]);
+
+        $folder = $this->drive->files->create($folderMeta, ['fields' => 'id']);
+
+        Log::info('GoogleDriveService: folder dibuat', [
+            'nama'      => $folderName,
+            'folder_id' => $folder->getId(),
+        ]);
+
+        return $folder->getId();
     }
 }
