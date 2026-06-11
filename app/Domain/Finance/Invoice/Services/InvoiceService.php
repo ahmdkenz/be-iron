@@ -527,6 +527,8 @@ class InvoiceService
             'updated_by'                 => auth()->id(),
         ]);
 
+        UploadInvoiceToGDriveJob::dispatch($nextInvoice->id);
+
         $this->cascadeCarryoverToNext($nextInvoice->fresh());
     }
 
