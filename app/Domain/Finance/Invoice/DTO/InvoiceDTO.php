@@ -5,7 +5,7 @@ namespace App\Domain\Finance\Invoice\DTO;
 class InvoiceDTO
 {
     public function __construct(
-        public readonly string $no_invoice,
+        public readonly ?string $no_invoice,
         public readonly int $klien_ar_id,
         public readonly ?int $resto_id,
         public readonly string $tanggal_invoice,

@@ -92,6 +92,19 @@ class InvoiceController extends Controller
         ]);
     }
 
+    public function previewConsolidatedNo(Request $request): JsonResponse
+    {
+        $payload = $request->validate([
+            'klien_ar_id' => ['required', 'integer', 'exists:tb_klien_ar,id'],
+        ]);
+
+        $klien = KlienAr::with('perusahaan')->findOrFail((int) $payload['klien_ar_id']);
+
+        return $this->successResponse([
+            'no_invoice' => $this->service->generateConsolidatedInvoiceNo($klien),
+        ]);
+    }
+
     public function rekapKlien(Request $request): JsonResponse
     {
         $user    = auth()->user();
@@ -575,13 +588,12 @@ class InvoiceController extends Controller
             if ($firstCell === '' && count(array_filter(array_map('strval', $row))) === 0) continue;
 
             $noUrut       = $this->invoiceImportStr($row[0] ?? '');
-            $noInvKons    = $this->invoiceImportStr($row[1] ?? '');
-            $namaKlien    = $this->invoiceImportStr($row[2] ?? '');
-            $tanggalKirim = $this->invoiceImportDate($row[3] ?? '');
-            $noSuratJalan = $this->invoiceImportStr($row[4] ?? '');
-            $jatuhTempo   = $this->invoiceImportDate($row[5] ?? '');
-            $periodeAwal  = $this->invoiceImportDate($row[6] ?? '');
-            $periodeAkhir = $this->invoiceImportDate($row[7] ?? '');
+            $namaKlien    = $this->invoiceImportStr($row[1] ?? '');
+            $tanggalKirim = $this->invoiceImportDate($row[2] ?? '');
+            $noSuratJalan = $this->invoiceImportStr($row[3] ?? '');
+            $jatuhTempo   = $this->invoiceImportDate($row[4] ?? '');
+            $periodeAwal  = $this->invoiceImportDate($row[5] ?? '');
+            $periodeAkhir = $this->invoiceImportDate($row[6] ?? '');
 
             $totalData++;
 
@@ -589,28 +601,22 @@ class InvoiceController extends Controller
                 $errors[] = ['sheet' => 'Data Invoice', 'row' => $lineNumber, 'message' => 'no_urut wajib diisi'];
                 continue;
             }
-            if (!$noInvKons) {
-                $errors[] = ['sheet' => 'Data Invoice', 'row' => $lineNumber, 'message' => 'no_invoice_konsolidasi wajib diisi'];
-                continue;
-            }
             if (!$namaKlien) {
-                $errors[] = ['sheet' => 'Data Invoice', 'row' => $lineNumber, 'message' => "Invoice '{$noInvKons}': nama_klien wajib diisi"];
+                $errors[] = ['sheet' => 'Data Invoice', 'row' => $lineNumber, 'message' => "no_urut '{$noUrut}': nama_klien wajib diisi"];
                 continue;
             }
             if (!$tanggalKirim) {
-                $errors[] = ['sheet' => 'Data Invoice', 'row' => $lineNumber, 'message' => "Invoice '{$noInvKons}': tanggal_kirim_barang wajib diisi"];
-                continue;
-            }
-            if (Invoice::where('no_invoice', $noInvKons)->exists()) {
-                $errors[] = ['sheet' => 'Data Invoice', 'row' => $lineNumber, 'message' => "Invoice '{$noInvKons}': nomor invoice sudah ada di sistem"];
+                $errors[] = ['sheet' => 'Data Invoice', 'row' => $lineNumber, 'message' => "no_urut '{$noUrut}': tanggal_kirim_barang wajib diisi"];
                 continue;
             }
 
-            $klien = KlienAr::where('nama_klien', $namaKlien)->first();
+            $klien = KlienAr::with('perusahaan')->where('nama_klien', $namaKlien)->first();
             if (!$klien) {
                 $errors[] = ['sheet' => 'Data Invoice', 'row' => $lineNumber, 'message' => "Klien '{$namaKlien}' tidak ditemukan di sistem"];
                 continue;
             }
+
+            $noInvKons = $this->service->generateConsolidatedInvoiceNo($klien);
 
             if (!$periodeAwal)  $periodeAwal  = Carbon::parse($tanggalKirim)->startOfMonth()->format('Y-m-d');
             if (!$periodeAkhir) $periodeAkhir = Carbon::parse($tanggalKirim)->endOfMonth()->format('Y-m-d');
@@ -1358,16 +1364,15 @@ class InvoiceController extends Controller
     {
         $sheet->setTitle('Data Invoice');
         $cols = [
-            'A' => ['no_urut',                  12],
-            'B' => ['no_invoice_konsolidasi *',  30],
-            'C' => ['nama_klien *',              30],
-            'D' => ['tanggal_kirim_barang *',    22],
-            'E' => ['no_surat_jalan',            22],
-            'F' => ['tanggal_jatuh_tempo',       22],
-            'G' => ['periode_awal',              20],
-            'H' => ['periode_akhir',             20],
+            'A' => ['no_urut',                12],
+            'B' => ['nama_klien *',           30],
+            'C' => ['tanggal_kirim_barang *', 22],
+            'D' => ['no_surat_jalan',         22],
+            'E' => ['tanggal_jatuh_tempo',    22],
+            'F' => ['periode_awal',           20],
+            'G' => ['periode_akhir',          20],
         ];
-        $lastCol = 'H';
+        $lastCol = 'G';
 
         $sheet->mergeCells("A1:{$lastCol}1");
         $sheet->setCellValue('A1', 'TEMPLATE TAGIHAN INVOICE B2B KONSOLIDASI — SHEET 1: DATA INVOICE');
@@ -1379,7 +1384,7 @@ class InvoiceController extends Controller
         $sheet->getRowDimension(1)->setRowHeight(36);
 
         $sheet->mergeCells("A2:{$lastCol}2");
-        $sheet->setCellValue('A2', 'Isi data invoice. Gunakan no_urut yang sama di Sheet "Item Invoice" untuk menghubungkan item. Lihat sheet "Petunjuk Pengisian" untuk panduan.');
+        $sheet->setCellValue('A2', 'Isi data invoice. No. Invoice konsolidasi digenerate otomatis oleh sistem. Gunakan no_urut yang sama di Sheet "Item Invoice" untuk menghubungkan item. Lihat sheet "Petunjuk Pengisian" untuk panduan.');
         $sheet->getStyle('A2')->applyFromArray([
             'font'      => ['italic' => true, 'size' => 9, 'color' => ['argb' => 'FF37474F']],
             'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFE3F2FD']],
@@ -1401,10 +1406,10 @@ class InvoiceController extends Controller
         $sheet->getRowDimension(4)->setRowHeight(24);
 
         $examples = [
-            ['[CONTOH] 1', 'ABBINV-001', 'PT. Setya Kuliner Mandiri', date('01-m-Y'), '', '', date('01-m-Y'), date('t-m-Y')],
-            ['[CONTOH] 2', 'ABBINV-002', 'PT. Arkhan Berkah Bersama', date('01-m-Y'), '', '', date('01-m-Y'), date('t-m-Y')],
+            ['[CONTOH] 1', 'PT. Setya Kuliner Mandiri', date('01-m-Y'), '', '', date('01-m-Y'), date('t-m-Y')],
+            ['[CONTOH] 2', 'PT. Arkhan Berkah Bersama', date('01-m-Y'), '', '', date('01-m-Y'), date('t-m-Y')],
         ];
-        $exampleColKeys = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
+        $exampleColKeys = ['A', 'B', 'C', 'D', 'E', 'F', 'G'];
         foreach ($examples as $i => $ex) {
             $rowNum = 5 + $i;
             foreach ($exampleColKeys as $j => $col) {
@@ -1425,7 +1430,7 @@ class InvoiceController extends Controller
                 'fill'    => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => $bg]],
                 'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_HAIR, 'color' => ['argb' => 'FFE0E0E0']]],
             ]);
-            foreach (['D', 'F', 'G', 'H'] as $dateCol) {
+            foreach (['C', 'E', 'F', 'G'] as $dateCol) {
                 $sheet->getStyle("{$dateCol}{$row}")->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
             }
             $sheet->getRowDimension($row)->setRowHeight(18);

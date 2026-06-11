@@ -49,6 +49,7 @@ Route::prefix('invoices')->group(function () {
     Route::get('/{id}/print', [InvoiceController::class, 'print']);
     Route::get('/carryover', [InvoiceController::class, 'carryover']);
     Route::get('/preview-no', [InvoiceController::class, 'previewNo']);
+    Route::get('/preview-no-konsolidasi', [InvoiceController::class, 'previewConsolidatedNo']);
     Route::post('/', [InvoiceController::class, 'store']);
     Route::delete('/bulk', [InvoiceController::class, 'bulkDestroy']);
     Route::get('/{invoice}', [InvoiceController::class, 'show']);

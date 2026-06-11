@@ -11,7 +11,7 @@ class StoreInvoiceRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'no_invoice'             => ['required', 'string', 'max:100', 'unique:tb_invoice,no_invoice'],
+            'no_invoice'             => ['nullable', 'string', 'max:100'],
             'klien_ar_id'            => ['required', 'integer', 'exists:tb_klien_ar,id'],
             'resto_id'               => ['nullable', 'integer', 'exists:tb_resto,id'],
             'tanggal_invoice'        => ['required', 'date'],

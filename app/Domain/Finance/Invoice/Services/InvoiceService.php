@@ -95,11 +95,24 @@ class InvoiceService
         return $prefix . '-' . $seq;
     }
 
+    public function generateConsolidatedInvoiceNo(KlienAr $klien): string
+    {
+        $klien->loadMissing('perusahaan');
+        $raw       = $klien->perusahaan?->nama_singkatan_perusahaan ?? 'ABB';
+        $singkatan = strtoupper(preg_replace('/[^A-Za-z0-9]/', '', $raw));
+        $now       = Carbon::now();
+        $xxx       = str_pad(rand(0, 999), 3, '0', STR_PAD_LEFT);
+
+        return 'SI-' . $singkatan . '-' . $now->format('dmYHis') . '-' . $xxx;
+    }
+
     public function create(InvoiceDTO $dto): Invoice
     {
-        $klien    = KlienAr::findOrFail($dto->klien_ar_id);
+        $klien    = KlienAr::with('perusahaan')->findOrFail($dto->klien_ar_id);
         $carryover = $this->getCarryover($dto->klien_ar_id);
-        $noInvoice = $dto->no_invoice;
+        $noInvoice = ($klien->tipe_klien === 'PT')
+            ? $this->generateConsolidatedInvoiceNo($klien)
+            : $dto->no_invoice;
 
         $subtotal = collect($dto->items)->sum(
             fn($item) => ($item['qty'] ?? 0) * ($item['harga_satuan'] ?? 0)
