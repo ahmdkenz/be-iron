@@ -38,6 +38,7 @@ class BcaAdapter extends AbstractBankParser
         $jumlahIdx   = $this->findColIndex($headerCols, ['jumlah']);
         $saldoIdx    = $this->findColIndex($headerCols, ['saldo']);
         $tanggalIdx  = $detected['colMap']['tanggal']      ?? 0;
+        $waktuIdx    = $detected['colMap']['waktu']        ?? -1;
         $ketIdx      = $detected['colMap']['keterangan']   ?? 1;
         $noRefIdx    = $detected['colMap']['no_referensi'] ?? -1;
 
@@ -71,12 +72,13 @@ class BcaAdapter extends AbstractBankParser
             }
 
             $rows[] = [
-                'tanggal'      => $tanggal,
-                'keterangan'   => $keterangan,
-                'no_referensi' => $noRefIdx >= 0 ? (trim($cols[$noRefIdx] ?? '') ?: null) : null,
-                'debit'        => $debit,
-                'kredit'       => $kredit,
-                'saldo'        => $this->parseAngka($saldoRaw),
+                'tanggal'         => $tanggal,
+                'waktu_transaksi' => $waktuIdx >= 0 ? $this->parseWaktu(trim($cols[$waktuIdx] ?? '')) : null,
+                'keterangan'      => $keterangan,
+                'no_referensi'    => $noRefIdx >= 0 ? (trim($cols[$noRefIdx] ?? '') ?: null) : null,
+                'debit'           => $debit,
+                'kredit'          => $kredit,
+                'saldo'           => $this->parseAngka($saldoRaw),
             ];
         }
 

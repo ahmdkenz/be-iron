@@ -78,10 +78,10 @@ Route::get('/aging-report/export-excel', [AgingReportController::class, 'exportE
 Route::get('/mutasi-piutang', [MutasiPiutangController::class, 'index']);
 Route::get('/mutasi-piutang/export-excel', [MutasiPiutangController::class, 'exportExcel']);
 
-// ─── Rekening Koran ───────────────────────────────────────────────
-Route::get('/rekening-koran', [RekeningKoranController::class, 'index']);
-Route::get('/rekening-koran/export-excel', [RekeningKoranController::class, 'exportExcel']);
-Route::get('/rekening-koran/export-pdf', [RekeningKoranController::class, 'exportPdf']);
+// ─── Rekening Koran (Jurnal Umum Bank Statement) ──────────────────
+Route::get('/rekening-koran',                          [RekeningKoranController::class, 'index']);
+Route::get('/rekening-koran/pic-ar-list',              [RekeningKoranController::class, 'picArList']);
+Route::patch('/rekening-koran/{detail}/posting',       [RekeningKoranController::class, 'updatePosting']);
 
 // ─── Jatuh Tempo ──────────────────────────────────────────────────
 Route::get('/jatuh-tempo', [JatuhTempoController::class, 'index']);

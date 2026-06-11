@@ -59,6 +59,7 @@ class BankStatementService
                 BankStatementDetail::create([
                     'bank_statement_id' => $statement->id,
                     'tanggal'           => $row['tanggal'],
+                    'waktu_transaksi'   => $row['waktu_transaksi'] ?? null,
                     'keterangan'        => $row['keterangan'],
                     'no_referensi'      => $row['no_referensi'] ?? null,
                     'debit'             => $row['debit'],

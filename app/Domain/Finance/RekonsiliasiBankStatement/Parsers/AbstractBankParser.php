@@ -93,6 +93,25 @@ abstract class AbstractBankParser implements BankParserInterface
         return null;
     }
 
+    protected function parseWaktu(string $raw): ?string
+    {
+        $raw = trim((string) $raw);
+        if ($raw === '') return null;
+
+        foreach (['H:i:s', 'H:i', 'h:i:s A', 'h:i A'] as $fmt) {
+            try {
+                return \Carbon\Carbon::createFromFormat($fmt, $raw)->format('H:i:s');
+            } catch (\Exception) {}
+        }
+
+        // Format HH:MM:SS tanpa separator
+        if (preg_match('/^(\d{2})(\d{2})(\d{2})$/', $raw, $m)) {
+            return "{$m[1]}:{$m[2]}:{$m[3]}";
+        }
+
+        return null;
+    }
+
     protected function parseAngka(string $raw): float
     {
         $raw = trim((string) $raw);
