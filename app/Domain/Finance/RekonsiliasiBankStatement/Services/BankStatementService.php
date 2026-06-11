@@ -132,6 +132,8 @@ class BankStatementService
                 'pembayaranAr.alokasiKelebihan.invoice.klienAr',
                 'pembayaranAr.alokasiKelebihan.createdBy.karyawan',
                 'matchedBy.karyawan',
+                'postedBy:id,username,karyawan_id',
+                'postedBy.karyawan:id,nama_karyawan',
             ])
             ->where('bank_statement_id', $bankStatementId)
             ->orderBy('tanggal')
@@ -185,10 +187,12 @@ class BankStatementService
                     'debit'         => $d->debit,
                     'kredit'        => $d->kredit,
                     'saldo'         => $d->saldo,
-                    'status_cocok'  => $d->status_cocok,
-                    'selisih_bank'  => $selisihBank,
-                    'matched_by'    => $d->matchedBy?->name,
-                    'kelebihan_bayar' => $kelebihanBayar,
+                    'status_cocok'     => $d->status_cocok,
+                    'status_posting_2' => $d->status_posting_2 ?? 'PENDING',
+                    'posted_by'        => $d->postedBy?->name,
+                    'selisih_bank'     => $selisihBank,
+                    'matched_by'       => $d->matchedBy?->name,
+                    'kelebihan_bayar'  => $kelebihanBayar,
                     'pembayaran'    => $pembayaran ? [
                         'id'                 => $pembayaran->id,
                         'no_referensi'       => $pembayaran->no_referensi,
