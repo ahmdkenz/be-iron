@@ -2,6 +2,7 @@
 
 namespace App\Domain\Finance\PembayaranAr\Services;
 
+use App\Domain\Finance\Invoice\Jobs\UploadInvoiceToGDriveJob;
 use App\Domain\Finance\Invoice\Services\InvoiceService;
 use App\Domain\Finance\PembayaranAr\Jobs\UploadBuktiBayarToGDriveJob;
 use App\Models\BankStatement;
@@ -50,6 +51,8 @@ class PembayaranArService
         ]);
 
         $this->invoiceService->recalculate($invoice->fresh());
+
+        UploadInvoiceToGDriveJob::dispatch($invoice->id);
 
         if ($buktiBayar) {
             $this->dispatchBuktiUpload($pembayaran, $buktiBayar);
@@ -137,9 +140,14 @@ class PembayaranArService
             $invoice = Invoice::find($invoiceId);
             $this->invoiceService->recalculate($invoice);
 
+            if ($invoice) {
+                UploadInvoiceToGDriveJob::dispatch($invoice->id);
+            }
+
             foreach ($affectedInvoices as $targetInvoice) {
                 if ($targetInvoice->id !== $invoiceId) {
                     $this->invoiceService->recalculate($targetInvoice->fresh());
+                    UploadInvoiceToGDriveJob::dispatch($targetInvoice->id);
                 }
             }
         });

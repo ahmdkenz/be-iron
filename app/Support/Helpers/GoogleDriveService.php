@@ -112,6 +112,14 @@ class GoogleDriveService
     }
 
     /**
+     * Cari atau buat subfolder "Invoice B2B" atau "Invoice B2C" di dalam root folder.
+     */
+    public function findOrCreateInvoiceTypeFolder(string $rootFolderId, string $type): string
+    {
+        return $this->findOrCreateFolder($rootFolderId, 'Invoice ' . $type);
+    }
+
+    /**
      * Cari atau buat subfolder per-invoice di dalam archive folder.
      */
     public function findOrCreateInvoiceFolder(string $archiveFolderId, string $invoiceNo): string
