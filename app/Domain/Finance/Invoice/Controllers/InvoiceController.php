@@ -782,8 +782,7 @@ class InvoiceController extends Controller
             $periodeAwal  = $this->invoiceImportDate($row[6] ?? '');  // G: periode_awal
             $periodeAkhir = $this->invoiceImportDate($row[7] ?? '');  // H: periode_akhir
             $noSuratJalan = $this->invoiceImportStr($row[8] ?? '');   // I: no_surat_jalan
-            $tagihanSblm  = $this->invoiceImportNum($row[9] ?? '');   // J: tagihan_periode_sebelumnya
-            $keterangan   = $this->invoiceImportStr($row[10] ?? '');  // K: keterangan
+            $keterangan   = $this->invoiceImportStr($row[9] ?? '');   // J: keterangan
 
             $validated = Validator::make(
                 [
@@ -815,6 +814,8 @@ class InvoiceController extends Controller
                 continue;
             }
 
+            $carryover = $this->service->getCarryover($klien->id);
+
             try {
                 $invoice = Invoice::create([
                     'no_invoice'                 => $noInvoice,
@@ -829,10 +830,10 @@ class InvoiceController extends Controller
                     'karyawan_id'                => $this->service->resolveInvoiceKaryawanId($user, $klien),
                     'no_surat_jalan'             => $noSuratJalan,
                     'subtotal'                   => 0,
-                    'tagihan_periode_sebelumnya' => $tagihanSblm,
-                    'total_tagihan'              => $tagihanSblm,
+                    'tagihan_periode_sebelumnya' => $carryover,
+                    'total_tagihan'              => $carryover,
                     'total_pembayaran'           => 0,
-                    'sisa_tagihan'               => $tagihanSblm,
+                    'sisa_tagihan'               => $carryover,
                     'status'                     => 'TERKIRIM',
                     'is_opening_balance'         => false,
                     'keterangan'                 => $keterangan,
@@ -921,6 +922,23 @@ class InvoiceController extends Controller
 
         foreach ($invoiceMapping as $invoice) {
             UploadInvoiceToGDriveJob::dispatch($invoice->id);
+        }
+
+        // ── Cascade carryover: propagasi tagihan_sebelumnya antar invoice dalam batch ──
+        $firstByKlien = [];
+        foreach ($invoiceMapping as $invoice) {
+            $klienId = $invoice->klien_ar_id;
+            if (
+                !isset($firstByKlien[$klienId]) ||
+                $invoice->tanggal_invoice < $firstByKlien[$klienId]->tanggal_invoice ||
+                ($invoice->tanggal_invoice === $firstByKlien[$klienId]->tanggal_invoice
+                    && $invoice->id < $firstByKlien[$klienId]->id)
+            ) {
+                $firstByKlien[$klienId] = $invoice;
+            }
+        }
+        foreach ($firstByKlien as $firstInvoice) {
+            $this->service->propagateCarryover($firstInvoice->fresh());
         }
 
         $failed = $totalData - $insertedCount;
@@ -1065,22 +1083,21 @@ class InvoiceController extends Controller
         $isB2B = $type === 'b2b';
         $sheet->setTitle('Invoice');
         $cols = [
-            'A' => ['no_urut',                    12],
-            'B' => ['no_invoice',                  26],
-            'C' => ['nama_klien',                  32],
-            'D' => ['tanggal_invoice',             20],
-            'E' => ['tanggal_kirim_barang',        22],
-            'F' => ['tanggal_jatuh_tempo',         20],
-            'G' => ['periode_awal',                20],
-            'H' => ['periode_akhir',               20],
-            'I' => ['no_surat_jalan',              22],
-            'J' => ['tagihan_periode_sebelumnya',  26],
-            'K' => ['keterangan',                  32],
+            'A' => ['no_urut',              12],
+            'B' => ['no_invoice',           26],
+            'C' => ['nama_klien',           32],
+            'D' => ['tanggal_invoice',      20],
+            'E' => ['tanggal_kirim_barang', 22],
+            'F' => ['tanggal_jatuh_tempo',  20],
+            'G' => ['periode_awal',         20],
+            'H' => ['periode_akhir',        20],
+            'I' => ['no_surat_jalan',       22],
+            'J' => ['keterangan',           32],
         ];
         if ($isB2B) {
-            $cols['L'] = ['nama_resto *', 28];
+            $cols['K'] = ['nama_resto *', 28];
         }
-        $lastCol = $isB2B ? 'L' : 'K';
+        $lastCol = $isB2B ? 'K' : 'J';
 
         $sheet->mergeCells("A1:{$lastCol}1");
         $sheet->setCellValue('A1', $isB2B
@@ -1125,11 +1142,10 @@ class InvoiceController extends Controller
             'G' => date('01-m-Y'),
             'H' => date('t-m-Y'),
             'I' => 'SJ-001',
-            'J' => '0',
-            'K' => 'Invoice bulan ini',
+            'J' => 'Invoice bulan ini',
         ];
         if ($isB2B) {
-            $example['L'] = 'Resto Makmur';
+            $example['K'] = 'Resto Makmur';
         }
         foreach ($example as $col => $val) {
             $sheet->getCell("{$col}5")->setValueExplicit($val, DataType::TYPE_STRING);
@@ -1148,7 +1164,6 @@ class InvoiceController extends Controller
                 'fill'    => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => $bg]],
                 'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_HAIR, 'color' => ['argb' => 'FFE0E0E0']]],
             ]);
-            $sheet->getStyle("J{$row}")->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
             foreach (['D', 'E', 'F', 'G', 'H'] as $dateCol) {
                 $sheet->getStyle("{$dateCol}{$row}")->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
             }
@@ -1785,9 +1800,9 @@ class InvoiceController extends Controller
             ['tanggal_jatuh_tempo',        'Tanggal jatuh tempo pembayaran invoice',                                  'Opsional', 'Format DD-MM-YYYY. Contoh: 15-07-2025. Kosongkan jika tidak ada.'],
             ['periode_awal',               'Tanggal awal periode tagihan',                                            'Ya',       'Format DD-MM-YYYY. Contoh: 01-06-2025'],
             ['periode_akhir',              'Tanggal akhir periode tagihan',                                           'Ya',       'Format DD-MM-YYYY. Contoh: 30-06-2025'],
-            ['no_surat_jalan',             'Nomor surat jalan',                                                       'Opsional', 'Teks bebas. Contoh: SJ-001/VI/2025'],
-            ['tagihan_periode_sebelumnya', 'Saldo tagihan dari periode sebelumnya',                                   'Opsional', 'Angka, default: 0. Contoh: 150000'],
-            ['keterangan',                 'Catatan tambahan untuk invoice',                                          'Opsional', 'Teks bebas'],
+            ['no_surat_jalan',             'Nomor surat jalan',                                                                          'Opsional', 'Teks bebas. Contoh: SJ-001/VI/2025'],
+            ['keterangan',                 'Catatan tambahan untuk invoice',                                                         'Opsional', 'Teks bebas'],
+            ['tagihan_periode_sebelumnya', 'Saldo tagihan dari periode sebelumnya — dihitung OTOMATIS oleh sistem, tidak perlu diisi', '—',        'Otomatis dari sisa tagihan klien yang belum lunas di database'],
         ];
 
         if ($type === 'b2b') {
