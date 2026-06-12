@@ -54,7 +54,7 @@ class UploadInvoiceToGDriveJob implements ShouldQueue
             $fileName   = 'Invoice-' . str_replace(['/', '\\', ' '], '-', $invoice->no_invoice) . '.pdf';
             $rootId     = config('services.google_drive.root_folder_id');
 
-            $segment      = str_contains($invoice->no_invoice, 'B2C') ? 'B2C' : 'B2B';
+            $segment      = strtoupper($invoice->klienAr->tipe_klien ?? '') === 'RESTO' ? 'B2C' : 'B2B';
             $typeFolderId = $driveService->findOrCreateInvoiceTypeFolder($rootId, $segment);
 
             $clientName = $invoice->klienAr->nama_klien;

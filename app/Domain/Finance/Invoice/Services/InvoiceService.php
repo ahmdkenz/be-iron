@@ -94,16 +94,9 @@ class InvoiceService
         $singkatan   = strtoupper(preg_replace('/[^A-Za-z0-9]/', '', $raw));
         $invoiceDate = $tanggal ? Carbon::parse($tanggal) : Carbon::now();
         $now         = Carbon::now();
-        // Query prefix uses date-only so the counter resets each day
-        $datePrefix  = 'SI-' . $singkatan . '-' . $invoiceDate->format('dmY');
+        $xxx         = str_pad(rand(0, 999), 3, '0', STR_PAD_LEFT);
 
-        $maxSeq = Invoice::where('no_invoice', 'like', $datePrefix . '%')
-            ->lockForUpdate()
-            ->max(DB::raw("CAST(SUBSTRING_INDEX(no_invoice, '-', -1) AS UNSIGNED)"));
-
-        $seq = str_pad(($maxSeq ?? 0) + 1, 3, '0', STR_PAD_LEFT);
-
-        return 'SI-' . $singkatan . '-' . $invoiceDate->format('dmY') . $now->format('His') . '-' . $seq;
+        return 'SI-' . $singkatan . '-' . $invoiceDate->format('dmY') . $now->format('His') . '-' . $xxx;
     }
 
     public function create(InvoiceDTO $dto): Invoice

@@ -634,35 +634,34 @@ class InvoiceController extends Controller
 
             $carryover = $this->service->getCarryover($klien->id);
 
+            $noInvKons = $this->service->generateConsolidatedInvoiceNo($klien, $tanggalKirim);
+
             try {
-                $invoice = DB::transaction(function () use ($klien, $tanggalKirim, $noSuratJalan, $jatuhTempo, $periodeAwal, $periodeAkhir, $carryover, $user) {
-                    $noInvKons = $this->service->generateConsolidatedInvoiceNo($klien, $tanggalKirim);
-                    return Invoice::create([
-                        'no_invoice'                 => $noInvKons,
-                        'tanggal_invoice'            => $tanggalKirim,
-                        'tanggal_kirim_barang'       => $tanggalKirim,
-                        'no_surat_jalan'             => $noSuratJalan ?: null,
-                        'tanggal_jatuh_tempo'        => $jatuhTempo ?: null,
-                        'periode_awal'               => $periodeAwal,
-                        'periode_akhir'              => $periodeAkhir,
-                        'klien_ar_id'                => $klien->id,
-                        'resto_id'                   => null,
-                        'perusahaan_id'              => $klien->perusahaan_id,
-                        'karyawan_id'                => $this->service->resolveInvoiceKaryawanId($user, $klien),
-                        'subtotal'                   => 0,
-                        'tagihan_periode_sebelumnya' => $carryover,
-                        'total_tagihan'              => $carryover,
-                        'total_pembayaran'           => 0,
-                        'sisa_tagihan'               => $carryover,
-                        'status'                     => 'TERKIRIM',
-                        'is_opening_balance'         => false,
-                        'prepared_token'             => Str::uuid()->toString(),
-                        'approved_token'             => Str::uuid()->toString(),
-                        'created_by'                 => auth()->id(),
-                    ]);
-                });
+                $invoice = Invoice::create([
+                    'no_invoice'                 => $noInvKons,
+                    'tanggal_invoice'            => $tanggalKirim,
+                    'tanggal_kirim_barang'       => $tanggalKirim,
+                    'no_surat_jalan'             => $noSuratJalan ?: null,
+                    'tanggal_jatuh_tempo'        => $jatuhTempo ?: null,
+                    'periode_awal'               => $periodeAwal,
+                    'periode_akhir'              => $periodeAkhir,
+                    'klien_ar_id'                => $klien->id,
+                    'resto_id'                   => null,
+                    'perusahaan_id'              => $klien->perusahaan_id,
+                    'karyawan_id'                => $this->service->resolveInvoiceKaryawanId($user, $klien),
+                    'subtotal'                   => 0,
+                    'tagihan_periode_sebelumnya' => $carryover,
+                    'total_tagihan'              => $carryover,
+                    'total_pembayaran'           => 0,
+                    'sisa_tagihan'               => $carryover,
+                    'status'                     => 'TERKIRIM',
+                    'is_opening_balance'         => false,
+                    'prepared_token'             => Str::uuid()->toString(),
+                    'approved_token'             => Str::uuid()->toString(),
+                    'created_by'                 => auth()->id(),
+                ]);
             } catch (\Throwable $e) {
-                $errors[] = ['sheet' => 'Data Invoice', 'row' => $lineNumber, 'message' => 'Gagal membuat invoice: ' . $e->getMessage()];
+                $errors[] = ['sheet' => 'Data Invoice', 'row' => $lineNumber, 'message' => "Gagal membuat invoice '{$noInvKons}': " . $e->getMessage()];
                 continue;
             }
 
@@ -845,34 +844,33 @@ class InvoiceController extends Controller
 
             $carryover = $this->service->getCarryover($klien->id);
 
+            $noInvoice = $this->service->generateNoInvoice($klien, $tanggal);
+
             try {
-                $invoice = DB::transaction(function () use ($klien, $tanggal, $tanggalKirim, $jatuhTempo, $periodeAwal, $periodeAkhir, $noSuratJalan, $keterangan, $carryover, $user) {
-                    $noInvoice = $this->service->generateNoInvoice($klien, $tanggal);
-                    return Invoice::create([
-                        'no_invoice'                 => $noInvoice,
-                        'tanggal_invoice'            => $tanggal,
-                        'tanggal_kirim_barang'       => $tanggalKirim ?: null,
-                        'tanggal_jatuh_tempo'        => $jatuhTempo,
-                        'periode_awal'               => $periodeAwal,
-                        'periode_akhir'              => $periodeAkhir,
-                        'klien_ar_id'                => $klien->id,
-                        'resto_id'                   => $klien->resto_id,
-                        'perusahaan_id'              => $klien->perusahaan_id,
-                        'karyawan_id'                => $this->service->resolveInvoiceKaryawanId($user, $klien),
-                        'no_surat_jalan'             => $noSuratJalan,
-                        'subtotal'                   => 0,
-                        'tagihan_periode_sebelumnya' => $carryover,
-                        'total_tagihan'              => $carryover,
-                        'total_pembayaran'           => 0,
-                        'sisa_tagihan'               => $carryover,
-                        'status'                     => 'TERKIRIM',
-                        'is_opening_balance'         => false,
-                        'keterangan'                 => $keterangan,
-                        'prepared_token'             => Str::uuid()->toString(),
-                        'approved_token'             => Str::uuid()->toString(),
-                        'created_by'                 => auth()->id(),
-                    ]);
-                });
+                $invoice = Invoice::create([
+                    'no_invoice'                 => $noInvoice,
+                    'tanggal_invoice'            => $tanggal,
+                    'tanggal_kirim_barang'       => $tanggalKirim ?: null,
+                    'tanggal_jatuh_tempo'        => $jatuhTempo,
+                    'periode_awal'               => $periodeAwal,
+                    'periode_akhir'              => $periodeAkhir,
+                    'klien_ar_id'                => $klien->id,
+                    'resto_id'                   => $klien->resto_id,
+                    'perusahaan_id'              => $klien->perusahaan_id,
+                    'karyawan_id'                => $this->service->resolveInvoiceKaryawanId($user, $klien),
+                    'no_surat_jalan'             => $noSuratJalan,
+                    'subtotal'                   => 0,
+                    'tagihan_periode_sebelumnya' => $carryover,
+                    'total_tagihan'              => $carryover,
+                    'total_pembayaran'           => 0,
+                    'sisa_tagihan'               => $carryover,
+                    'status'                     => 'TERKIRIM',
+                    'is_opening_balance'         => false,
+                    'keterangan'                 => $keterangan,
+                    'prepared_token'             => Str::uuid()->toString(),
+                    'approved_token'             => Str::uuid()->toString(),
+                    'created_by'                 => auth()->id(),
+                ]);
 
                 $invoiceMapping[$noUrut] = $invoice;
                 $insertedCount++;

@@ -311,17 +311,26 @@ class BankStatementService
             $query->where('klien_ar_id', $sourceInvoice->klien_ar_id);
         }
 
-        return $query->get()->map(fn($inv) => [
-            'id'             => $inv->id,
-            'no_invoice'     => $inv->no_invoice,
-            'tanggal'        => $inv->tanggal_invoice?->toDateString(),
-            'total_tagihan'  => $inv->total_tagihan,
-            'sisa_tagihan'   => $inv->sisa_tagihan,
-            'status'         => $inv->status,
-            'nama_klien'     => $inv->klienAr?->nama_klien,
-            'nama_resto'     => $inv->klienAr?->resto?->nama_resto,
-            'nama_investor'  => $inv->klienAr?->resto?->investor?->nama_investor,
-        ]);
+        return $query->get()->map(function ($inv) {
+            $subtotal        = (float) $inv->subtotal;
+            $totalPembayaran = (float) $inv->total_pembayaran;
+            $totalEfektif    = $subtotal > 0 ? $subtotal : (float) $inv->total_tagihan;
+            $sisaEfektif     = $subtotal > 0
+                ? max(0, $subtotal - $totalPembayaran)
+                : (float) $inv->sisa_tagihan;
+
+            return [
+                'id'             => $inv->id,
+                'no_invoice'     => $inv->no_invoice,
+                'tanggal'        => $inv->tanggal_invoice?->toDateString(),
+                'total_tagihan'  => $totalEfektif,
+                'sisa_tagihan'   => $sisaEfektif,
+                'status'         => $inv->status,
+                'nama_klien'     => $inv->klienAr?->nama_klien,
+                'nama_resto'     => $inv->klienAr?->resto?->nama_resto,
+                'nama_investor'  => $inv->klienAr?->resto?->investor?->nama_investor,
+            ];
+        });
     }
 
     public function getInvoiceB2BKlien(BankStatementDetail $detail): \Illuminate\Support\Collection
@@ -335,16 +344,25 @@ class BankStatementService
             ->whereHas('klienAr', fn($q) => $q->where('tipe_klien', '!=', 'RESTO'))
             ->orderByDesc('tanggal_invoice')
             ->get()
-            ->map(fn($inv) => [
-                'id'                 => $inv->id,
-                'no_invoice'         => $inv->no_invoice,
-                'tanggal'            => $inv->tanggal_invoice?->toDateString(),
-                'total_tagihan'      => $inv->total_tagihan,
-                'sisa_tagihan'       => $inv->sisa_tagihan,
-                'status'             => $inv->status,
-                'nama_klien'         => $inv->klienAr?->nama_klien,
-                'is_opening_balance' => (bool) $inv->is_opening_balance,
-            ]);
+            ->map(function ($inv) {
+                $subtotal        = (float) $inv->subtotal;
+                $totalPembayaran = (float) $inv->total_pembayaran;
+                $totalEfektif    = $subtotal > 0 ? $subtotal : (float) $inv->total_tagihan;
+                $sisaEfektif     = $subtotal > 0
+                    ? max(0, $subtotal - $totalPembayaran)
+                    : (float) $inv->sisa_tagihan;
+
+                return [
+                    'id'                 => $inv->id,
+                    'no_invoice'         => $inv->no_invoice,
+                    'tanggal'            => $inv->tanggal_invoice?->toDateString(),
+                    'total_tagihan'      => $totalEfektif,
+                    'sisa_tagihan'       => $sisaEfektif,
+                    'status'             => $inv->status,
+                    'nama_klien'         => $inv->klienAr?->nama_klien,
+                    'is_opening_balance' => (bool) $inv->is_opening_balance,
+                ];
+            });
     }
 
     public function applyKelebihan(
@@ -395,6 +413,17 @@ class BankStatementService
             'Opening balance belum disetujui, pembayaran belum dapat diproses'
         );
 
+        $targetSubtotal    = (float) $target->subtotal;
+        $targetTotalBayar  = (float) $target->pembayarans()->sum('jumlah_pembayaran');
+        $targetSisaEfektif = $targetSubtotal > 0
+            ? max(0, $targetSubtotal - $targetTotalBayar)
+            : max(0, (float) $target->total_tagihan - $targetTotalBayar);
+        abort_if(
+            $jumlah > $targetSisaEfektif + 0.01,
+            422,
+            'Jumlah melebihi sisa tagihan invoice tujuan (Rp ' . number_format($targetSisaEfektif, 0, ',', '.') . ').'
+        );
+
         DB::transaction(function () use ($invoiceId, $jumlah, $pembayaran, $inv, $keterangan, $target) {
             PembayaranAr::create([
                 'invoice_id'              => $invoiceId,
@@ -415,11 +444,14 @@ class BankStatementService
             // naik sebesar alokasi dan $sisa tidak pernah berkurang ke 0 (circular dependency).
             $fresh     = $target->fresh();
             $newTotal  = (float) $fresh->pembayarans()->sum('jumlah_pembayaran');
-            $newSisa   = max(0, (float) $fresh->total_tagihan - $newTotal);
+            $subtotal  = (float) $fresh->subtotal;
+            $rawSisa   = max(0, (float) $fresh->total_tagihan - $newTotal);
+            $isLunas   = $subtotal > 0 ? $newTotal >= $subtotal : $rawSisa <= 0;
+            $newSisa   = $isLunas ? 0 : $rawSisa;
             $newStatus = match (true) {
-                $newSisa <= 0  => 'LUNAS',
-                $newTotal > 0  => 'SEBAGIAN',
-                default        => 'TERKIRIM',
+                $isLunas      => 'LUNAS',
+                $newTotal > 0 => 'SEBAGIAN',
+                default       => 'TERKIRIM',
             };
             $fresh->update([
                 'total_pembayaran' => $newTotal,
