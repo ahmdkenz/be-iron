@@ -66,7 +66,7 @@ class InvoiceService
         }
 
         return (float) $query
-            ->selectRaw('COALESCE(SUM(GREATEST(0, subtotal - total_pembayaran)), 0) as total')
+            ->selectRaw('COALESCE(SUM(GREATEST(0, CASE WHEN subtotal = 0 THEN sisa_tagihan ELSE subtotal - total_pembayaran END)), 0) as total')
             ->value('total') ?? 0.0;
     }
 
@@ -449,16 +449,24 @@ class InvoiceService
     public function recalculate(Invoice $invoice): void
     {
         $totalPembayaran = $invoice->pembayarans()->sum('jumlah_pembayaran');
-        $sisaTagihan     = $invoice->total_tagihan - $totalPembayaran;
+        $subtotal        = (float) $invoice->subtotal;
+
+        $rawSisa = max(0, (float) $invoice->total_tagihan - $totalPembayaran);
+        // Regular invoice (subtotal > 0): LUNAS saat subtotal terbayar lunas.
+        // OB invoice (subtotal = 0): LUNAS saat total_tagihan terbayar (perilaku lama).
+        $isLunas = $subtotal > 0
+            ? $totalPembayaran >= $subtotal
+            : $rawSisa <= 0;
 
         if ($totalPembayaran <= 0) {
             $status      = 'TERKIRIM';
-            $sisaTagihan = max(0, $sisaTagihan);
-        } elseif ($sisaTagihan <= 0) {
+            $sisaTagihan = $rawSisa;
+        } elseif ($isLunas) {
             $status      = 'LUNAS';
             $sisaTagihan = 0;
         } else {
-            $status = 'SEBAGIAN';
+            $status      = 'SEBAGIAN';
+            $sisaTagihan = $rawSisa;
         }
 
         $invoice->update([
@@ -494,7 +502,7 @@ class InvoiceService
                             ->where('approval_status', 'APPROVED');
                     });
             })
-            ->selectRaw('COALESCE(SUM(GREATEST(0, subtotal - total_pembayaran)), 0) as total')
+            ->selectRaw('COALESCE(SUM(GREATEST(0, CASE WHEN subtotal = 0 THEN sisa_tagihan ELSE subtotal - total_pembayaran END)), 0) as total')
             ->value('total') ?? 0.0;
     }
 
@@ -523,13 +531,20 @@ class InvoiceService
             return;
         }
 
-        $newTotalTagihan = (float) $nextInvoice->subtotal + $newCarryover;
-        $newSisaTagihan  = max(0, $newTotalTagihan - (float) $nextInvoice->total_pembayaran);
+        $newTotalTagihan     = (float) $nextInvoice->subtotal + $newCarryover;
+        $subtotalNext        = (float) $nextInvoice->subtotal;
+        $totalPembayaranNext = (float) $nextInvoice->total_pembayaran;
+
+        $rawSisaNext  = max(0, $newTotalTagihan - $totalPembayaranNext);
+        $isLunasNext  = $subtotalNext > 0
+            ? $totalPembayaranNext >= $subtotalNext
+            : $rawSisaNext <= 0;
+        $newSisaTagihan = $isLunasNext ? 0.0 : $rawSisaNext;
 
         $newStatus = match (true) {
-            (float) $nextInvoice->total_pembayaran <= 0 => 'TERKIRIM',
-            $newSisaTagihan <= 0                        => 'LUNAS',
-            default                                     => 'SEBAGIAN',
+            $totalPembayaranNext <= 0 => 'TERKIRIM',
+            $isLunasNext              => 'LUNAS',
+            default                   => 'SEBAGIAN',
         };
 
         $nextInvoice->update([

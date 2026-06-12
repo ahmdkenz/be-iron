@@ -438,7 +438,7 @@
     $totalBerjalan = isset($totalSisaPeriode) ? (float)$totalSisaPeriode : 0;
     $obGrandTotal  = $isOb ? ($obSubtotal + $totalBerjalan) : 0;
     $obSisaBayar   = $isOb ? max(0, $obGrandTotal - (float)$invoice->total_pembayaran) : 0;
-    $terbilangAmt  = $isOb ? $obGrandTotal : (float)$invoice->total_tagihan;
+    $terbilangAmt  = $isOb ? $obGrandTotal : (float)$invoice->subtotal;
   @endphp
   <table>
     <tr>
@@ -481,7 +481,7 @@
 
           <tr class="totals-grand">
             <td class="totals-lbl">GRAND TOTAL</td>
-            <td class="totals-val">Rp {{ number_format($isOb ? $obGrandTotal : (float)$invoice->total_tagihan, 0, ',', '.') }}</td>
+            <td class="totals-val">Rp {{ number_format($isOb ? $obGrandTotal : (float)$invoice->subtotal, 0, ',', '.') }}</td>
           </tr>
 
           @if((float)$invoice->total_pembayaran > 0)
@@ -493,7 +493,7 @@
 
           <tr class="totals-sisa">
             <td class="totals-lbl">SISA BAYAR</td>
-            <td class="totals-val">Rp {{ number_format($isOb ? $obSisaBayar : (float)$invoice->sisa_tagihan, 0, ',', '.') }}</td>
+            <td class="totals-val">Rp {{ number_format($isOb ? $obSisaBayar : max(0, (float)$invoice->subtotal - (float)$invoice->total_pembayaran), 0, ',', '.') }}</td>
           </tr>
         </table>
       </td>

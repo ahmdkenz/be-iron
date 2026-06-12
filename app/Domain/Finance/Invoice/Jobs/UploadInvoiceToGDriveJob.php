@@ -6,6 +6,7 @@ use App\Models\Invoice;
 use App\Support\Helpers\GoogleDriveService;
 use App\Support\Helpers\SignatureBarcodeHelper;
 use Barryvdh\DomPDF\Facade\Pdf;
+use Carbon\Carbon;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Queue\InteractsWithQueue;
@@ -94,9 +95,39 @@ class UploadInvoiceToGDriveJob implements ShouldQueue
 
     private function generatePdf(Invoice $invoice): string
     {
-        $signatureData = $this->buildSignatureData($invoice);
+        $regularInvoicesInPeriod = collect();
+        if ($invoice->is_opening_balance && $invoice->klien_ar_id && $invoice->tanggal_invoice) {
+            $bulanAwal  = Carbon::parse($invoice->tanggal_invoice)->startOfMonth();
+            $bulanAkhir = Carbon::parse($invoice->tanggal_invoice)->endOfMonth();
+            $regularInvoicesInPeriod = Invoice::query()
+                ->where('klien_ar_id', $invoice->klien_ar_id)
+                ->where('perusahaan_id', $invoice->perusahaan_id)
+                ->where('is_opening_balance', false)
+                ->whereBetween('tanggal_invoice', [$bulanAwal->toDateString(), $bulanAkhir->toDateString()])
+                ->orderBy('tanggal_invoice', 'asc')
+                ->get();
 
-        return Pdf::loadView('finance.invoice-print', compact('invoice', 'signatureData'))
+            if ($regularInvoicesInPeriod->isNotEmpty()) {
+                $regularInvoicesInPeriod->load([
+                    'klienAr.karyawanAr',
+                    'perusahaan',
+                    'items',
+                    'pembayarans',
+                    'createdBy.karyawan',
+                    'submittedBy.karyawan',
+                    'approvedBy.karyawan',
+                ]);
+            }
+        }
+
+        $signatureData = $this->buildSignatureData($invoice);
+        $regularInvoicesSignatureData = $regularInvoicesInPeriod
+            ->mapWithKeys(fn ($inv) => [$inv->id => $this->buildSignatureData($inv)])
+            ->all();
+
+        return Pdf::loadView('finance.invoice-print', compact(
+            'invoice', 'signatureData', 'regularInvoicesInPeriod', 'regularInvoicesSignatureData'
+        ))
             ->setPaper('a4', 'portrait')
             ->setOptions([
                 'isHtml5ParserEnabled' => true,

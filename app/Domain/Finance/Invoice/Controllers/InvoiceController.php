@@ -22,6 +22,7 @@ use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use PhpOffice\PhpSpreadsheet\Cell\DataType;
@@ -119,6 +120,17 @@ class InvoiceController extends Controller
     {
         $invoice = $this->service->create(InvoiceDTO::fromRequest($request->validated()));
         UploadInvoiceToGDriveJob::dispatch($invoice->id);
+
+        if ($invoice->klien_ar_id && $invoice->tanggal_invoice) {
+            $monthStart = \Carbon\Carbon::parse($invoice->tanggal_invoice)->startOfMonth()->toDateString();
+            $monthEnd   = \Carbon\Carbon::parse($invoice->tanggal_invoice)->endOfMonth()->toDateString();
+            Invoice::where('klien_ar_id', $invoice->klien_ar_id)
+                ->where('is_opening_balance', true)
+                ->where('approval_status', 'APPROVED')
+                ->whereBetween('tanggal_invoice', [$monthStart, $monthEnd])
+                ->each(fn($ob) => UploadInvoiceToGDriveJob::dispatch($ob->id));
+        }
+
         return $this->createdResponse(new InvoiceResource($invoice), 'Invoice berhasil dibuat');
     }
 
@@ -755,6 +767,13 @@ class InvoiceController extends Controller
             UploadInvoiceToGDriveJob::dispatch($invoice->fresh()->id);
         }
 
+        // Re-upload OB invoices agar bagian "Invoice Bulan Berjalan" terupdate
+        $klienIds = collect(array_values($firstByKlien))->pluck('klien_ar_id')->unique()->toArray();
+        Invoice::whereIn('klien_ar_id', $klienIds)
+            ->where('is_opening_balance', true)
+            ->where('approval_status', 'APPROVED')
+            ->each(fn($ob) => UploadInvoiceToGDriveJob::dispatch($ob->id));
+
         $failed = $totalData - $insertedCount;
 
         return $this->successResponse([
@@ -933,10 +952,6 @@ class InvoiceController extends Controller
             ]);
         }
 
-        foreach ($invoiceMapping as $invoice) {
-            UploadInvoiceToGDriveJob::dispatch($invoice->id);
-        }
-
         // ── Cascade carryover: propagasi tagihan_sebelumnya antar invoice dalam batch ──
         $firstByKlien = [];
         foreach ($invoiceMapping as $invoice) {
@@ -953,6 +968,19 @@ class InvoiceController extends Controller
         foreach ($firstByKlien as $firstInvoice) {
             $this->service->propagateCarryover($firstInvoice->fresh());
         }
+
+        // Dispatch upload PDF SETELAH semua propagasi carryover selesai,
+        // sehingga PDF yang di-generate selalu memuat tagihan_periode_sebelumnya yang benar.
+        foreach ($invoiceMapping as $invoice) {
+            UploadInvoiceToGDriveJob::dispatch($invoice->fresh()->id);
+        }
+
+        // Re-upload OB invoices agar bagian "Invoice Bulan Berjalan" terupdate
+        $klienIds = collect(array_values($firstByKlien))->pluck('klien_ar_id')->unique()->toArray();
+        Invoice::whereIn('klien_ar_id', $klienIds)
+            ->where('is_opening_balance', true)
+            ->where('approval_status', 'APPROVED')
+            ->each(fn($ob) => UploadInvoiceToGDriveJob::dispatch($ob->id));
 
         $failed = $totalData - $insertedCount;
 
@@ -1089,6 +1117,12 @@ class InvoiceController extends Controller
                 'dpi'                  => 150,
             ])
             ->stream($filename);
+    }
+
+    public function syncGdrive(Invoice $invoice): JsonResponse
+    {
+        UploadInvoiceToGDriveJob::dispatch($invoice->id);
+        return $this->successResponse(null, 'PDF sedang diupload ulang ke Google Drive');
     }
 
     private function buildInvoiceDataSheet(Worksheet $sheet, string $type = 'b2c'): void
