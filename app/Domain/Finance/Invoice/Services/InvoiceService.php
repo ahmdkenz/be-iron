@@ -72,7 +72,7 @@ class InvoiceService
 
     public function generateNoInvoice(KlienAr $klien, string $tanggal): string
     {
-        return $this->generateConsolidatedInvoiceNo($klien);
+        return $this->generateConsolidatedInvoiceNo($klien, $tanggal);
     }
 
     public function generateOpeningBalanceNoInvoice(KlienAr $klien, string $tanggal): string
@@ -87,73 +87,83 @@ class InvoiceService
         return $prefix . '-' . $seq;
     }
 
-    public function generateConsolidatedInvoiceNo(KlienAr $klien): string
+    public function generateConsolidatedInvoiceNo(KlienAr $klien, ?string $tanggal = null): string
     {
         $klien->loadMissing('perusahaan');
-        $raw       = $klien->perusahaan?->nama_singkatan_perusahaan ?? 'ABB';
-        $singkatan = strtoupper(preg_replace('/[^A-Za-z0-9]/', '', $raw));
-        $now       = Carbon::now();
-        $xxx       = str_pad(rand(0, 999), 3, '0', STR_PAD_LEFT);
+        $raw         = $klien->perusahaan?->nama_singkatan_perusahaan ?? 'ABB';
+        $singkatan   = strtoupper(preg_replace('/[^A-Za-z0-9]/', '', $raw));
+        $invoiceDate = $tanggal ? Carbon::parse($tanggal) : Carbon::now();
+        $now         = Carbon::now();
+        // Query prefix uses date-only so the counter resets each day
+        $datePrefix  = 'SI-' . $singkatan . '-' . $invoiceDate->format('dmY');
 
-        return 'SI-' . $singkatan . '-' . $now->format('dmYHis') . '-' . $xxx;
+        $maxSeq = Invoice::where('no_invoice', 'like', $datePrefix . '%')
+            ->lockForUpdate()
+            ->max(DB::raw("CAST(SUBSTRING_INDEX(no_invoice, '-', -1) AS UNSIGNED)"));
+
+        $seq = str_pad(($maxSeq ?? 0) + 1, 3, '0', STR_PAD_LEFT);
+
+        return 'SI-' . $singkatan . '-' . $invoiceDate->format('dmY') . $now->format('His') . '-' . $seq;
     }
 
     public function create(InvoiceDTO $dto): Invoice
     {
-        $klien    = KlienAr::with('perusahaan')->findOrFail($dto->klien_ar_id);
-        $carryover = $this->getCarryover($dto->klien_ar_id);
-        $noInvoice = $this->generateConsolidatedInvoiceNo($klien);
+        return DB::transaction(function () use ($dto) {
+            $klien     = KlienAr::with('perusahaan')->findOrFail($dto->klien_ar_id);
+            $carryover = $this->getCarryover($dto->klien_ar_id);
+            $noInvoice = $this->generateConsolidatedInvoiceNo($klien, $dto->tanggal_invoice);
 
-        $subtotal = collect($dto->items)->sum(
-            fn($item) => ($item['qty'] ?? 0) * ($item['harga_satuan'] ?? 0)
-        );
-        $totalTagihan = $subtotal + $carryover;
+            $subtotal = collect($dto->items)->sum(
+                fn($item) => ($item['qty'] ?? 0) * ($item['harga_satuan'] ?? 0)
+            );
+            $totalTagihan = $subtotal + $carryover;
 
-        $invoice = $this->repository->create([
-            'no_invoice'                 => $noInvoice,
-            'tanggal_invoice'            => $dto->tanggal_invoice,
-            'tanggal_kirim_barang'       => $dto->tanggal_kirim_barang,
-            'tanggal_jatuh_tempo'        => $dto->tanggal_jatuh_tempo,
-            'periode_awal'               => $dto->periode_awal,
-            'periode_akhir'              => $dto->periode_akhir,
-            'klien_ar_id'                => $dto->klien_ar_id,
-            'resto_id'                   => $dto->resto_id,
-            'perusahaan_id'              => $klien->perusahaan_id,
-            'karyawan_id'                => $this->resolveInvoiceKaryawanId(auth()->user(), $klien),
-            'no_surat_jalan'             => $dto->no_surat_jalan,
-            'subtotal'                   => $subtotal,
-            'tagihan_periode_sebelumnya' => $carryover,
-            'total_tagihan'              => $totalTagihan,
-            'total_pembayaran'           => 0,
-            'sisa_tagihan'               => $totalTagihan,
-            'status'                     => $dto->status,
-            'keterangan'                 => $dto->keterangan,
-            'prepared_token'             => Str::uuid()->toString(),
-            'approved_token'             => Str::uuid()->toString(),
-            'created_by'                 => auth()->id(),
-        ]);
-
-        foreach ($dto->items as $item) {
-            $itemSubtotal = ($item['qty'] ?? 0) * ($item['harga_satuan'] ?? 0);
-            $invoice->items()->create([
-                'barang_id'    => $item['barang_id'] ?? null,
-                'nama_barang'  => $item['nama_barang'],
-                'qty'          => $item['qty'],
-                'satuan'       => $item['satuan'] ?? null,
-                'harga_satuan' => $item['harga_satuan'],
-                'subtotal'     => $itemSubtotal,
-                'keterangan'   => $item['keterangan'] ?? null,
+            $invoice = $this->repository->create([
+                'no_invoice'                 => $noInvoice,
+                'tanggal_invoice'            => $dto->tanggal_invoice,
+                'tanggal_kirim_barang'       => $dto->tanggal_kirim_barang,
+                'tanggal_jatuh_tempo'        => $dto->tanggal_jatuh_tempo,
+                'periode_awal'               => $dto->periode_awal,
+                'periode_akhir'              => $dto->periode_akhir,
+                'klien_ar_id'                => $dto->klien_ar_id,
+                'resto_id'                   => $dto->resto_id,
+                'perusahaan_id'              => $klien->perusahaan_id,
+                'karyawan_id'                => $this->resolveInvoiceKaryawanId(auth()->user(), $klien),
+                'no_surat_jalan'             => $dto->no_surat_jalan,
+                'subtotal'                   => $subtotal,
+                'tagihan_periode_sebelumnya' => $carryover,
+                'total_tagihan'              => $totalTagihan,
+                'total_pembayaran'           => 0,
+                'sisa_tagihan'               => $totalTagihan,
+                'status'                     => $dto->status,
+                'keterangan'                 => $dto->keterangan,
+                'prepared_token'             => Str::uuid()->toString(),
+                'approved_token'             => Str::uuid()->toString(),
+                'created_by'                 => auth()->id(),
             ]);
-        }
 
-        return $invoice->load([
-            'klienAr.karyawanAr',
-            'klienAr.resto.investor',
-            'perusahaan',
-            'karyawan',
-            'items.barang',
-            'pembayarans',
-        ]);
+            foreach ($dto->items as $item) {
+                $itemSubtotal = ($item['qty'] ?? 0) * ($item['harga_satuan'] ?? 0);
+                $invoice->items()->create([
+                    'barang_id'    => $item['barang_id'] ?? null,
+                    'nama_barang'  => $item['nama_barang'],
+                    'qty'          => $item['qty'],
+                    'satuan'       => $item['satuan'] ?? null,
+                    'harga_satuan' => $item['harga_satuan'],
+                    'subtotal'     => $itemSubtotal,
+                    'keterangan'   => $item['keterangan'] ?? null,
+                ]);
+            }
+
+            return $invoice->load([
+                'klienAr.karyawanAr',
+                'klienAr.resto.investor',
+                'perusahaan',
+                'karyawan',
+                'items.barang',
+                'pembayarans',
+            ]);
+        });
     }
 
     public function createOpeningBalance(array $data): Invoice
