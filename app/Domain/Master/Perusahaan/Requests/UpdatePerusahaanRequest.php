@@ -23,6 +23,7 @@ class UpdatePerusahaanRequest extends FormRequest
             'email'                     => ['nullable', 'email', 'max:100'],
             'no_npwp'                   => ['nullable', 'string', 'max:30'],
             'keterangan'                => ['nullable', 'string'],
+            'nama_direktur'             => ['nullable', 'string', 'max:100'],
             'status'                    => ['nullable', 'boolean'],
         ];
     }

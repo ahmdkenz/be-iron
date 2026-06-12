@@ -20,6 +20,7 @@ class PerusahaanResource extends JsonResource
             'no_telp'                   => $this->no_telp,
             'email'                     => $this->email,
             'no_npwp'                   => $this->no_npwp,
+            'nama_direktur'             => $this->nama_direktur,
             'keterangan'                => $this->keterangan,
             'status'                    => $this->status,
             'created_by'                => $this->created_by,
