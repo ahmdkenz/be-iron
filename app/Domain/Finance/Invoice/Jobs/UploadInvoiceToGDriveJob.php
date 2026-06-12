@@ -28,6 +28,7 @@ class UploadInvoiceToGDriveJob implements ShouldQueue
         $invoice = Invoice::with([
             'klienAr.karyawanAr',
             'perusahaan',
+            'karyawan.perusahaan',
             'items',
             'openingBalanceDetails.items',
             'pembayarans',
@@ -111,6 +112,7 @@ class UploadInvoiceToGDriveJob implements ShouldQueue
                 $regularInvoicesInPeriod->load([
                     'klienAr.karyawanAr',
                     'perusahaan',
+                    'karyawan.perusahaan',
                     'items',
                     'pembayarans',
                     'createdBy.karyawan',
@@ -151,7 +153,7 @@ class UploadInvoiceToGDriveJob implements ShouldQueue
                 ?? '___________________';
         } else {
             $preparedByName = $invoice->klienAr?->karyawanAr?->nama_karyawan ?? '___________________';
-            $approvedByName = 'Direktur';
+            $approvedByName = $invoice->karyawan?->perusahaan?->nama_direktur ?? 'Agung Tribuwono';
         }
 
         return [
