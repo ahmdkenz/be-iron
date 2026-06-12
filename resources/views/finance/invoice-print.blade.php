@@ -526,7 +526,7 @@
         @endif
         <div class="sig-name">{{ $signatureData['approved_by_name'] ?? '___________________' }}</div>
         <div class="sig-role">Direktur</div>
-        <div class="sig-role" style="font-size:10px; margin-top:2px;">{{ $invoice->perusahaan->nama_perusahaan }}</div>
+        <div class="sig-role" style="font-size:10px; margin-top:2px;">{{ $invoice->karyawan?->perusahaan?->nama_perusahaan ?? $invoice->perusahaan->nama_perusahaan }}</div>
       </td>
       <td class="sig-col">
         <div class="sig-title">Diterima Oleh</div>
@@ -538,7 +538,7 @@
 
   <!-- Footer -->
   <div class="footer">
-    Dicetak pada {{ now()->isoFormat('D MMMM YYYY HH:mm') }} &bull; {{ $invoice->perusahaan->nama_perusahaan }}
+    Dicetak pada {{ now()->isoFormat('D MMMM YYYY HH:mm') }} &bull; {{ $invoice->karyawan?->perusahaan?->nama_perusahaan ?? $invoice->perusahaan->nama_perusahaan }}
   </div>
 
 </div>
@@ -774,7 +774,7 @@
           @endif
           <div class="sig-name">{{ $regSigData['approved_by_name'] ?? '___________________' }}</div>
           <div class="sig-role">Direktur</div>
-          <div class="sig-role" style="font-size:10px; margin-top:2px;">{{ $regInv->perusahaan->nama_perusahaan }}</div>
+          <div class="sig-role" style="font-size:10px; margin-top:2px;">{{ $regInv->karyawan?->perusahaan?->nama_perusahaan ?? $regInv->perusahaan->nama_perusahaan }}</div>
         </td>
         <td class="sig-col">
           <div class="sig-title">Diterima Oleh</div>
@@ -786,7 +786,7 @@
 
     <!-- Footer -->
     <div class="footer">
-      Dicetak pada {{ now()->isoFormat('D MMMM YYYY HH:mm') }} &bull; {{ $regInv->perusahaan->nama_perusahaan }}
+      Dicetak pada {{ now()->isoFormat('D MMMM YYYY HH:mm') }} &bull; {{ $regInv->karyawan?->perusahaan?->nama_perusahaan ?? $regInv->perusahaan->nama_perusahaan }}
     </div>
 
   </div>

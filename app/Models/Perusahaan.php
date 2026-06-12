@@ -22,6 +22,7 @@ class Perusahaan extends Model
         'no_telp',
         'email',
         'no_npwp',
+        'nama_direktur',
         'status',
         'keterangan',
         'created_by',

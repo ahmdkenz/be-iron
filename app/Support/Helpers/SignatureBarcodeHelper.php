@@ -107,14 +107,14 @@ class SignatureBarcodeHelper
         return implode("\n", $lines);
     }
 
-    public static function buildInvoiceApprovedPayload(Invoice $invoice, string $preparedByName): string
+    public static function buildInvoiceApprovedPayload(Invoice $invoice, string $preparedByName, string $approvedByName = 'Agung Tribuwono'): string
     {
         $periode    = Carbon::parse($invoice->tanggal_invoice)->format('d-m-Y');
         $grandTotal = 'Rp ' . number_format((float) $invoice->total_tagihan, 0, ',', '.');
         $sisaBayar  = 'Rp ' . number_format((float) $invoice->sisa_tagihan, 0, ',', '.');
 
         $lines = [
-            "Disetujui Oleh: Agung Tribuwono",
+            "Disetujui Oleh: {$approvedByName}",
             "Jabatan: Direktur",
             "No Invoice: {$invoice->no_invoice}",
             "Periode: {$periode}",

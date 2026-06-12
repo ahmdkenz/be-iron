@@ -1003,6 +1003,7 @@ class InvoiceController extends Controller
             'klienAr.karyawanAr',
             'klienAr.perusahaan',
             'perusahaan',
+            'karyawan.perusahaan',
             'items.barang',
             'openingBalanceDetails.items.barang',
             'pembayarans',
@@ -1971,10 +1972,10 @@ class InvoiceController extends Controller
             $approvedPayload = SignatureBarcodeHelper::buildObApprovedPayload($invoice, $preparedByName);
         } else {
             $preparedByName = $invoice->klienAr?->karyawanAr?->nama_karyawan ?? '___________________';
-            $approvedByName = 'Agung Tribuwono';
+            $approvedByName = $invoice->karyawan?->perusahaan?->nama_direktur ?? 'Agung Tribuwono';
 
             $preparedPayload = SignatureBarcodeHelper::buildInvoicePreparedPayload($invoice, $preparedByName);
-            $approvedPayload = SignatureBarcodeHelper::buildInvoiceApprovedPayload($invoice, $preparedByName);
+            $approvedPayload = SignatureBarcodeHelper::buildInvoiceApprovedPayload($invoice, $preparedByName, $approvedByName);
         }
 
         return [
