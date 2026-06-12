@@ -58,8 +58,17 @@ class UploadInvoiceToGDriveJob implements ShouldQueue
 
             $clientName = $invoice->klienAr->nama_klien;
             $folderId   = $driveService->findOrCreateClientFolder($typeFolderId, $clientName);
-            $fileId     = $driveService->uploadPdf($folderId, $fileName, $pdfContent);
-            $driveService->makeFilePublic($fileId);
+
+            // Jika invoice sudah punya file di Drive, UPDATE isi file (tidak buat file baru).
+            // Ini mencegah duplikat ketika job di-dispatch lebih dari sekali untuk invoice yang sama
+            // (misal: sekali dari import loop, sekali lagi dari cascadeCarryoverToNext).
+            if ($invoice->gdrive_file_id) {
+                $driveService->updatePdf($invoice->gdrive_file_id, $pdfContent);
+                $fileId = $invoice->gdrive_file_id;
+            } else {
+                $fileId = $driveService->uploadPdf($folderId, $fileName, $pdfContent);
+                $driveService->makeFilePublic($fileId);
+            }
 
             // updateQuietly agar tidak trigger event audit blameable
             $invoice->updateQuietly([

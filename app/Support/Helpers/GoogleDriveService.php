@@ -75,6 +75,18 @@ class GoogleDriveService
     }
 
     /**
+     * Update konten file PDF yang sudah ada di Google Drive (file ID tetap sama).
+     */
+    public function updatePdf(string $fileId, string $pdfContent): void
+    {
+        $this->drive->files->update($fileId, new DriveFile(), [
+            'data'       => $pdfContent,
+            'mimeType'   => 'application/pdf',
+            'uploadType' => 'multipart',
+        ]);
+    }
+
+    /**
      * Upload file dengan MIME type apapun ke folder yang ditentukan.
      * Return: Google Drive file ID.
      */

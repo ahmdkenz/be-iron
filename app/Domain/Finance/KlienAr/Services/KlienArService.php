@@ -6,6 +6,7 @@ use App\Domain\Finance\KlienAr\DTO\KlienArDTO;
 use App\Domain\Finance\KlienAr\Repositories\KlienArRepository;
 use App\Models\Karyawan;
 use App\Models\KlienAr;
+use App\Models\Resto;
 use Illuminate\Pagination\LengthAwarePaginator;
 
 class KlienArService
@@ -49,6 +50,9 @@ class KlienArService
     public function create(KlienArDTO $dto): KlienAr
     {
         $perusahaanId = $dto->perusahaan_id
+            ?? ($dto->tipe_klien === 'RESTO' && $dto->resto_id
+                ? Resto::find($dto->resto_id)?->perusahaan_id
+                : null)
             ?? Karyawan::find($dto->karyawan_ar_id)?->perusahaan_id;
 
         return $this->repository->create([
@@ -68,6 +72,9 @@ class KlienArService
     public function update(KlienAr $klien, KlienArDTO $dto): KlienAr
     {
         $perusahaanId = $dto->perusahaan_id
+            ?? ($dto->tipe_klien === 'RESTO' && $dto->resto_id
+                ? Resto::find($dto->resto_id)?->perusahaan_id
+                : null)
             ?? $klien->perusahaan_id
             ?? Karyawan::find($dto->karyawan_ar_id)?->perusahaan_id;
 

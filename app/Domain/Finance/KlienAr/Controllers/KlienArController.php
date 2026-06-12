@@ -10,6 +10,7 @@ use App\Domain\Finance\KlienAr\Services\KlienArService;
 use App\Http\Controllers\Controller;
 use App\Models\KlienAr;
 use App\Models\Karyawan;
+use App\Models\Perusahaan;
 use App\Models\Resto;
 use App\Support\Helpers\RoleHelper;
 use App\Support\Traits\ApiResponse;
@@ -312,6 +313,7 @@ class KlienArController extends Controller
             $tipeKlien       = strtoupper(trim((string) ($row[2] ?? '')));
             $namaResto       = $this->importValue($row[3] ?? '');
             $namaKaryawanAr  = $this->importValue($row[4] ?? '');
+            $namaEntitas     = $this->importValue($row[8] ?? '');
 
             // Lookup Resto
             $restoId = null;
@@ -338,12 +340,24 @@ class KlienArController extends Controller
                 $karyawanArId = $karyawan->id;
             }
 
+            // Lookup Perusahaan via kolom nama_entitas (opsional, eksplisit untuk PT)
+            $perusahaanId = null;
+            if ($namaEntitas) {
+                $perusahaan = Perusahaan::where('nama_perusahaan', $namaEntitas)->first();
+                if (!$perusahaan) {
+                    $errors[] = ['row' => $lineNumber, 'message' => "Entitas '{$namaEntitas}' tidak ditemukan di sistem."];
+                    continue;
+                }
+                $perusahaanId = $perusahaan->id;
+            }
+
             $data = [
                 'kode_klien'     => $this->importValue($row[0] ?? ''),
                 'nama_klien'     => $namaKlien,
                 'tipe_klien'     => $tipeKlien,
                 'resto_id'       => $restoId,
                 'karyawan_ar_id' => $karyawanArId,
+                'perusahaan_id'  => $perusahaanId,
                 'no_npwp'        => $this->importValue($row[5] ?? ''),
                 'no_wa'          => $this->importValue($row[6] ?? ''),
                 'status'         => isset($row[7]) && trim((string) $row[7]) !== '' ? (bool) (int) $row[7] : true,
@@ -355,6 +369,7 @@ class KlienArController extends Controller
                 'tipe_klien'     => ['required', 'in:PT,RESTO'],
                 'resto_id'       => ['nullable', 'integer'],
                 'karyawan_ar_id' => ['required', 'integer'],
+                'perusahaan_id'  => ['nullable', 'integer'],
                 'no_npwp'        => ['nullable', 'string', 'max:30'],
                 'no_wa'          => ['nullable', 'string', 'max:20'],
                 'status'         => ['nullable', 'boolean'],
@@ -406,10 +421,11 @@ class KlienArController extends Controller
             'F' => ['no_npwp',          22],
             'G' => ['no_wa',            18],
             'H' => ['status',           10],
+            'I' => ['nama_entitas',     26],
         ];
 
         // Row 1 — Title
-        $sheet->mergeCells('A1:H1');
+        $sheet->mergeCells('A1:I1');
         $sheet->setCellValue('A1', 'TEMPLATE IMPORT DATA Client');
         $sheet->getStyle('A1')->applyFromArray([
             'font'      => ['bold' => true, 'size' => 14, 'color' => ['argb' => 'FFFFFFFF']],
@@ -419,7 +435,7 @@ class KlienArController extends Controller
         $sheet->getRowDimension(1)->setRowHeight(36);
 
         // Row 2 — Subtitle
-        $sheet->mergeCells('A2:H2');
+        $sheet->mergeCells('A2:I2');
         $sheet->setCellValue('A2', 'Isi data Client di bawah ini. Hapus baris [CONTOH] sebelum import. Lihat sheet "Petunjuk Pengisian" untuk panduan lengkap.');
         $sheet->getStyle('A2')->applyFromArray([
             'font'      => ['italic' => true, 'size' => 9, 'color' => ['argb' => 'FF37474F']],
@@ -436,7 +452,7 @@ class KlienArController extends Controller
             $sheet->setCellValue("{$col}4", $name);
             $sheet->getColumnDimension($col)->setWidth($width);
         }
-        $sheet->getStyle('A4:H4')->applyFromArray([
+        $sheet->getStyle('A4:I4')->applyFromArray([
             'font'      => ['bold' => true, 'size' => 10, 'color' => ['argb' => 'FFFFFFFF']],
             'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF1976D2']],
             'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
@@ -454,11 +470,12 @@ class KlienArController extends Controller
             'F' => '12.345.678.9-012.000',
             'G' => '08123456789',
             'H' => '1',
+            'I' => '',
         ];
         foreach ($example as $col => $val) {
             $sheet->getCell("{$col}5")->setValueExplicit($val, DataType::TYPE_STRING);
         }
-        $sheet->getStyle('A5:H5')->applyFromArray([
+        $sheet->getStyle('A5:I5')->applyFromArray([
             'font'      => ['italic' => true, 'size' => 9, 'color' => ['argb' => 'FFE65100']],
             'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFFFF9C4']],
             'alignment' => ['vertical' => Alignment::VERTICAL_CENTER],
@@ -469,7 +486,7 @@ class KlienArController extends Controller
         // Rows 6–55 — Empty template rows
         for ($row = 6; $row <= 55; $row++) {
             $bg = $row % 2 === 0 ? 'FFF5F5F5' : 'FFFFFFFF';
-            $sheet->getStyle("A{$row}:H{$row}")->applyFromArray([
+            $sheet->getStyle("A{$row}:I{$row}")->applyFromArray([
                 'fill'    => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => $bg]],
                 'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_HAIR, 'color' => ['argb' => 'FFE0E0E0']]],
             ]);
@@ -479,7 +496,7 @@ class KlienArController extends Controller
         }
 
         $sheet->freezePane('A5');
-        $sheet->setAutoFilter('A4:H4');
+        $sheet->setAutoFilter('A4:I4');
     }
 
     private function buildInstructionSheet(Worksheet $sheet): void
@@ -524,6 +541,7 @@ class KlienArController extends Controller
             '7. Untuk tipe RESTO, kolom nama_resto WAJIB diisi persis sesuai nama resto di sistem.',
             '8. Kolom nama_karyawan_ar WAJIB diisi persis sesuai nama karyawan AR di sistem.',
             '9. Simpan file sebagai .xlsx atau .csv sebelum diupload ke sistem.',
+            '10. Untuk tipe PT, kolom nama_entitas WAJIB diisi persis sesuai nama perusahaan di sistem.',
         ];
 
         foreach ($steps as $i => $step) {
@@ -573,6 +591,7 @@ class KlienArController extends Controller
             ['no_npwp',          'B2C: NPWP investor (opsional). B2B: NPWP perusahaan (wajib)',   'Jika B2B',  'Format: XX.XXX.XXX.X-XXX.XXX. Contoh: 12.345.678.9-012.000'],
             ['no_wa',            'Nomor WhatsApp untuk notifikasi tagihan',                        'Opsional',  'Awali dengan 08 atau 62. Contoh: 08123456789'],
             ['status',           'Status aktif klien',                                             'Opsional',  '1 = Aktif (default), 0 = Nonaktif'],
+            ['nama_entitas',     'Nama perusahaan pengelola client (wajib untuk PT)',               'Jika PT',   'Harus sesuai persis nama perusahaan di sistem. Contoh: Mitra Swakelola'],
         ];
 
         foreach ($colInfos as $i => [$colName, $desc, $req, $fmt]) {
@@ -608,6 +627,7 @@ class KlienArController extends Controller
             '• Jika kode_resto BELUM ADA di sistem, data baru DITAMBAHKAN dengan kode yang diberikan.',
             '• nama_resto yang tidak ditemukan di sistem akan menyebabkan baris tersebut GAGAL diproses.',
             '• nama_karyawan_ar yang tidak ditemukan di sistem akan menyebabkan baris tersebut GAGAL diproses.',
+            '• nama_entitas yang tidak ditemukan di sistem akan menyebabkan baris tersebut GAGAL diproses.',
         ];
 
         foreach ($notes as $note) {
@@ -640,7 +660,7 @@ class KlienArController extends Controller
                 $cells[] = $this->xlsxCellToString($cell);
             }
 
-            $cells     = array_slice($cells, 0, 8);
+            $cells     = array_slice($cells, 0, 9);
             $firstCell = trim($cells[0] ?? '');
 
             if (!$headerFound) {
