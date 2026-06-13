@@ -18,6 +18,7 @@ use App\Support\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 use PhpOffice\PhpSpreadsheet\Cell\DataType;
 use PhpOffice\PhpSpreadsheet\IOFactory;
@@ -106,6 +107,13 @@ class OpeningBalanceController extends Controller
         $invoice = $this->findOpeningBalanceOrFail($id);
         $updated = $this->service->approveOpeningBalance($invoice, $payload['note'] ?? null);
 
+        Log::channel('security')->info('Opening balance disetujui', [
+            'user_id'    => auth()->id(),
+            'invoice_id' => $invoice->id,
+            'no_invoice' => $invoice->no_invoice,
+            'ip'         => $request->ip(),
+        ]);
+
         return $this->successResponse(
             new InvoiceResource($updated),
             'Opening balance berhasil disetujui'
@@ -122,6 +130,14 @@ class OpeningBalanceController extends Controller
 
         $invoice = $this->findOpeningBalanceOrFail($id);
         $updated = $this->service->rejectOpeningBalance($invoice, $payload['note']);
+
+        Log::channel('security')->info('Opening balance ditolak', [
+            'user_id'    => auth()->id(),
+            'invoice_id' => $invoice->id,
+            'no_invoice' => $invoice->no_invoice,
+            'note'       => $payload['note'],
+            'ip'         => $request->ip(),
+        ]);
 
         return $this->successResponse(
             new InvoiceResource($updated),
@@ -281,6 +297,11 @@ class OpeningBalanceController extends Controller
         $sheet1Rows = $isCsv
             ? $this->parseObCsv($file->getRealPath())
             : $this->parseObSheetRows($file->getRealPath(), 0, 'nama_klien', 7);
+
+        if (count($sheet1Rows) > 2000) {
+            DB::rollBack();
+            return $this->errorResponse('File melebihi batas maksimal 2.000 baris data.', 422);
+        }
 
         $lineNumber    = 0;
         $headerSkipped = false;

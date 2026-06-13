@@ -69,14 +69,9 @@ class BankStatementController extends Controller
 
             return $this->errorResponse('Rekening koran sudah diupload untuk periode ini.', 409, [
                 'existing' => [
-                    'id'               => $s->id,
-                    'nama_file'        => $s->nama_file,
-                    'periode_awal'     => $s->periode_awal?->toDateString(),
-                    'periode_akhir'    => $s->periode_akhir?->toDateString(),
-                    'total_transaksi'  => $s->total_transaksi,
-                    'jumlah_matched'   => $s->jumlah_matched,
-                    'jumlah_unmatched' => $s->jumlah_unmatched,
-                    'uploaded_by'      => $s->uploader?->name,
+                    'id'           => $s->id,
+                    'periode_awal' => $s->periode_awal?->toDateString(),
+                    'periode_akhir'=> $s->periode_akhir?->toDateString(),
                 ],
             ]);
         } catch (\RuntimeException $e) {

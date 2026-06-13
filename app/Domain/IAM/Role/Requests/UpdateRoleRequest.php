@@ -7,7 +7,7 @@ use Illuminate\Validation\Rule;
 
 class UpdateRoleRequest extends FormRequest
 {
-    public function authorize(): bool { return true; }
+    public function authorize(): bool { return $this->user() !== null; }
 
     public function rules(): array
     {

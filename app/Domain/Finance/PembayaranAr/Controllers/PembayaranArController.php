@@ -13,6 +13,7 @@ use App\Support\Helpers\RoleHelper;
 use App\Support\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
 class PembayaranArController extends Controller
 {
@@ -74,12 +75,31 @@ class PembayaranArController extends Controller
 
     public function store(StorePembayaranArRequest $request, int $invoiceId): JsonResponse
     {
-        $invoice    = $this->invoiceService->findOrFail($invoiceId);
+        $invoice = $this->invoiceService->findOrFail($invoiceId);
+
+        $user = $request->user()->loadMissing('karyawan');
+        if (!RoleHelper::hasGlobalFinanceAccess($user) && $user->karyawan) {
+            abort_if(
+                $invoice->perusahaan_id !== $user->karyawan->perusahaan_id,
+                403,
+                'Anda tidak memiliki akses untuk mencatat pembayaran invoice ini.'
+            );
+        }
+
         $pembayaran = $this->service->create(
             $invoice,
             $request->validated(),
             $request->file('bukti_pembayaran'),
         );
+
+        Log::channel('security')->info('Pembayaran dicatat', [
+            'user_id'        => $user->id,
+            'invoice_id'     => $invoice->id,
+            'no_invoice'     => $invoice->no_invoice,
+            'jumlah'         => $request->jumlah_pembayaran,
+            'metode'         => $request->metode_pembayaran,
+            'ip'             => $request->ip(),
+        ]);
 
         return $this->createdResponse(
             new PembayaranArResource($pembayaran),

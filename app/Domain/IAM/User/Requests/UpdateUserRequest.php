@@ -9,7 +9,7 @@ class UpdateUserRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return true;
+        return $this->user() !== null;
     }
 
     public function rules(): array
@@ -19,11 +19,19 @@ class UpdateUserRequest extends FormRequest
         return [
             'username'    => ['sometimes', 'required', 'string', 'min:3', 'max:50', Rule::unique('tb_users', 'username')->ignore($userId)],
             'email'       => ['sometimes', 'required', 'email', Rule::unique('tb_users', 'email')->ignore($userId)],
-            'password'    => ['nullable', 'string', 'min:6'],
+            'password'    => ['nullable', 'string', 'min:8', 'regex:/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[\W_]).+$/'],
             'karyawan_id' => ['nullable', 'integer', 'exists:tb_karyawan,id'],
             'role_id'     => ['sometimes', 'required', 'integer', 'exists:tb_role,id'],
             'no_hp'       => ['nullable', 'string', 'max:20'],
             'status'      => ['nullable', 'boolean'],
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'password.min'   => 'Password minimal 8 karakter.',
+            'password.regex' => 'Password harus mengandung huruf besar, huruf kecil, angka, dan karakter spesial.',
         ];
     }
 }

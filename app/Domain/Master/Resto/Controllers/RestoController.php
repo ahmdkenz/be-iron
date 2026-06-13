@@ -267,6 +267,10 @@ class RestoController extends Controller
             );
         }
 
+        if (count($rows) > 1000) {
+            return $this->errorResponse('File melebihi batas maksimal 1.000 baris data.', 422);
+        }
+
         $insertedCount = 0;
         $updatedCount  = 0;
         $totalData     = 0;

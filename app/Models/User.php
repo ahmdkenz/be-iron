@@ -22,9 +22,6 @@ class User extends Authenticatable
         'refresh_token',
         'no_hp',
         'status',
-        'email_verified_at',
-        'created_by',
-        'updated_by',
     ];
 
     protected $hidden = [
