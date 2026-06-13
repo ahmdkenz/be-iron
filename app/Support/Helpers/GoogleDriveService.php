@@ -154,6 +154,14 @@ class GoogleDriveService
     }
 
     /**
+     * Cari atau buat subfolder generik (tahun, bulan, dll) di dalam parent folder.
+     */
+    public function findOrCreateSubFolder(string $parentFolderId, string $folderName): string
+    {
+        return $this->findOrCreateFolder($parentFolderId, $folderName);
+    }
+
+    /**
      * Hapus karakter yang tidak valid untuk nama folder Google Drive.
      */
     private function sanitizeFolderName(string $name): string

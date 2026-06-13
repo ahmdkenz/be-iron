@@ -61,6 +61,12 @@ class UploadInvoiceToGDriveJob implements ShouldQueue
             $clientName = $invoice->klienAr->nama_klien;
             $folderId   = $driveService->findOrCreateClientFolder($typeFolderId, $clientName);
 
+            $year     = Carbon::parse($invoice->tanggal_invoice)->format('Y');
+            $folderId = $driveService->findOrCreateSubFolder($folderId, $year);
+
+            $month    = Carbon::parse($invoice->tanggal_invoice)->locale('id')->isoFormat('MMMM');
+            $folderId = $driveService->findOrCreateSubFolder($folderId, $month);
+
             // Jika invoice sudah punya file di Drive, UPDATE isi file (tidak buat file baru).
             // Ini mencegah duplikat ketika job di-dispatch lebih dari sekali untuk invoice yang sama
             // (misal: sekali dari import loop, sekali lagi dari cascadeCarryoverToNext).
