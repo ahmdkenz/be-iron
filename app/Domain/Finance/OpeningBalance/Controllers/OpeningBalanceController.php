@@ -280,7 +280,7 @@ class OpeningBalanceController extends Controller
         // ── Pass 1: Opening Balance utama ────────────────────────────────────
         $sheet1Rows = $isCsv
             ? $this->parseObCsv($file->getRealPath())
-            : $this->parseObSheetRows($file->getRealPath(), 0, 'no_invoice', 8);
+            : $this->parseObSheetRows($file->getRealPath(), 0, 'nama_klien', 7);
 
         $lineNumber    = 0;
         $headerSkipped = false;
@@ -296,26 +296,26 @@ class OpeningBalanceController extends Controller
 
             $totalOb++;
 
-            $noInvoice = $firstCell;
-            $namaKlien = $this->importObValue($row[1] ?? '');
+            $namaKlien = $this->importObValue($row[0] ?? '');
             $klien     = KlienAr::where('nama_klien', $namaKlien)->latest()->first();
             if (!$klien) {
                 $errors[] = ['sheet' => 'Sheet 1', 'row' => $lineNumber, 'message' => "Klien '{$namaKlien}' tidak ditemukan di sistem."];
                 continue;
             }
 
-            $tanggal     = $this->parseObDate($row[2] ?? '');
-            $periodeAwal = $this->parseObDate($row[3] ?? '');
-            $periodeAkhir= $this->parseObDate($row[4] ?? '');
+            $tanggal     = $this->parseObDate($row[1] ?? '');
+            $periodeAwal = $this->parseObDate($row[2] ?? '');
+            $periodeAkhir= $this->parseObDate($row[3] ?? '');
 
             if (!$tanggal || !$periodeAwal || !$periodeAkhir) {
                 $errors[] = ['sheet' => 'Sheet 1', 'row' => $lineNumber, 'message' => 'Format tanggal tidak valid. Gunakan format YYYY-MM-DD atau DD-MM-YYYY.'];
                 continue;
             }
 
-            $saldoAwal  = (float) str_replace(['.', ','], ['', '.'], trim((string) ($row[5] ?? '')));
-            $keterangan = $this->importObValue($row[6] ?? '');
-            $noUrut     = trim((string) ($row[7] ?? ''));
+            $saldoAwal  = (float) str_replace(['.', ','], ['', '.'], trim((string) ($row[4] ?? '')));
+            $keterangan = $this->importObValue($row[5] ?? '');
+            $noUrut     = trim((string) ($row[6] ?? ''));
+            $noInvoice  = $this->service->generateOpeningBalanceNoInvoice($klien, $tanggal);
 
             $data = [
                 'no_invoice'   => $noInvoice,
@@ -328,7 +328,6 @@ class OpeningBalanceController extends Controller
             ];
 
             $validator = Validator::make($data, [
-                'no_invoice'   => ['required', 'string', 'unique:tb_invoice,no_invoice'],
                 'klien_ar_id'  => ['required', 'integer'],
                 'tanggal'      => ['required', 'date'],
                 'periode_awal' => ['required', 'date'],
@@ -932,17 +931,16 @@ class OpeningBalanceController extends Controller
         $sheet->setTitle('Data Opening Balance');
 
         $cols = [
-            'A' => ['no_invoice',   26],
-            'B' => ['nama_klien',   32],
-            'C' => ['tanggal',      16],
-            'D' => ['periode_awal', 16],
-            'E' => ['periode_akhir',16],
-            'F' => ['saldo_awal',   20],
-            'G' => ['keterangan',   36],
-            'H' => ['no_urut',      10],
+            'A' => ['nama_klien',   32],
+            'B' => ['tanggal',      16],
+            'C' => ['periode_awal', 16],
+            'D' => ['periode_akhir',16],
+            'E' => ['saldo_awal',   20],
+            'F' => ['keterangan',   36],
+            'G' => ['no_urut',      10],
         ];
 
-        $sheet->mergeCells('A1:H1');
+        $sheet->mergeCells('A1:G1');
         $sheet->setCellValue('A1', 'TEMPLATE IMPORT DATA OPENING BALANCE — Sheet 1: Data Utama');
         $sheet->getStyle('A1')->applyFromArray([
             'font'      => ['bold' => true, 'size' => 13, 'color' => ['argb' => 'FFFFFFFF']],
@@ -951,8 +949,8 @@ class OpeningBalanceController extends Controller
         ]);
         $sheet->getRowDimension(1)->setRowHeight(36);
 
-        $sheet->mergeCells('A2:H2');
-        $sheet->setCellValue('A2', 'Isi data Opening Balance di sini. Kolom no_invoice (A) WAJIB diisi sesuai format: OB-{SINGKATAN}-{DDMMYYYYHHMMSS}-{XXX} — Contoh PT: OB-ABB-15012024143022-001 | Contoh RESTO: OB-MKS-15012024143022-001. Kolom no_urut (H) WAJIB diisi sebagai referensi untuk Sheet 2 dan 3. PERHATIAN: periode_awal dan periode_akhir (D & E) mengacu pada rentang waktu invoice historis yang belum lunas — BUKAN tanggal hari ini. Lihat sheet "Petunjuk Pengisian" untuk panduan lengkap.');
+        $sheet->mergeCells('A2:G2');
+        $sheet->setCellValue('A2', 'Isi data Opening Balance di sini. no_invoice akan digenerate otomatis oleh sistem saat import. Kolom no_urut (G) WAJIB diisi sebagai referensi untuk Sheet 2 dan 3. PERHATIAN: periode_awal dan periode_akhir (C & D) mengacu pada rentang waktu invoice historis yang belum lunas — BUKAN tanggal hari ini. Lihat sheet "Petunjuk Pengisian" untuk panduan lengkap.');
         $sheet->getStyle('A2')->applyFromArray([
             'font'      => ['italic' => true, 'size' => 9, 'color' => ['argb' => 'FF37474F']],
             'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFF1F8E9']],
@@ -965,7 +963,7 @@ class OpeningBalanceController extends Controller
             $sheet->setCellValue("{$col}4", $name);
             $sheet->getColumnDimension($col)->setWidth($width);
         }
-        $sheet->getStyle('A4:H4')->applyFromArray([
+        $sheet->getStyle('A4:G4')->applyFromArray([
             'font'      => ['bold' => true, 'size' => 10, 'color' => ['argb' => 'FFFFFFFF']],
             'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF2E7D32']],
             'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
@@ -975,19 +973,18 @@ class OpeningBalanceController extends Controller
 
         // Example row
         $example = [
-            'A' => '[CONTOH] OB-ABB-15012024143022-001',
-            'B' => 'Budi Santoso',
-            'C' => '2024-01-15',
-            'D' => '2024-01-01',
-            'E' => '2024-01-31',
-            'F' => '1500000',
-            'G' => 'Saldo piutang periode lalu',
-            'H' => '1',
+            'A' => '[CONTOH] Budi Santoso',
+            'B' => '2024-01-15',
+            'C' => '2024-01-01',
+            'D' => '2024-01-31',
+            'E' => '1500000',
+            'F' => 'Saldo piutang periode lalu',
+            'G' => '1',
         ];
         foreach ($example as $col => $val) {
             $sheet->getCell("{$col}5")->setValueExplicit($val, DataType::TYPE_STRING);
         }
-        $sheet->getStyle('A5:H5')->applyFromArray([
+        $sheet->getStyle('A5:G5')->applyFromArray([
             'font'      => ['italic' => true, 'size' => 9, 'color' => ['argb' => 'FFE65100']],
             'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFFFF9C4']],
             'alignment' => ['vertical' => Alignment::VERTICAL_CENTER],
@@ -997,12 +994,12 @@ class OpeningBalanceController extends Controller
 
         for ($row = 6; $row <= 55; $row++) {
             $bg = $row % 2 === 0 ? 'FFF5F5F5' : 'FFFFFFFF';
-            $sheet->getStyle("A{$row}:H{$row}")->applyFromArray([
+            $sheet->getStyle("A{$row}:G{$row}")->applyFromArray([
                 'fill'    => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => $bg]],
                 'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_HAIR, 'color' => ['argb' => 'FFE0E0E0']]],
             ]);
             // Text format to prevent date/number auto-conversion
-            foreach (['C', 'D', 'E', 'F', 'H'] as $col) {
+            foreach (['B', 'C', 'D', 'E', 'G'] as $col) {
                 $sheet->getStyle("{$col}{$row}")->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
             }
             $sheet->getRowDimension($row)->setRowHeight(18);
@@ -1209,7 +1206,7 @@ class OpeningBalanceController extends Controller
         $steps = [
             '1. Jangan ubah nama atau urutan kolom pada baris header (berwarna hijau/biru/ungu).',
             '2. Hapus baris [CONTOH] sebelum melakukan import data.',
-            '3. SHEET 1 (Data Opening Balance): isi data OB utama. Kolom no_urut wajib diisi dengan angka unik (1, 2, 3, ...).',
+            '3. SHEET 1 (Data Opening Balance): isi data OB utama. no_invoice akan digenerate otomatis oleh sistem — tidak perlu diisi. Kolom no_urut wajib diisi dengan angka unik (1, 2, 3, ...).',
             '4. SHEET 2 (Rincian Invoice Asal): opsional. Isi rincian per-invoice. Kolom no_urut_ob harus sama dengan no_urut di Sheet 1.',
             '5. SHEET 3 (Item Invoice Asal): opsional. Isi item/barang. Kolom no_urut_ob dan no_invoice_asal harus sesuai dengan Sheet 1 dan 2.',
             '6. Kolom "tanggal" (Sheet 1) diisi dengan tanggal pengajuan OB (hari ini). Kolom "periode_awal" dan "periode_akhir" diisi dengan rentang waktu invoice HISTORIS yang belum lunas — bukan tanggal hari ini. Contoh: ada tagihan Mei 2026 belum lunas → periode_awal=2026-05-01, periode_akhir=2026-05-31. Format semua tanggal: YYYY-MM-DD (contoh: 2024-01-15) atau DD-MM-YYYY (contoh: 15-01-2024).',
@@ -1238,7 +1235,6 @@ class OpeningBalanceController extends Controller
         // Keterangan kolom per sheet
         $sheetInfos = [
             ['Sheet 1 — Data Opening Balance', 'FF2E7D32', [
-                ['no_invoice',    'Nomor Opening Balance unik',                 'Ya',       'Format: OB-{SINGKATAN}-{DDMMYYYYHHMMSS}-{XXX}. {SINGKATAN} = singkatan nama entitas (lihat kode di sistem). {XXX} = 3 digit acak. Contoh PT: OB-ABB-15012024143022-001. Contoh RESTO: OB-MKS-15012024143022-001'],
                 ['nama_klien',    'Nama Client',                              'Ya',       'Harus cocok persis dengan nama klien di sistem'],
                 ['tanggal',       'Tanggal dokumen Opening Balance',            'Ya',       'Format: YYYY-MM-DD atau DD-MM-YYYY'],
                 ['periode_awal',  'Tanggal awal invoice historis yang belum lunas (bukan tanggal pengajuan)', 'Ya', 'Rentang waktu invoice LAMA di luar sistem. Contoh: invoice Jan 2024 belum lunas → isi 2024-01-01. Format: YYYY-MM-DD atau DD-MM-YYYY'],
