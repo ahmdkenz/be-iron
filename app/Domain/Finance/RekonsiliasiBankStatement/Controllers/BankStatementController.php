@@ -45,15 +45,15 @@ class BankStatementController extends Controller
     public function upload(Request $request): JsonResponse
     {
         $request->validate([
-            'bank_type' => ['required', 'in:BCA,MANDIRI,CIMB,BSI'],
-            'file'      => ['required', 'file', 'mimes:csv,xlsx,xls', 'max:10240'],
+            'bank_type' => ['nullable', 'in:BCA,MANDIRI,CIMB,BSI,GENERAL'],
+            'file'      => ['required', 'file', 'mimes:xlsx,xls', 'max:10240'],
             'force'     => ['sometimes', 'boolean'],
         ]);
 
         try {
             $statement = $this->service->upload(
                 $request->file('file'),
-                $request->bank_type,
+                $request->input('bank_type', 'GENERAL'),
                 auth()->id(),
                 $request->boolean('force', false),
             );

@@ -7,6 +7,14 @@ class BankColumnMapping
     // Config mapping: nama kolom bank (lowercase) → canonical field
     // Urutan array penting: keyword pertama = prioritas tertinggi
     const MAPS = [
+        'GENERAL' => [
+            'tanggal'      => ['tanggal'],
+            'keterangan'   => ['keterangan'],
+            'no_referensi' => ['no referensi', 'no. referensi', 'no ref'],
+            'debit'        => ['debit'],
+            'kredit'       => ['kredit'],
+            'saldo'        => ['saldo'],
+        ],
         'MANDIRI' => [
             'tanggal'      => ['tanggal transaksi', 'tanggal'],
             'keterangan'   => ['deskripsi', 'keterangan', 'uraian'],
