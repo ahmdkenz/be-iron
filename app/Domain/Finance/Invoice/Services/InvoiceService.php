@@ -77,14 +77,14 @@ class InvoiceService
 
     public function generateOpeningBalanceNoInvoice(KlienAr $klien, string $tanggal): string
     {
-        $kode   = strtoupper($klien->kode_klien);
-        $date   = Carbon::parse($tanggal);
-        $prefix = 'OB-' . $kode . '-' . $date->format('dmy');
+        $klien->loadMissing('perusahaan');
+        $raw       = $klien->perusahaan?->nama_singkatan_perusahaan ?? strtoupper($klien->kode_klien);
+        $singkatan = strtoupper(preg_replace('/[^A-Za-z0-9]/', '', $raw));
+        $date      = Carbon::parse($tanggal);
+        $now       = Carbon::now();
+        $xxx       = str_pad(rand(0, 999), 3, '0', STR_PAD_LEFT);
 
-        $count = Invoice::where('no_invoice', 'like', $prefix . '%')->count();
-        $seq   = str_pad($count + 1, 3, '0', STR_PAD_LEFT);
-
-        return $prefix . '-' . $seq;
+        return 'OB-' . $singkatan . '-' . $date->format('dmY') . $now->format('His') . '-' . $xxx;
     }
 
     public function generateConsolidatedInvoiceNo(KlienAr $klien, ?string $tanggal = null): string
