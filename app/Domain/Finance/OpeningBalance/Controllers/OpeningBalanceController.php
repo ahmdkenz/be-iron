@@ -952,7 +952,7 @@ class OpeningBalanceController extends Controller
         $sheet->getRowDimension(1)->setRowHeight(36);
 
         $sheet->mergeCells('A2:H2');
-        $sheet->setCellValue('A2', 'Isi data Opening Balance di sini. Kolom no_invoice (A) WAJIB diisi secara manual. Kolom no_urut (H) WAJIB diisi sebagai referensi untuk Sheet 2 dan 3. PERHATIAN: periode_awal dan periode_akhir (D & E) mengacu pada rentang waktu invoice historis yang belum lunas — BUKAN tanggal hari ini. Lihat sheet "Petunjuk Pengisian" untuk panduan lengkap.');
+        $sheet->setCellValue('A2', 'Isi data Opening Balance di sini. Kolom no_invoice (A) WAJIB diisi sesuai format: OB-{SINGKATAN}-{DDMMYYYYHHMMSS}-{XXX} — Contoh PT: OB-ABB-15012024143022-001 | Contoh RESTO: OB-MKS-15012024143022-001. Kolom no_urut (H) WAJIB diisi sebagai referensi untuk Sheet 2 dan 3. PERHATIAN: periode_awal dan periode_akhir (D & E) mengacu pada rentang waktu invoice historis yang belum lunas — BUKAN tanggal hari ini. Lihat sheet "Petunjuk Pengisian" untuk panduan lengkap.');
         $sheet->getStyle('A2')->applyFromArray([
             'font'      => ['italic' => true, 'size' => 9, 'color' => ['argb' => 'FF37474F']],
             'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFF1F8E9']],
@@ -1238,7 +1238,7 @@ class OpeningBalanceController extends Controller
         // Keterangan kolom per sheet
         $sheetInfos = [
             ['Sheet 1 — Data Opening Balance', 'FF2E7D32', [
-                ['no_invoice',    'Nomor Opening Balance unik',                 'Ya',       'Diisi manual, unik di sistem. Format: OB-{SINGKATAN}-{DDMMYYYYHHMMSS}-{XXX}. Contoh PT: OB-ABB-15012024143022-001. Contoh RESTO: OB-MKS-15012024143022-001'],
+                ['no_invoice',    'Nomor Opening Balance unik',                 'Ya',       'Format: OB-{SINGKATAN}-{DDMMYYYYHHMMSS}-{XXX}. {SINGKATAN} = singkatan nama entitas (lihat kode di sistem). {XXX} = 3 digit acak. Contoh PT: OB-ABB-15012024143022-001. Contoh RESTO: OB-MKS-15012024143022-001'],
                 ['nama_klien',    'Nama Client',                              'Ya',       'Harus cocok persis dengan nama klien di sistem'],
                 ['tanggal',       'Tanggal dokumen Opening Balance',            'Ya',       'Format: YYYY-MM-DD atau DD-MM-YYYY'],
                 ['periode_awal',  'Tanggal awal invoice historis yang belum lunas (bukan tanggal pengajuan)', 'Ya', 'Rentang waktu invoice LAMA di luar sistem. Contoh: invoice Jan 2024 belum lunas → isi 2024-01-01. Format: YYYY-MM-DD atau DD-MM-YYYY'],

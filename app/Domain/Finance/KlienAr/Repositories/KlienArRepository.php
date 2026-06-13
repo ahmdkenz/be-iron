@@ -9,7 +9,7 @@ class KlienArRepository
 {
     public function paginate(array $filters = [], int $perPage = 15): LengthAwarePaginator
     {
-        return KlienAr::with(['perusahaan', 'karyawanAr', 'resto.investor', 'createdBy', 'updatedBy'])
+        return KlienAr::with(['perusahaan', 'karyawanAr.perusahaan', 'resto.investor', 'createdBy', 'updatedBy'])
             ->when($filters['search'] ?? null, fn($q, $v) => $q->where(fn($q) => $q
                 ->where('nama_klien', 'like', "%{$v}%")
                 ->orWhere('kode_klien', 'like', "%{$v}%")
@@ -24,7 +24,7 @@ class KlienArRepository
 
     public function getAll(array $filters = []): \Illuminate\Database\Eloquent\Collection
     {
-        return KlienAr::with(['perusahaan', 'karyawanAr', 'resto.investor'])
+        return KlienAr::with(['perusahaan', 'karyawanAr.perusahaan', 'resto.investor'])
             ->when($filters['perusahaan_id'] ?? null, fn($q, $v) => $q->where('perusahaan_id', $v))
             ->when($filters['karyawan_ar_id'] ?? null, fn($q, $v) => $q->where('karyawan_ar_id', $v))
             ->when($filters['segment'] ?? null, fn($q, $v) => $q->whereIn('tipe_klien', $this->resolveSegmentTypes($v)))
@@ -44,7 +44,7 @@ class KlienArRepository
 
     public function getAllForExport(array $filters = []): \Illuminate\Database\Eloquent\Collection
     {
-        return KlienAr::with(['karyawanAr', 'resto.investor'])
+        return KlienAr::with(['karyawanAr.perusahaan', 'resto.investor'])
             ->when($filters['search'] ?? null, fn($q, $v) => $q->where(fn($q) => $q
                 ->where('nama_klien', 'like', "%{$v}%")
                 ->orWhere('kode_klien', 'like', "%{$v}%")
@@ -58,19 +58,19 @@ class KlienArRepository
 
     public function findById(int $id): ?KlienAr
     {
-        return KlienAr::with(['perusahaan', 'karyawanAr', 'resto.investor', 'createdBy', 'updatedBy'])->find($id);
+        return KlienAr::with(['perusahaan', 'karyawanAr.perusahaan', 'resto.investor', 'createdBy', 'updatedBy'])->find($id);
     }
 
     public function create(array $data): KlienAr
     {
         $klien = KlienAr::create($data);
-        return $klien->load(['perusahaan', 'karyawanAr', 'resto.investor', 'createdBy', 'updatedBy']);
+        return $klien->load(['perusahaan', 'karyawanAr.perusahaan', 'resto.investor', 'createdBy', 'updatedBy']);
     }
 
     public function update(KlienAr $klien, array $data): KlienAr
     {
         $klien->update($data);
-        return $klien->fresh(['perusahaan', 'karyawanAr', 'resto.investor', 'createdBy', 'updatedBy']);
+        return $klien->fresh(['perusahaan', 'karyawanAr.perusahaan', 'resto.investor', 'createdBy', 'updatedBy']);
     }
 
     public function delete(KlienAr $klien): bool

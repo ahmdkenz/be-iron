@@ -25,9 +25,14 @@ class KlienArResource extends JsonResource
             ]),
             'karyawan_ar_id' => $this->karyawan_ar_id,
             'karyawan_ar'    => $this->whenLoaded('karyawanAr', fn() => [
-                'id'           => $this->karyawanAr->id,
-                'nik'          => $this->karyawanAr->nik,
-                'nama_karyawan'=> $this->karyawanAr->nama_karyawan,
+                'id'            => $this->karyawanAr->id,
+                'nik'           => $this->karyawanAr->nik,
+                'nama_karyawan' => $this->karyawanAr->nama_karyawan,
+                'perusahaan'    => $this->karyawanAr->relationLoaded('perusahaan') && $this->karyawanAr->perusahaan ? [
+                    'id'                        => $this->karyawanAr->perusahaan->id,
+                    'nama_perusahaan'           => $this->karyawanAr->perusahaan->nama_perusahaan,
+                    'nama_singkatan_perusahaan' => $this->karyawanAr->perusahaan->nama_singkatan_perusahaan,
+                ] : null,
             ]),
             'resto_id'       => $this->resto_id,
             'resto'          => $this->whenLoaded('resto', fn() => $this->resto ? [
