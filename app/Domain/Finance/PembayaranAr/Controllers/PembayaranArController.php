@@ -50,7 +50,7 @@ class PembayaranArController extends Controller
                 )
             );
 
-        if ($user->karyawan && !RoleHelper::hasGlobalFinanceAccess($user)) {
+        if ($user->karyawan && !RoleHelper::hasGlobalArAccess($user)) {
             $query->whereHas('invoice', fn($q) =>
                 $q->where('perusahaan_id', $user->karyawan->perusahaan_id)
             );
@@ -78,7 +78,7 @@ class PembayaranArController extends Controller
         $invoice = $this->invoiceService->findOrFail($invoiceId);
 
         $user = $request->user()->loadMissing('karyawan');
-        if (!RoleHelper::hasGlobalFinanceAccess($user) && $user->karyawan) {
+        if (!RoleHelper::hasGlobalArAccess($user) && $user->karyawan) {
             abort_if(
                 $invoice->perusahaan_id !== $user->karyawan->perusahaan_id,
                 403,

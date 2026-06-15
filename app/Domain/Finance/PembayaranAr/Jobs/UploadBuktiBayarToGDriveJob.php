@@ -4,6 +4,7 @@ namespace App\Domain\Finance\PembayaranAr\Jobs;
 
 use App\Models\PembayaranAr;
 use App\Support\Helpers\GoogleDriveService;
+use Carbon\Carbon;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Queue\InteractsWithQueue;
@@ -47,12 +48,28 @@ class UploadBuktiBayarToGDriveJob implements ShouldQueue
 
         try {
             $fileContent = Storage::get($this->tempPath);
-            $clientName  = $pembayaran->invoice?->klienAr?->nama_klien ?? 'Umum';
+            $invoice     = $pembayaran->invoice;
+            $clientName  = $invoice?->klienAr?->nama_klien ?? 'Umum';
             $rootId      = config('services.google_drive.root_folder_id');
 
-            // Cari/buat folder klien, lalu subfolder "Bukti Pembayaran" di dalamnya
-            $clientFolderId = $driveService->findOrCreateClientFolder($rootId, $clientName);
-            $buktiFolderId  = $driveService->findOrCreateClientFolder($clientFolderId, 'Bukti Pembayaran');
+            // 1. Invoice B2B / Invoice B2C
+            $segment      = strtoupper($invoice?->klienAr?->tipe_klien ?? '') === 'RESTO' ? 'B2C' : 'B2B';
+            $typeFolderId = $driveService->findOrCreateInvoiceTypeFolder($rootId, $segment);
+
+            // 2. Folder klien
+            $clientFolderId = $driveService->findOrCreateClientFolder($typeFolderId, $clientName);
+
+            // 3. Folder tahun (dari tanggal_invoice)
+            $year         = Carbon::parse($invoice?->tanggal_invoice ?? now())->format('Y');
+            $yearFolderId = $driveService->findOrCreateSubFolder($clientFolderId, $year);
+
+            // 4. Folder bulan (dari tanggal_invoice, bahasa Indonesia)
+            $month         = Carbon::parse($invoice?->tanggal_invoice ?? now())->locale('id')->isoFormat('MMMM');
+            $monthFolderId = $driveService->findOrCreateSubFolder($yearFolderId, $month);
+
+            // 5. Subfolder "Bukti Bayar - {No Invoice}"
+            $noInvoice     = $invoice?->no_invoice ?? 'Unknown';
+            $buktiFolderId = $driveService->findOrCreateSubFolder($monthFolderId, 'Bukti Bayar - ' . $noInvoice);
 
             $fileId = $driveService->uploadFile($buktiFolderId, $this->fileName, $fileContent, $this->mimeType);
 
