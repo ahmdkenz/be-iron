@@ -67,11 +67,18 @@ class UploadBuktiBayarToGDriveJob implements ShouldQueue
             $month         = Carbon::parse($invoice?->tanggal_invoice ?? now())->locale('id')->isoFormat('MMMM');
             $monthFolderId = $driveService->findOrCreateSubFolder($yearFolderId, $month);
 
-            // 5. Subfolder "Bukti Bayar - {No Invoice}"
-            $noInvoice     = $invoice?->no_invoice ?? 'Unknown';
-            $buktiFolderId = $driveService->findOrCreateSubFolder($monthFolderId, 'Bukti Bayar - ' . $noInvoice);
+            // 5. Folder "Bukti Bayar" (shared untuk semua bukti dalam bulan)
+            $buktiFolderId = $driveService->findOrCreateSubFolder($monthFolderId, 'Bukti Bayar');
 
-            $fileId = $driveService->uploadFile($buktiFolderId, $this->fileName, $fileContent, $this->mimeType);
+            // 6. Subfolder per invoice: "Bukti Bayar - {No Invoice}"
+            $noInvoice       = $invoice?->no_invoice ?? 'Unknown';
+            $invoiceFolderId = $driveService->findOrCreateSubFolder($buktiFolderId, 'Bukti Bayar - ' . $noInvoice);
+
+            // Nama file: "Bukti Bayar - {No Invoice}.{ext}"
+            $ext            = pathinfo($this->fileName, PATHINFO_EXTENSION);
+            $gdriveFileName = 'Bukti Bayar - ' . $noInvoice . ($ext ? '.' . $ext : '');
+
+            $fileId = $driveService->uploadFile($invoiceFolderId, $gdriveFileName, $fileContent, $this->mimeType);
 
             $pembayaran->updateQuietly([
                 'bukti_gdrive_file_id'  => $fileId,
