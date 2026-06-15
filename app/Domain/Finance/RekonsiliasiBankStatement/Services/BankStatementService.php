@@ -2,6 +2,7 @@
 
 namespace App\Domain\Finance\RekonsiliasiBankStatement\Services;
 
+use App\Domain\Finance\Invoice\Jobs\UploadInvoiceToGDriveJob;
 use App\Domain\Finance\RekonsiliasiBankStatement\Exceptions\DuplicateStatementException;
 use App\Domain\Finance\RekonsiliasiBankStatement\Parsers\BankParserFactory;
 use App\Models\BankStatement;
@@ -460,6 +461,8 @@ class BankStatementService
                 'updated_by'       => auth()->id(),
             ]);
         });
+
+        UploadInvoiceToGDriveJob::dispatch($target->id);
     }
 
     private function nextAlokasiSuffix(PembayaranAr $pembayaran): int
