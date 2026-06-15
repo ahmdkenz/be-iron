@@ -75,7 +75,8 @@ class AuthController extends Controller
         );
 
         return $this->successResponse([
-            'user' => new UserResource($user),
+            'user'  => new UserResource($user),
+            'token' => $token,
         ], 'Login berhasil')->withCookie($cookie);
     }
 
