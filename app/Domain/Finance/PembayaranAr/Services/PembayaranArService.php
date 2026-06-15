@@ -13,6 +13,7 @@ use App\Models\PembayaranArLog;
 use App\Models\PendapatanDiMuka;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 
 class PembayaranArService
@@ -55,7 +56,14 @@ class PembayaranArService
         UploadInvoiceToGDriveJob::dispatch($invoice->id);
 
         if ($buktiBayar) {
-            $this->dispatchBuktiUpload($pembayaran, $buktiBayar);
+            try {
+                $this->dispatchBuktiUpload($pembayaran, $buktiBayar);
+            } catch (\Throwable $e) {
+                Log::error('PembayaranArService: gagal upload bukti bayar ke GDrive', [
+                    'pembayaran_id' => $pembayaran->id,
+                    'error'         => $e->getMessage(),
+                ]);
+            }
         }
 
         return $pembayaran->load('createdBy');
