@@ -70,6 +70,25 @@ class InvoiceService
             ->value('total') ?? 0.0;
     }
 
+    public function getMonthlyCarryover(int $klienArId, string $tanggalInvoice): float
+    {
+        $monthStart = Carbon::parse($tanggalInvoice)->startOfMonth()->toDateString();
+        $monthEnd   = Carbon::parse($tanggalInvoice)->endOfMonth()->toDateString();
+
+        return (float) Invoice::where('klien_ar_id', $klienArId)
+            ->whereIn('status', ['TERKIRIM', 'SEBAGIAN'])
+            ->whereBetween('tanggal_invoice', [$monthStart, $monthEnd])
+            ->where(function ($q) {
+                $q->where('is_opening_balance', false)
+                    ->orWhere(function ($q2) {
+                        $q2->where('is_opening_balance', true)
+                            ->where('approval_status', 'APPROVED');
+                    });
+            })
+            ->selectRaw('COALESCE(SUM(GREATEST(0, CASE WHEN subtotal = 0 THEN sisa_tagihan ELSE subtotal - total_pembayaran END)), 0) as total')
+            ->value('total') ?? 0.0;
+    }
+
     public function generateNoInvoice(KlienAr $klien, string $tanggal): string
     {
         return $this->generateConsolidatedInvoiceNo($klien, $tanggal);
@@ -103,7 +122,7 @@ class InvoiceService
     {
         return DB::transaction(function () use ($dto) {
             $klien     = KlienAr::with('perusahaan')->findOrFail($dto->klien_ar_id);
-            $carryover = $this->getCarryover($dto->klien_ar_id);
+            $carryover = $this->getMonthlyCarryover($dto->klien_ar_id, $dto->tanggal_invoice);
             $noInvoice = $this->generateConsolidatedInvoiceNo($klien, $dto->tanggal_invoice);
 
             $subtotal = collect($dto->items)->sum(
@@ -479,8 +498,11 @@ class InvoiceService
 
     private function sumOwnSisaBeforeInvoice(Invoice $invoice): float
     {
+        $monthStart = Carbon::parse($invoice->tanggal_invoice)->startOfMonth()->toDateString();
+
         return (float) Invoice::where('klien_ar_id', $invoice->klien_ar_id)
             ->whereIn('status', ['TERKIRIM', 'SEBAGIAN'])
+            ->where('tanggal_invoice', '>=', $monthStart)
             ->where(function ($q) use ($invoice) {
                 $q->where('tanggal_invoice', '<', $invoice->tanggal_invoice)
                     ->orWhere(function ($q2) use ($invoice) {

@@ -74,8 +74,18 @@ class InvoiceController extends Controller
 
     public function carryover(Request $request): JsonResponse
     {
-        $request->validate(['klien_ar_id' => ['required', 'integer', 'exists:tb_klien_ar,id']]);
-        $carryover = $this->service->getCarryover((int) $request->klien_ar_id);
+        $request->validate([
+            'klien_ar_id'     => ['required', 'integer', 'exists:tb_klien_ar,id'],
+            'tanggal_invoice' => ['nullable', 'date'],
+        ]);
+
+        $klienArId = (int) $request->klien_ar_id;
+        $tanggal   = $request->tanggal_invoice;
+
+        $carryover = $tanggal
+            ? $this->service->getMonthlyCarryover($klienArId, $tanggal)
+            : $this->service->getCarryover($klienArId);
+
         return $this->successResponse(['carryover' => $carryover]);
     }
 
@@ -632,7 +642,7 @@ class InvoiceController extends Controller
             if (!$periodeAwal)  $periodeAwal  = Carbon::parse($tanggalKirim)->startOfMonth()->format('Y-m-d');
             if (!$periodeAkhir) $periodeAkhir = Carbon::parse($tanggalKirim)->endOfMonth()->format('Y-m-d');
 
-            $carryover = $this->service->getCarryover($klien->id);
+            $carryover = $this->service->getMonthlyCarryover($klien->id, $tanggalKirim);
 
             $noInvKons = $this->service->generateConsolidatedInvoiceNo($klien, $tanggalKirim);
 
@@ -842,7 +852,7 @@ class InvoiceController extends Controller
                 continue;
             }
 
-            $carryover = $this->service->getCarryover($klien->id);
+            $carryover = $this->service->getMonthlyCarryover($klien->id, $tanggal);
 
             $noInvoice = $this->service->generateNoInvoice($klien, $tanggal);
 
