@@ -75,18 +75,20 @@ abstract class AbstractBankParser implements BankParserInterface
         $raw = trim((string) $raw);
         if ($raw === '') return null;
 
-        // Excel serial number (dari loadXlsx dengan formatData=false)
+        // Coba format teks DULU — termasuk DDMMYYYY (format template upload)
+        // Excel serial realistis (2000–2050) berkisar 36.000–73.000 (5 digit),
+        // tidak akan menabrak DDMMYYYY yang 8 digit.
+        foreach (['dmY', 'd/m/Y', 'd-m-Y', 'Y-m-d', 'd/m/y', 'd M Y', 'd-M-Y', 'd F Y', 'Y/m/d'] as $fmt) {
+            try {
+                return Carbon::createFromFormat($fmt, $raw)->format('Y-m-d');
+            } catch (\Exception) {}
+        }
+
+        // Excel serial number (float dari sel bertipe Date di XLSX)
         // Nilai valid: 1 (1 Jan 1900) s/d ~2.958.465 (31 Des 9999)
         if (is_numeric($raw) && (float) $raw > 1 && (float) $raw < 2_958_466) {
             try {
                 return ExcelDate::excelToDateTimeObject((float) $raw)->format('Y-m-d');
-            } catch (\Exception) {}
-        }
-
-        // Coba format teks (CSV atau sel teks di XLSX)
-        foreach (['d/m/Y', 'd-m-Y', 'Y-m-d', 'd/m/y', 'd M Y', 'd-M-Y', 'd F Y', 'Y/m/d'] as $fmt) {
-            try {
-                return Carbon::createFromFormat($fmt, $raw)->format('Y-m-d');
             } catch (\Exception) {}
         }
 
