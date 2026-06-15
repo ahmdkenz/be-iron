@@ -137,6 +137,58 @@ class PendapatanDiMukaService
         });
     }
 
+    public function recalculate(PendapatanDiMuka $pdm): void
+    {
+        if ($pdm->status === 'DIBATALKAN') {
+            return;
+        }
+
+        $sumber = $pdm->sumberPembayaran;
+        if (!$sumber) {
+            return;
+        }
+
+        $inv    = $sumber->invoice;
+        $detail = $sumber->bankStatementDetail;
+
+        $kelebihanFromInvoice = $inv
+            ? max(0, round((float) $inv->total_pembayaran - (float) $inv->total_tagihan, 2))
+            : 0.0;
+        $kelebihanFromBank = $detail
+            ? max(0, round((float) $detail->kredit - (float) $sumber->jumlah_pembayaran, 2))
+            : 0.0;
+        $totalKelebihan = max($kelebihanFromInvoice, $kelebihanFromBank);
+
+        $aloNonPdm = (float) $sumber->alokasiKelebihan()
+            ->where(function ($q) {
+                $q->whereNull('no_referensi')
+                  ->orWhere('no_referensi', 'NOT LIKE', '%/PDM-%');
+            })
+            ->sum('jumlah_pembayaran');
+
+        $newJumlah = max(0.0, round($totalKelebihan - $aloNonPdm, 2));
+
+        $sudahDigunakan = (float) $sumber->alokasiKelebihan()
+            ->where('no_referensi', 'LIKE', '%/PDM-%')
+            ->sum('jumlah_pembayaran');
+
+        $newJumlah = max($newJumlah, $sudahDigunakan);
+
+        $newStatus = ($sudahDigunakan >= ($newJumlah - 0.01)) ? 'TERPAKAI' : 'AKTIF';
+
+        $updates = ['updated_by' => auth()->id()];
+        if (abs((float) $pdm->jumlah - $newJumlah) > 0.01) {
+            $updates['jumlah'] = $newJumlah;
+        }
+        if ($pdm->status !== $newStatus) {
+            $updates['status'] = $newStatus;
+        }
+
+        if (count($updates) > 1) {
+            $pdm->update($updates);
+        }
+    }
+
     public function getReport(array $filters): array
     {
         $query = PendapatanDiMuka::query()

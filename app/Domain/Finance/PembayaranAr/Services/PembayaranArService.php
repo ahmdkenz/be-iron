@@ -5,6 +5,7 @@ namespace App\Domain\Finance\PembayaranAr\Services;
 use App\Domain\Finance\Invoice\Jobs\UploadInvoiceToGDriveJob;
 use App\Domain\Finance\Invoice\Services\InvoiceService;
 use App\Domain\Finance\PembayaranAr\Jobs\UploadBuktiBayarToGDriveJob;
+use App\Domain\Finance\PendapatanDiMuka\Services\PendapatanDiMukaService;
 use App\Models\BankStatement;
 use App\Models\BankStatementDetail;
 use App\Models\Invoice;
@@ -18,7 +19,10 @@ use Illuminate\Support\Facades\Storage;
 
 class PembayaranArService
 {
-    public function __construct(private readonly InvoiceService $invoiceService) {}
+    public function __construct(
+        private readonly InvoiceService $invoiceService,
+        private readonly PendapatanDiMukaService $pdmService,
+    ) {}
 
     public function create(Invoice $invoice, array $data, ?UploadedFile $buktiBayar = null): PembayaranAr
     {
@@ -103,8 +107,9 @@ class PembayaranArService
         $affectedInvoices = $childAllocations->map->invoice->filter()->unique('id')->values();
 
         $invoiceId = $pembayaran->invoice_id;
+        $sumberId  = $pembayaran->sumber_pembayaran_ar_id;
 
-        DB::transaction(function () use ($pembayaran, $childAllocations, $affectedInvoices, $invoiceId, $pdm) {
+        DB::transaction(function () use ($pembayaran, $childAllocations, $affectedInvoices, $invoiceId, $pdm, $sumberId) {
             PembayaranArLog::create([
                 'pembayaran_ar_id' => $pembayaran->id,
                 'aksi'             => 'DIHAPUS',
@@ -135,6 +140,13 @@ class PembayaranArService
                 ->update(['pembayaran_ar_id' => null, 'status_cocok' => 'UNMATCHED']);
 
             $pembayaran->delete();
+
+            if ($sumberId) {
+                $parentPdm = PendapatanDiMuka::where('sumber_pembayaran_ar_id', $sumberId)->first();
+                if ($parentPdm && $parentPdm->status !== 'DIBATALKAN') {
+                    $this->pdmService->recalculate($parentPdm->fresh());
+                }
+            }
 
             foreach ($linkedStatementIds as $statementId) {
                 $matched   = BankStatementDetail::where('bank_statement_id', $statementId)->where('status_cocok', 'MATCHED')->count();
