@@ -538,7 +538,7 @@
 
   <!-- Footer -->
   <div class="footer">
-    Dicetak pada {{ now()->isoFormat('D MMMM YYYY HH:mm') }} &bull; {{ $invoice->karyawan?->perusahaan?->nama_perusahaan ?? $invoice->perusahaan->nama_perusahaan }}
+    Dicetak pada {{ now()->isoFormat('D MMMM YYYY HH:mm') }} &bull; {{ $invoice->karyawan?->perusahaan?->nama_perusahaan ?? $invoice->perusahaan->nama_perusahaan }}<br>by I.R.O.N System
   </div>
 
 </div>
@@ -786,7 +786,7 @@
 
     <!-- Footer -->
     <div class="footer">
-      Dicetak pada {{ now()->isoFormat('D MMMM YYYY HH:mm') }} &bull; {{ $regInv->karyawan?->perusahaan?->nama_perusahaan ?? $regInv->perusahaan->nama_perusahaan }}
+      Dicetak pada {{ now()->isoFormat('D MMMM YYYY HH:mm') }} &bull; {{ $regInv->karyawan?->perusahaan?->nama_perusahaan ?? $regInv->perusahaan->nama_perusahaan }}<br>by I.R.O.N System
     </div>
 
   </div>
