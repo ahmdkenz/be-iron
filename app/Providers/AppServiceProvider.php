@@ -2,6 +2,10 @@
 
 namespace App\Providers;
 
+use App\Domain\Finance\Invoice\Observers\InvoiceObserver;
+use App\Domain\Finance\PembayaranAr\Observers\PembayaranArObserver;
+use App\Models\Invoice;
+use App\Models\PembayaranAr;
 use App\Support\Helpers\GoogleDriveService;
 use Illuminate\Support\ServiceProvider;
 
@@ -20,6 +24,7 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        //
+        Invoice::observe(InvoiceObserver::class);
+        PembayaranAr::observe(PembayaranArObserver::class);
     }
 }

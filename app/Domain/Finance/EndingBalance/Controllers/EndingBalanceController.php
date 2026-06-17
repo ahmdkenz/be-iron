@@ -56,27 +56,6 @@ class EndingBalanceController extends Controller
         return $this->successResponse($this->formatEb($eb, detailed: true));
     }
 
-    public function generate(Request $request): JsonResponse
-    {
-        $this->authorizeOperate();
-
-        $data = $request->validate([
-            'periode_awal'  => ['required', 'date'],
-            'periode_akhir' => ['required', 'date', 'after_or_equal:periode_awal'],
-        ]);
-
-        $result = $this->service->generate(
-            $data['periode_awal'],
-            $data['periode_akhir'],
-            auth()->id()
-        );
-
-        return $this->successResponse(
-            $result,
-            "Generate selesai: {$result['generated']} EB dibuat, {$result['skipped']} dilewati (sudah ada)."
-        );
-    }
-
     public function lock(Request $request, int $id): JsonResponse
     {
         $this->authorizeOperate();

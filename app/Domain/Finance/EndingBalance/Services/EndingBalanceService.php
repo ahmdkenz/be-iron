@@ -141,6 +141,50 @@ class EndingBalanceService
         ]);
     }
 
+    /**
+     * Buat EB baru atau recalculate EB DRAFT yang sudah ada untuk klien + periode.
+     * Dipanggil oleh InvoiceObserver dan PembayaranArObserver.
+     * LOCKED EB tidak disentuh.
+     */
+    public function syncEbForKlien(int $klienId, string $periodeAwal, string $periodeAkhir, int $userId): void
+    {
+        $from = Carbon::parse($periodeAwal)->startOfDay();
+        $to   = Carbon::parse($periodeAkhir)->endOfDay();
+
+        [$saldoAwal, $invoiceMasuk, $pembayaran] = $this->computeComponents($klienId, $from, $to);
+        $saldoAkhirSistem = max(0, $saldoAwal + $invoiceMasuk - $pembayaran);
+
+        $eb = EndingBalance::where('klien_ar_id', $klienId)
+            ->where('periode_awal', $periodeAwal)
+            ->where('periode_akhir', $periodeAkhir)
+            ->first();
+
+        if (!$eb) {
+            EndingBalance::create([
+                'klien_ar_id'        => $klienId,
+                'periode_awal'       => $periodeAwal,
+                'periode_akhir'      => $periodeAkhir,
+                'saldo_awal'         => $saldoAwal,
+                'invoice_masuk'      => $invoiceMasuk,
+                'pembayaran'         => $pembayaran,
+                'saldo_akhir_sistem' => $saldoAkhirSistem,
+                'saldo_akhir_final'  => $saldoAkhirSistem,
+                'status'             => 'DRAFT',
+                'created_by'         => $userId,
+                'updated_by'         => $userId,
+            ]);
+        } elseif (!$eb->isLocked()) {
+            $eb->update([
+                'saldo_awal'         => $saldoAwal,
+                'invoice_masuk'      => $invoiceMasuk,
+                'pembayaran'         => $pembayaran,
+                'saldo_akhir_sistem' => $saldoAkhirSistem,
+                'saldo_akhir_final'  => $saldoAkhirSistem,
+                'updated_by'         => $userId,
+            ]);
+        }
+    }
+
     // ─── Private Helpers ──────────────────────────────────────────────────────
 
     /**

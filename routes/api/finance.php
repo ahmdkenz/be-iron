@@ -126,7 +126,6 @@ Route::prefix('ending-balance')->group(function () {
     Route::get('/',                   [EndingBalanceController::class, 'index']);
     Route::get('/{id}/invoices',      [EndingBalanceController::class, 'invoices']);
     Route::get('/{id}',               [EndingBalanceController::class, 'show']);
-    Route::post('/generate',      [EndingBalanceController::class, 'generate']);
     Route::patch('/{id}/lock',        [EndingBalanceController::class, 'lock']);
     Route::patch('/{id}/recalculate', [EndingBalanceController::class, 'recalculate']);
 
