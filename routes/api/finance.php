@@ -2,6 +2,8 @@
 
 use App\Domain\Finance\AgingReport\Controllers\AgingReportController;
 use App\Domain\Finance\Dashboard\Controllers\DashboardController;
+use App\Domain\Finance\EndingBalance\Controllers\EndingBalanceController;
+use App\Domain\Finance\EndingBalance\Controllers\EndingBalanceKoreksiController;
 use App\Domain\Finance\Invoice\Controllers\InvoiceController;
 use App\Domain\Finance\JatuhTempo\Controllers\JatuhTempoController;
 use App\Domain\Finance\JurnalPic\Controllers\JurnalPicController;
@@ -118,6 +120,24 @@ Route::get('/pendapatan-di-muka/export-excel',              [PendapatanDiMukaCon
 Route::post('/pendapatan-di-muka/detail/{detail}/catat',    [PendapatanDiMukaController::class, 'store']);
 Route::delete('/pendapatan-di-muka/{pdm}/batal',            [PendapatanDiMukaController::class, 'cancel']);
 Route::post('/pendapatan-di-muka/{pdm}/gunakan',            [PendapatanDiMukaController::class, 'gunakan']);
+
+// ─── Ending Balance ───────────────────────────────────────────────
+Route::prefix('ending-balance')->group(function () {
+    Route::get('/',                   [EndingBalanceController::class, 'index']);
+    Route::get('/{id}/invoices',      [EndingBalanceController::class, 'invoices']);
+    Route::get('/{id}',               [EndingBalanceController::class, 'show']);
+    Route::post('/generate',      [EndingBalanceController::class, 'generate']);
+    Route::patch('/{id}/lock',        [EndingBalanceController::class, 'lock']);
+    Route::patch('/{id}/recalculate', [EndingBalanceController::class, 'recalculate']);
+
+    // Koreksi
+    Route::post('/{ebId}/koreksi',                         [EndingBalanceKoreksiController::class, 'store']);
+    Route::get('/koreksi/pending',                         [EndingBalanceKoreksiController::class, 'pending']);
+    Route::patch('/koreksi/{id}/approve-spv',              [EndingBalanceKoreksiController::class, 'approveSpv'])->middleware('role:SUPERVISOR|ADMIN');
+    Route::patch('/koreksi/{id}/reject-spv',               [EndingBalanceKoreksiController::class, 'rejectSpv'])->middleware('role:SUPERVISOR|ADMIN');
+    Route::patch('/koreksi/{id}/approve-manager',          [EndingBalanceKoreksiController::class, 'approveManager'])->middleware('role:MANAGER|ADMIN');
+    Route::patch('/koreksi/{id}/reject-manager',           [EndingBalanceKoreksiController::class, 'rejectManager'])->middleware('role:MANAGER|ADMIN');
+});
 
 // ─── Opening Balance ──────────────────────────────────────────────
 Route::prefix('opening-balance')->group(function () {

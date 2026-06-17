@@ -2,11 +2,11 @@
 
 namespace App\Domain\Finance\MutasiPiutang\Services;
 
+use App\Models\EndingBalance;
 use App\Models\Invoice;
 use App\Models\KlienAr;
 use App\Models\PembayaranAr;
 use Carbon\Carbon;
-use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
 class MutasiPiutangService
@@ -72,12 +72,31 @@ class MutasiPiutangService
             ->groupBy('tb_invoice.klien_ar_id')
             ->pluck('pembayaran', 'klien_ar_id');
 
+        // Cek apakah ada EB LOCKED tepat sebelum periode ini (carry-forward snapshot)
+        $ebSnapshot = EndingBalance::query()
+            ->select('klien_ar_id', 'saldo_akhir_final')
+            ->where('status', 'LOCKED')
+            ->where('periode_akhir', '<', $from->toDateString())
+            ->whereIn('klien_ar_id', function ($sub) use ($from, $to, $klienFilter) {
+                $sub->select('klien_ar_id')->from('tb_ending_balance')
+                    ->where('status', 'LOCKED')
+                    ->where('periode_akhir', '<', $from->toDateString());
+                if ($klienFilter) {
+                    $sub->where('klien_ar_id', $klienFilter);
+                }
+            })
+            ->orderByDesc('periode_akhir')
+            ->get()
+            ->unique('klien_ar_id')          // ambil EB paling akhir per klien
+            ->pluck('saldo_akhir_final', 'klien_ar_id');
+
         // Kumpulkan semua klien_ar_id yang relevan
         $klienIds = collect([
             $invoiceMasukQuery->keys(),
             $pembayaranQuery->keys(),
             $tagihanSebelumQuery->keys(),
             $pembayaranSebelumQuery->keys(),
+            $ebSnapshot->keys(),
         ])->flatten()->unique()->values();
 
         if ($klienIds->isEmpty()) {
@@ -97,15 +116,21 @@ class MutasiPiutangService
         $rows = $klienIds->map(function ($klienId) use (
             $invoiceMasukQuery, $pembayaranQuery,
             $tagihanSebelumQuery, $pembayaranSebelumQuery,
-            $klienMap
+            $ebSnapshot, $klienMap
         ) {
-            $klien         = $klienMap->get($klienId);
-            $tagihanSebelum  = (float) ($tagihanSebelumQuery[$klienId] ?? 0);
-            $bayarSebelum    = (float) ($pembayaranSebelumQuery[$klienId] ?? 0);
-            $invoiceMasuk    = (float) ($invoiceMasukQuery[$klienId] ?? 0);
-            $pembayaran      = (float) ($pembayaranQuery[$klienId] ?? 0);
+            $klien        = $klienMap->get($klienId);
+            $invoiceMasuk = (float) ($invoiceMasukQuery[$klienId] ?? 0);
+            $pembayaran   = (float) ($pembayaranQuery[$klienId] ?? 0);
 
-            $saldoAwal   = $tagihanSebelum - $bayarSebelum;
+            // Gunakan EB snapshot jika ada, fallback ke compute all-time
+            if (isset($ebSnapshot[$klienId])) {
+                $saldoAwal = (float) $ebSnapshot[$klienId];
+            } else {
+                $tagihanSebelum = (float) ($tagihanSebelumQuery[$klienId] ?? 0);
+                $bayarSebelum   = (float) ($pembayaranSebelumQuery[$klienId] ?? 0);
+                $saldoAwal      = $tagihanSebelum - $bayarSebelum;
+            }
+
             $saldoAkhir  = $saldoAwal + $invoiceMasuk - $pembayaran;
 
             return [

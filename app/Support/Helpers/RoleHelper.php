@@ -100,8 +100,52 @@ class RoleHelper
         return self::hasRole($user, RoleEnum::DIREKTUR);
     }
 
+    public static function canViewEndingBalance(?User $user): bool
+    {
+        return self::hasAnyRole($user, [
+            RoleEnum::ADMIN,
+            RoleEnum::DIREKTUR,
+            RoleEnum::MANAGER,
+            RoleEnum::SUPERVISOR,
+            RoleEnum::AR,
+        ]);
+    }
+
+    public static function canOperateEndingBalance(?User $user): bool
+    {
+        return self::hasAnyRole($user, [
+            RoleEnum::ADMIN,
+            RoleEnum::MANAGER,
+            RoleEnum::SUPERVISOR,
+            RoleEnum::AR,
+        ]);
+    }
+
+    public static function canApproveEndingBalanceSpv(?User $user): bool
+    {
+        return self::hasAnyRole($user, [RoleEnum::ADMIN, RoleEnum::SUPERVISOR]);
+    }
+
+    public static function canApproveEndingBalanceManager(?User $user): bool
+    {
+        return self::hasAnyRole($user, [RoleEnum::ADMIN, RoleEnum::MANAGER]);
+    }
+
     public static function canAccessArDashboard(?User $user): bool
     {
         return self::hasRole($user, RoleEnum::AR);
+    }
+
+    // Returns true when the user is a pure PIC AR (AR role but not Admin/Manager/Supervisor/Direktur).
+    // Used to restrict data visibility to only their assigned clients.
+    public static function isArStaff(?User $user): bool
+    {
+        return self::hasAnyRole($user, [RoleEnum::AR])
+            && !self::hasAnyRole($user, [
+                RoleEnum::ADMIN,
+                RoleEnum::DIREKTUR,
+                RoleEnum::MANAGER,
+                RoleEnum::SUPERVISOR,
+            ]);
     }
 }
