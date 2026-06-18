@@ -110,14 +110,14 @@ class EndingBalanceController extends Controller
 
         $eb = EndingBalance::findOrFail($id);
 
-        $payments = \DB::table('tb_pembayaran_ar as p')
+        $periodeAwal  = $eb->periode_awal->toDateString();
+        $periodeAkhir = $eb->periode_akhir->toDateString();
+
+        // Pembayaran reguler (invoice milik klien ini)
+        $regular = \DB::table('tb_pembayaran_ar as p')
             ->join('tb_invoice as i', 'p.invoice_id', '=', 'i.id')
             ->where('i.klien_ar_id', $eb->klien_ar_id)
-            ->whereBetween('p.tanggal_pembayaran', [
-                $eb->periode_awal->toDateString(),
-                $eb->periode_akhir->toDateString(),
-            ])
-            ->orderBy('p.tanggal_pembayaran')
+            ->whereBetween('p.tanggal_pembayaran', [$periodeAwal, $periodeAkhir])
             ->select([
                 'p.id',
                 'i.no_invoice',
@@ -126,10 +126,49 @@ class EndingBalanceController extends Controller
                 'p.metode_pembayaran',
                 'p.no_referensi',
                 'p.keterangan',
+                \DB::raw("NULL as nama_klien_tujuan"),
             ])
-            ->get();
+            ->get()
+            ->map(fn($row) => $this->resolvePaymentJenis($row));
+
+        // ALO cross-klien: sumber invoice milik klien ini, tujuan klien lain (B2C/investor)
+        $crossKlien = \DB::table('tb_pembayaran_ar as p')
+            ->join('tb_invoice as i', 'p.invoice_id', '=', 'i.id')
+            ->join('tb_klien_ar as ka', 'i.klien_ar_id', '=', 'ka.id')
+            ->join('tb_pembayaran_ar as src', 'p.sumber_pembayaran_ar_id', '=', 'src.id')
+            ->join('tb_invoice as src_i', 'src.invoice_id', '=', 'src_i.id')
+            ->where('src_i.klien_ar_id', $eb->klien_ar_id)
+            ->where('i.klien_ar_id', '!=', $eb->klien_ar_id)
+            ->whereBetween('p.tanggal_pembayaran', [$periodeAwal, $periodeAkhir])
+            ->where('p.no_referensi', 'LIKE', '%/ALO-%')
+            ->select([
+                'p.id',
+                'src_i.no_invoice',
+                'p.tanggal_pembayaran',
+                'p.jumlah_pembayaran',
+                'p.metode_pembayaran',
+                'p.no_referensi',
+                'p.keterangan',
+                'ka.nama_klien as nama_klien_tujuan',
+            ])
+            ->get()
+            ->map(fn($row) => array_merge((array) $row, ['jenis' => 'ALO_CROSS']));
+
+        $payments = $regular->concat($crossKlien)->sortBy('tanggal_pembayaran')->values();
 
         return $this->successResponse($payments);
+    }
+
+    private function resolvePaymentJenis(object $row): array
+    {
+        $ref = $row->no_referensi ?? '';
+        $jenis = match (true) {
+            str_contains($ref, '/PDM-') => 'PDM',
+            str_contains($ref, '/ALO-') => 'ALO',
+            default                     => 'REGULER',
+        };
+
+        return array_merge((array) $row, ['jenis' => $jenis, 'nama_klien_tujuan' => null]);
     }
 
     public function recalculate(int $id): JsonResponse

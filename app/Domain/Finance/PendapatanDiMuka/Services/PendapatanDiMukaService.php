@@ -103,7 +103,7 @@ class PendapatanDiMukaService
         DB::transaction(function () use ($sumber, $invoice, $jumlah, $keterangan, $nextSuffix, $pdm, $sisa) {
             PembayaranAr::create([
                 'invoice_id'              => $invoice->id,
-                'tanggal_pembayaran'      => now()->toDateString(),
+                'tanggal_pembayaran'      => $sumber->tanggal_pembayaran,
                 'jumlah_pembayaran'       => $jumlah,
                 'metode_pembayaran'       => $sumber->metode_pembayaran,
                 'no_referensi'            => $sumber->no_referensi

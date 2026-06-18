@@ -7,6 +7,16 @@ use Illuminate\Http\Resources\Json\JsonResource;
 
 class PembayaranArResource extends JsonResource
 {
+    private function resolveJenis(): string
+    {
+        $ref = $this->no_referensi ?? '';
+        return match (true) {
+            str_contains($ref, '/PDM-') => 'PDM',
+            str_contains($ref, '/ALO-') => 'ALO',
+            default                     => 'REGULER',
+        };
+    }
+
     public function toArray(Request $request): array
     {
         return [
@@ -19,6 +29,7 @@ class PembayaranArResource extends JsonResource
             'jumlah_pembayaran'     => (float) $this->jumlah_pembayaran,
             'metode_pembayaran'     => $this->metode_pembayaran,
             'no_referensi'          => $this->no_referensi,
+            'jenis'                 => $this->resolveJenis(),
             'keterangan'            => $this->keterangan,
             'bukti_gdrive_file_id'  => $this->bukti_gdrive_file_id,
             'bukti_file_name'       => $this->bukti_file_name,
