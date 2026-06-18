@@ -16,6 +16,28 @@ class PembayaranArObserver
         $this->syncEb($pembayaran);
     }
 
+    public function updated(PembayaranAr $pembayaran): void
+    {
+        // Jika tanggal pembayaran berubah, sync periode LAMA agar pembayaran
+        // yang "pindah bulan" dikeluarkan dari EB bulan asal.
+        if ($pembayaran->wasChanged('tanggal_pembayaran')) {
+            $oldTanggal      = Carbon::parse($pembayaran->getOriginal('tanggal_pembayaran'));
+            $oldPeriodeAwal  = $oldTanggal->copy()->startOfMonth()->toDateString();
+            $oldPeriodeAkhir = $oldTanggal->copy()->endOfMonth()->toDateString();
+            $invoice         = $pembayaran->invoice;
+
+            if ($invoice && !$invoice->is_opening_balance) {
+                $userId = auth()->id() ?? $pembayaran->updated_by;
+                DB::afterCommit(
+                    fn() => $this->ebService->syncEbForKlien($invoice->klien_ar_id, $oldPeriodeAwal, $oldPeriodeAkhir, $userId)
+                );
+            }
+        }
+
+        // Sync periode baru (jumlah berubah atau tanggal pindah ke bulan ini)
+        $this->syncEb($pembayaran);
+    }
+
     public function deleted(PembayaranAr $pembayaran): void
     {
         $this->syncEb($pembayaran);

@@ -202,9 +202,49 @@ class EndingBalanceService
                 'updated_by'         => $userId,
             ]);
         }
+
+        // Cascade: perbarui EB DRAFT bulan-bulan berikutnya yang saldo_awal-nya bergantung
+        // pada saldo bulan ini, agar user tidak perlu klik Hitung Ulang secara manual.
+        $this->cascadeSyncForward($klienId, $periodeAkhir, $userId);
     }
 
     // ─── Private Helpers ──────────────────────────────────────────────────────
+
+    /**
+     * Setelah satu periode di-sync, perbarui EB DRAFT bulan-bulan berikutnya
+     * agar saldo_awal mereka ikut diperbarui tanpa perlu Hitung Ulang manual.
+     * Berhenti saat tidak ada DRAFT EB di bulan berikutnya, atau maks 6 bulan.
+     */
+    private function cascadeSyncForward(int $klienId, string $periodeAkhirCurrent, int $userId, int $depth = 0): void
+    {
+        if ($depth >= 6) return;
+
+        $nextStart = Carbon::parse($periodeAkhirCurrent)->addDay()->startOfMonth()->toDateString();
+        $nextEnd   = Carbon::parse($nextStart)->endOfMonth()->toDateString();
+
+        $nextEb = EndingBalance::where('klien_ar_id', $klienId)
+            ->where('periode_awal', $nextStart)
+            ->where('status', 'DRAFT')
+            ->first();
+
+        if (!$nextEb) return;
+
+        $from = Carbon::parse($nextStart)->startOfDay();
+        $to   = Carbon::parse($nextEnd)->endOfDay();
+        [$saldoAwal, $invoiceMasuk, $pembayaran] = $this->computeComponents($klienId, $from, $to);
+        $saldoAkhirSistem = max(0, $saldoAwal + $invoiceMasuk - $pembayaran);
+
+        $nextEb->update([
+            'saldo_awal'         => $saldoAwal,
+            'invoice_masuk'      => $invoiceMasuk,
+            'pembayaran'         => $pembayaran,
+            'saldo_akhir_sistem' => $saldoAkhirSistem,
+            'saldo_akhir_final'  => $this->finalWithKoreksi($nextEb, $saldoAkhirSistem),
+            'updated_by'         => $userId,
+        ]);
+
+        $this->cascadeSyncForward($klienId, $nextEnd, $userId, $depth + 1);
+    }
 
     /**
      * Compute the three components for a given klien and period.
