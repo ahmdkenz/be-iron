@@ -204,26 +204,23 @@ class EndingBalanceService
         if ($prevEb) {
             $saldoAwal = (float) $prevEb->saldo_akhir_final;
         } else {
-            // Fallback: compute from full history before period
-            $tagihanSebelum  = (float) Invoice::query()
+            // Fallback: sisa belum terbayar dari seluruh invoice sebelum periode.
+            // Pakai (subtotal - total_pembayaran) bukan total_tagihan, karena
+            // total_tagihan bersifat kumulatif berjalan (subtotal + carryover bulan)
+            // sehingga menjumlahkannya akan double-count tagihan bulan berjalan.
+            $saldoAwal = (float) Invoice::query()
                 ->where('klien_ar_id', $klienId)
                 ->where('tanggal_invoice', '<', $from->toDateString())
                 ->where(fn($q) => $q
                     ->where('is_opening_balance', false)
                     ->orWhere(fn($q2) => $q2->where('is_opening_balance', true)->where('approval_status', 'APPROVED'))
                 )
-                ->sum('total_tagihan');
-
-            $bayarSebelum = (float) PembayaranAr::query()
-                ->join('tb_invoice', 'tb_pembayaran_ar.invoice_id', '=', 'tb_invoice.id')
-                ->where('tb_invoice.klien_ar_id', $klienId)
-                ->where('tb_pembayaran_ar.tanggal_pembayaran', '<', $from->toDateString())
-                ->sum('tb_pembayaran_ar.jumlah_pembayaran');
-
-            $saldoAwal = max(0, $tagihanSebelum - $bayarSebelum);
+                ->selectRaw('COALESCE(SUM(GREATEST(0, CASE WHEN subtotal = 0 THEN sisa_tagihan ELSE subtotal - total_pembayaran END)), 0) as total')
+                ->value('total') ?? 0.0;
         }
 
-        // 2. Invoice masuk dalam periode
+        // 2. Invoice masuk dalam periode = tagihan BARU (subtotal), bukan total_tagihan
+        // kumulatif. subtotal=0 hanya untuk OB legacy → pakai total_tagihan.
         $invoiceMasuk = (float) Invoice::query()
             ->where('klien_ar_id', $klienId)
             ->whereBetween('tanggal_invoice', [$from->toDateString(), $to->toDateString()])
@@ -231,7 +228,8 @@ class EndingBalanceService
                 ->where('is_opening_balance', false)
                 ->orWhere(fn($q2) => $q2->where('is_opening_balance', true)->where('approval_status', 'APPROVED'))
             )
-            ->sum('total_tagihan');
+            ->selectRaw('COALESCE(SUM(CASE WHEN subtotal = 0 THEN total_tagihan ELSE subtotal END), 0) as total')
+            ->value('total') ?? 0.0;
 
         // 3. Pembayaran dalam periode
         $pembayaran = (float) PembayaranAr::query()
