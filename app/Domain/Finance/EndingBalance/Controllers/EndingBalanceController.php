@@ -88,14 +88,16 @@ class EndingBalanceController extends Controller
             ->orderBy('tanggal_invoice')
             ->get()
             ->map(fn($inv) => [
-                'id'               => $inv->id,
-                'no_invoice'       => $inv->no_invoice,
-                'tanggal_invoice'  => $inv->tanggal_invoice?->toDateString(),
-                'is_opening_balance' => (bool) $inv->is_opening_balance,
-                'total_tagihan'    => (float) $inv->total_tagihan,
-                'total_pembayaran' => (float) $inv->total_pembayaran,
-                'sisa_tagihan'     => (float) $inv->sisa_tagihan,
-                'status'           => $inv->status,
+                'id'                         => $inv->id,
+                'no_invoice'                 => $inv->no_invoice,
+                'tanggal_invoice'            => $inv->tanggal_invoice?->toDateString(),
+                'is_opening_balance'         => (bool) $inv->is_opening_balance,
+                'subtotal'                   => (float) $inv->subtotal,
+                'tagihan_periode_sebelumnya' => (float) $inv->tagihan_periode_sebelumnya,
+                'total_tagihan'              => (float) $inv->total_tagihan,
+                'total_pembayaran'           => (float) $inv->total_pembayaran,
+                'sisa_tagihan'               => (float) $inv->sisa_tagihan,
+                'status'                     => $inv->status,
             ]);
 
         return $this->successResponse($invoices);
