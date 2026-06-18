@@ -129,7 +129,7 @@ class EndingBalanceService
             'invoice_masuk'      => $invoiceMasuk,
             'pembayaran'         => $pembayaran,
             'saldo_akhir_sistem' => $saldoAkhirSistem,
-            'saldo_akhir_final'  => $saldoAkhirSistem,
+            'saldo_akhir_final'  => $this->finalWithKoreksi($eb, $saldoAkhirSistem),
             'updated_by'         => $userId,
         ]);
 
@@ -142,11 +142,22 @@ class EndingBalanceService
      */
     public function recomputeFinal(EndingBalance $eb): void
     {
-        $totalKoreksi = $eb->koreksiApproved()->sum('nilai_koreksi');
         $eb->update([
-            'saldo_akhir_final' => max(0, (float) $eb->saldo_akhir_sistem + (float) $totalKoreksi),
+            'saldo_akhir_final' => $this->finalWithKoreksi($eb, (float) $eb->saldo_akhir_sistem),
             'updated_by'        => auth()->id(),
         ]);
+    }
+
+    /**
+     * Saldo akhir final = saldo sistem + total koreksi yang sudah di-approve (floored at 0).
+     * Dipakai recalculate/syncEbForKlien (DRAFT) agar koreksi yang sudah disetujui
+     * tidak terhapus saat komponen dihitung ulang.
+     */
+    private function finalWithKoreksi(EndingBalance $eb, float $saldoAkhirSistem): float
+    {
+        $totalKoreksi = (float) $eb->koreksiApproved()->sum('nilai_koreksi');
+
+        return max(0, $saldoAkhirSistem + $totalKoreksi);
     }
 
     /**
@@ -187,7 +198,7 @@ class EndingBalanceService
                 'invoice_masuk'      => $invoiceMasuk,
                 'pembayaran'         => $pembayaran,
                 'saldo_akhir_sistem' => $saldoAkhirSistem,
-                'saldo_akhir_final'  => $saldoAkhirSistem,
+                'saldo_akhir_final'  => $this->finalWithKoreksi($eb, $saldoAkhirSistem),
                 'updated_by'         => $userId,
             ]);
         }
@@ -223,7 +234,7 @@ class EndingBalanceService
                     ->where('is_opening_balance', false)
                     ->orWhere(fn($q2) => $q2->where('is_opening_balance', true)->where('approval_status', 'APPROVED'))
                 )
-                ->selectRaw('COALESCE(SUM(GREATEST(0, CASE WHEN subtotal = 0 THEN sisa_tagihan ELSE subtotal - total_pembayaran END)), 0) as total')
+                ->selectRaw('COALESCE(SUM(GREATEST(0, CASE WHEN subtotal = 0 THEN sisa_tagihan ELSE subtotal - total_pembayaran - total_penyesuaian END)), 0) as total')
                 ->value('total') ?? 0.0;
         }
 

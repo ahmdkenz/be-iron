@@ -29,6 +29,7 @@ class Invoice extends Model
         'tagihan_periode_sebelumnya',
         'total_tagihan',
         'total_pembayaran',
+        'total_penyesuaian',
         'sisa_tagihan',
         'status',
         'approval_status',
@@ -61,6 +62,7 @@ class Invoice extends Model
         'tagihan_periode_sebelumnya' => 'decimal:2',
         'total_tagihan'              => 'decimal:2',
         'total_pembayaran'           => 'decimal:2',
+        'total_penyesuaian'          => 'decimal:2',
         'sisa_tagihan'               => 'decimal:2',
         'is_opening_balance'         => 'boolean',
     ];

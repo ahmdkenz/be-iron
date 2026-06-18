@@ -66,7 +66,7 @@ class InvoiceService
         }
 
         return (float) $query
-            ->selectRaw('COALESCE(SUM(GREATEST(0, CASE WHEN subtotal = 0 THEN sisa_tagihan ELSE subtotal - total_pembayaran END)), 0) as total')
+            ->selectRaw('COALESCE(SUM(GREATEST(0, CASE WHEN subtotal = 0 THEN sisa_tagihan ELSE subtotal - total_pembayaran - total_penyesuaian END)), 0) as total')
             ->value('total') ?? 0.0;
     }
 
@@ -85,7 +85,7 @@ class InvoiceService
                             ->where('approval_status', 'APPROVED');
                     });
             })
-            ->selectRaw('COALESCE(SUM(GREATEST(0, CASE WHEN subtotal = 0 THEN sisa_tagihan ELSE subtotal - total_pembayaran END)), 0) as total')
+            ->selectRaw('COALESCE(SUM(GREATEST(0, CASE WHEN subtotal = 0 THEN sisa_tagihan ELSE subtotal - total_pembayaran - total_penyesuaian END)), 0) as total')
             ->value('total') ?? 0.0;
     }
 
@@ -460,17 +460,22 @@ class InvoiceService
 
     public function recalculate(Invoice $invoice): void
     {
-        $totalPembayaran = $invoice->pembayarans()->sum('jumlah_pembayaran');
-        $subtotal        = (float) $invoice->subtotal;
+        $totalPembayaran  = $invoice->pembayarans()->sum('jumlah_pembayaran');
+        $totalPenyesuaian = (float) $invoice->total_penyesuaian;
+        $subtotal         = (float) $invoice->subtotal;
 
-        $rawSisa = max(0, (float) $invoice->total_tagihan - $totalPembayaran);
+        // Penyesuaian manual (write-off) diperlakukan setara pembayaran saat
+        // menghitung sisa & status, tapi disimpan terpisah (tidak menambah total_pembayaran).
+        $terbayarEfektif = (float) $totalPembayaran + $totalPenyesuaian;
+
+        $rawSisa = max(0, (float) $invoice->total_tagihan - $terbayarEfektif);
         // Regular invoice (subtotal > 0): LUNAS saat subtotal terbayar lunas.
         // OB invoice (subtotal = 0): LUNAS saat total_tagihan terbayar (perilaku lama).
         $isLunas = $subtotal > 0
-            ? $totalPembayaran >= $subtotal
+            ? $terbayarEfektif >= $subtotal
             : $rawSisa <= 0;
 
-        if ($totalPembayaran <= 0) {
+        if ($terbayarEfektif <= 0) {
             $status      = 'TERKIRIM';
             $sisaTagihan = $rawSisa;
         } elseif ($isLunas) {
@@ -517,7 +522,7 @@ class InvoiceService
                             ->where('approval_status', 'APPROVED');
                     });
             })
-            ->selectRaw('COALESCE(SUM(GREATEST(0, CASE WHEN subtotal = 0 THEN sisa_tagihan ELSE subtotal - total_pembayaran END)), 0) as total')
+            ->selectRaw('COALESCE(SUM(GREATEST(0, CASE WHEN subtotal = 0 THEN sisa_tagihan ELSE subtotal - total_pembayaran - total_penyesuaian END)), 0) as total')
             ->value('total') ?? 0.0;
     }
 
@@ -546,18 +551,20 @@ class InvoiceService
             return;
         }
 
-        $newTotalTagihan     = (float) $nextInvoice->subtotal + $newCarryover;
-        $subtotalNext        = (float) $nextInvoice->subtotal;
-        $totalPembayaranNext = (float) $nextInvoice->total_pembayaran;
+        $newTotalTagihan      = (float) $nextInvoice->subtotal + $newCarryover;
+        $subtotalNext         = (float) $nextInvoice->subtotal;
+        $totalPembayaranNext  = (float) $nextInvoice->total_pembayaran;
+        $totalPenyesuaianNext = (float) $nextInvoice->total_penyesuaian;
+        $terbayarEfektifNext  = $totalPembayaranNext + $totalPenyesuaianNext;
 
-        $rawSisaNext  = max(0, $newTotalTagihan - $totalPembayaranNext);
+        $rawSisaNext  = max(0, $newTotalTagihan - $terbayarEfektifNext);
         $isLunasNext  = $subtotalNext > 0
-            ? $totalPembayaranNext >= $subtotalNext
+            ? $terbayarEfektifNext >= $subtotalNext
             : $rawSisaNext <= 0;
         $newSisaTagihan = $isLunasNext ? 0.0 : $rawSisaNext;
 
         $newStatus = match (true) {
-            $totalPembayaranNext <= 0 => 'TERKIRIM',
+            $terbayarEfektifNext <= 0 => 'TERKIRIM',
             $isLunasNext              => 'LUNAS',
             default                   => 'SEBAGIAN',
         };

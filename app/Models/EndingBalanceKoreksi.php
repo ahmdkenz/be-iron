@@ -11,6 +11,7 @@ class EndingBalanceKoreksi extends Model
     protected $fillable = [
         'ending_balance_id',
         'klien_ar_id',
+        'invoice_id',
         'nilai_koreksi',
         'alasan_koreksi',
         'dokumen_url',
@@ -41,6 +42,11 @@ class EndingBalanceKoreksi extends Model
     public function klienAr()
     {
         return $this->belongsTo(KlienAr::class, 'klien_ar_id');
+    }
+
+    public function invoice()
+    {
+        return $this->belongsTo(Invoice::class, 'invoice_id');
     }
 
     public function submittedBy()

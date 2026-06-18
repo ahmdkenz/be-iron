@@ -133,6 +133,7 @@ Route::prefix('ending-balance')->group(function () {
     // Koreksi
     Route::post('/{ebId}/koreksi',                         [EndingBalanceKoreksiController::class, 'store']);
     Route::get('/koreksi/pending',                         [EndingBalanceKoreksiController::class, 'pending']);
+    Route::get('/koreksi/approved',                        [EndingBalanceKoreksiController::class, 'approved']);
     Route::patch('/koreksi/{id}/approve-spv',              [EndingBalanceKoreksiController::class, 'approveSpv'])->middleware('role:SUPERVISOR|ADMIN');
     Route::patch('/koreksi/{id}/reject-spv',               [EndingBalanceKoreksiController::class, 'rejectSpv'])->middleware('role:SUPERVISOR|ADMIN');
     Route::patch('/koreksi/{id}/approve-manager',          [EndingBalanceKoreksiController::class, 'approveManager'])->middleware('role:MANAGER|ADMIN');

@@ -42,8 +42,11 @@ class EndingBalanceController extends Controller
 
         $list = $this->service->paginate($filters);
 
+        // Batch-load outstanding/overdue stats for all rows in one query (avoids N+1)
+        $statsMap = $this->batchLoadStats($list->getCollection());
+
         return $this->paginatedResponse(
-            $list->through(fn($eb) => $this->formatEb($eb))
+            $list->through(fn($eb) => $this->formatEb($eb, statsMap: $statsMap))
         );
     }
 
@@ -51,7 +54,7 @@ class EndingBalanceController extends Controller
     {
         $this->authorizeView();
 
-        $eb = EndingBalance::with(['klienAr.perusahaan', 'koreksi.submittedBy', 'koreksi.spv', 'koreksi.manager', 'lockedBy', 'createdBy'])
+        $eb = EndingBalance::with(['klienAr.perusahaan', 'koreksi.submittedBy', 'koreksi.spv', 'koreksi.manager', 'koreksi.invoice', 'lockedBy', 'createdBy'])
             ->findOrFail($id);
 
         return $this->successResponse($this->formatEb($eb, detailed: true));
@@ -98,6 +101,7 @@ class EndingBalanceController extends Controller
                 'tagihan_periode_sebelumnya' => (float) $inv->tagihan_periode_sebelumnya,
                 'total_tagihan'              => (float) $inv->total_tagihan,
                 'total_pembayaran'           => (float) $inv->total_pembayaran,
+                'total_penyesuaian'          => (float) $inv->total_penyesuaian,
                 'sisa_tagihan'               => (float) $inv->sisa_tagihan,
                 'status'                     => $inv->status,
             ]);
@@ -187,9 +191,51 @@ class EndingBalanceController extends Controller
 
     // ─── Private ──────────────────────────────────────────────────────────────
 
-    private function formatEb(EndingBalance $eb, bool $detailed = false): array
+    /**
+     * Batch-load outstanding/overdue stats for a collection of EB rows in one query.
+     * Returns array keyed by EB id.
+     */
+    private function batchLoadStats(\Illuminate\Support\Collection $ebs): array
     {
-        $stats = Invoice::query()
+        if ($ebs->isEmpty()) {
+            return [];
+        }
+
+        $ids   = $ebs->pluck('id')->all();
+        $today = now()->toDateString();
+
+        $rows = \DB::table('tb_invoice as i')
+            ->join('tb_ending_balance as eb', function ($join) {
+                $join->on('i.klien_ar_id', '=', 'eb.klien_ar_id')
+                     ->whereColumn('i.tanggal_invoice', '>=', 'eb.periode_awal')
+                     ->whereColumn('i.tanggal_invoice', '<=', 'eb.periode_akhir');
+            })
+            ->whereIn('eb.id', $ids)
+            ->where(fn($q) => $q
+                ->where('i.is_opening_balance', false)
+                ->orWhere(fn($q2) => $q2->where('i.is_opening_balance', true)->where('i.approval_status', 'APPROVED'))
+            )
+            ->groupBy('eb.id')
+            ->selectRaw(
+                'eb.id as eb_id,
+                 SUM(GREATEST(0, CASE WHEN i.subtotal = 0 THEN i.sisa_tagihan ELSE i.subtotal - i.total_pembayaran - i.total_penyesuaian END)) as outstanding,
+                 SUM(CASE WHEN i.tanggal_jatuh_tempo IS NOT NULL AND i.tanggal_jatuh_tempo < ?
+                     THEN GREATEST(0, CASE WHEN i.subtotal = 0 THEN i.sisa_tagihan ELSE i.subtotal - i.total_pembayaran - i.total_penyesuaian END)
+                     ELSE 0 END) as overdue,
+                 COUNT(CASE WHEN (CASE WHEN i.subtotal = 0 THEN i.sisa_tagihan ELSE i.subtotal - i.total_pembayaran - i.total_penyesuaian END) > 0 THEN 1 END) as outstanding_count,
+                 COUNT(CASE WHEN (CASE WHEN i.subtotal = 0 THEN i.sisa_tagihan ELSE i.subtotal - i.total_pembayaran - i.total_penyesuaian END) > 0
+                     AND i.tanggal_jatuh_tempo IS NOT NULL AND i.tanggal_jatuh_tempo < ? THEN 1 END) as overdue_count',
+                [$today, $today]
+            )
+            ->get();
+
+        return $rows->keyBy('eb_id')->all();
+    }
+
+    private function formatEb(EndingBalance $eb, bool $detailed = false, array $statsMap = []): array
+    {
+        // Use pre-loaded batch stats when available (index), otherwise query per-row (show/recalculate)
+        $stats = $statsMap[$eb->id] ?? Invoice::query()
             ->where('klien_ar_id', $eb->klien_ar_id)
             ->whereBetween('tanggal_invoice', [
                 $eb->periode_awal->toDateString(),
@@ -200,13 +246,10 @@ class EndingBalanceController extends Controller
                 ->orWhere(fn($q2) => $q2->where('is_opening_balance', true)->where('approval_status', 'APPROVED'))
             )
             ->selectRaw(
-                // Sisa riil per invoice = (subtotal - total_pembayaran), bukan
-                // (total_tagihan - total_pembayaran). total_tagihan kumulatif berjalan
-                // sehingga menjumlahkannya double-count carryover bulan berjalan.
-                'SUM(GREATEST(0, CASE WHEN subtotal = 0 THEN sisa_tagihan ELSE subtotal - total_pembayaran END)) as outstanding,
-                 SUM(CASE WHEN tanggal_jatuh_tempo IS NOT NULL AND tanggal_jatuh_tempo < ? THEN GREATEST(0, CASE WHEN subtotal = 0 THEN sisa_tagihan ELSE subtotal - total_pembayaran END) ELSE 0 END) as overdue,
-                 COUNT(CASE WHEN (CASE WHEN subtotal = 0 THEN sisa_tagihan ELSE subtotal - total_pembayaran END) > 0 THEN 1 END) as outstanding_count,
-                 COUNT(CASE WHEN (CASE WHEN subtotal = 0 THEN sisa_tagihan ELSE subtotal - total_pembayaran END) > 0 AND tanggal_jatuh_tempo IS NOT NULL AND tanggal_jatuh_tempo < ? THEN 1 END) as overdue_count',
+                'SUM(GREATEST(0, CASE WHEN subtotal = 0 THEN sisa_tagihan ELSE subtotal - total_pembayaran - total_penyesuaian END)) as outstanding,
+                 SUM(CASE WHEN tanggal_jatuh_tempo IS NOT NULL AND tanggal_jatuh_tempo < ? THEN GREATEST(0, CASE WHEN subtotal = 0 THEN sisa_tagihan ELSE subtotal - total_pembayaran - total_penyesuaian END) ELSE 0 END) as overdue,
+                 COUNT(CASE WHEN (CASE WHEN subtotal = 0 THEN sisa_tagihan ELSE subtotal - total_pembayaran - total_penyesuaian END) > 0 THEN 1 END) as outstanding_count,
+                 COUNT(CASE WHEN (CASE WHEN subtotal = 0 THEN sisa_tagihan ELSE subtotal - total_pembayaran - total_penyesuaian END) > 0 AND tanggal_jatuh_tempo IS NOT NULL AND tanggal_jatuh_tempo < ? THEN 1 END) as overdue_count',
                 [now()->toDateString(), now()->toDateString()]
             )
             ->first();
@@ -240,6 +283,8 @@ class EndingBalanceController extends Controller
         if ($detailed) {
             $base['koreksi'] = $eb->koreksi->map(fn($k) => [
                 'id'                  => $k->id,
+                'invoice_id'          => $k->invoice_id,
+                'no_invoice'          => $k->invoice?->no_invoice,
                 'nilai_koreksi'       => (float) $k->nilai_koreksi,
                 'alasan_koreksi'      => $k->alasan_koreksi,
                 'dokumen_url'         => $k->dokumen_url,
