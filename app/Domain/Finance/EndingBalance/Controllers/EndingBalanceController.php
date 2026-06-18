@@ -104,6 +104,34 @@ class EndingBalanceController extends Controller
         return $this->successResponse($invoices);
     }
 
+    public function payments(int $id): JsonResponse
+    {
+        $this->authorizeView();
+
+        $eb = EndingBalance::findOrFail($id);
+
+        $payments = \DB::table('tb_pembayaran_ar as p')
+            ->join('tb_invoice as i', 'p.invoice_id', '=', 'i.id')
+            ->where('i.klien_ar_id', $eb->klien_ar_id)
+            ->whereBetween('p.tanggal_pembayaran', [
+                $eb->periode_awal->toDateString(),
+                $eb->periode_akhir->toDateString(),
+            ])
+            ->orderBy('p.tanggal_pembayaran')
+            ->select([
+                'p.id',
+                'i.no_invoice',
+                'p.tanggal_pembayaran',
+                'p.jumlah_pembayaran',
+                'p.metode_pembayaran',
+                'p.no_referensi',
+                'p.keterangan',
+            ])
+            ->get();
+
+        return $this->successResponse($payments);
+    }
+
     public function recalculate(int $id): JsonResponse
     {
         $this->authorizeOperate();
@@ -165,6 +193,8 @@ class EndingBalanceController extends Controller
             'locked_by'           => $eb->lockedBy?->username,
             'has_active_koreksi'  => $eb->hasActiveKoreksi(),
             'created_at'          => $eb->created_at?->toIso8601String(),
+            'created_by'          => $eb->createdBy?->username,
+            'updated_at'          => $eb->updated_at?->toIso8601String(),
         ];
 
         if ($detailed) {

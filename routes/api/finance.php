@@ -125,6 +125,7 @@ Route::post('/pendapatan-di-muka/{pdm}/gunakan',            [PendapatanDiMukaCon
 Route::prefix('ending-balance')->group(function () {
     Route::get('/',                   [EndingBalanceController::class, 'index']);
     Route::get('/{id}/invoices',      [EndingBalanceController::class, 'invoices']);
+    Route::get('/{id}/payments',      [EndingBalanceController::class, 'payments']);
     Route::get('/{id}',               [EndingBalanceController::class, 'show']);
     Route::patch('/{id}/lock',        [EndingBalanceController::class, 'lock']);
     Route::patch('/{id}/recalculate', [EndingBalanceController::class, 'recalculate']);
