@@ -115,14 +115,21 @@ class PendapatanDiMukaService
             ]);
 
             // Update status invoice target
-            $fresh     = $invoice->fresh();
-            $newTotal  = (float) $fresh->pembayarans()->sum('jumlah_pembayaran');
-            $newSisa   = max(0, (float) $fresh->total_tagihan - $newTotal);
+            $fresh    = $invoice->fresh();
+            $newTotal = (float) $fresh->pembayarans()->sum('jumlah_pembayaran');
+            $subtotal = (float) $fresh->subtotal;
+            $rawSisa  = max(0, (float) $fresh->total_tagihan - $newTotal);
+
+            // OB (subtotal=0): LUNAS saat total_tagihan lunas. Invoice biasa: LUNAS saat subtotal terbayar.
+            $isLunas = $subtotal > 0 ? $newTotal >= $subtotal : $rawSisa <= 0;
+
             $newStatus = match (true) {
-                $newSisa <= 0  => 'LUNAS',
-                $newTotal > 0  => 'SEBAGIAN',
-                default        => 'TERKIRIM',
+                $newTotal <= 0 => 'TERKIRIM',
+                $isLunas       => 'LUNAS',
+                default        => 'SEBAGIAN',
             };
+            $newSisa = $isLunas ? 0.0 : $rawSisa;
+
             $fresh->update([
                 'total_pembayaran' => $newTotal,
                 'sisa_tagihan'     => $newSisa,
