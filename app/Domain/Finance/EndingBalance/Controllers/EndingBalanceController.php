@@ -28,6 +28,7 @@ class EndingBalanceController extends Controller
             'periode_awal'  => ['nullable', 'date'],
             'periode_akhir' => ['nullable', 'date'],
             'per_page'      => ['nullable', 'integer', 'min:1', 'max:100'],
+            'segment'       => ['nullable', 'in:B2B,B2C'],
         ]);
 
         // PIC AR only sees their own assigned clients

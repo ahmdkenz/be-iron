@@ -25,6 +25,14 @@ class EndingBalanceService
             ->when($filters['status'] ?? null, fn($q, $v) => $q->where('status', $v))
             ->when($filters['periode_awal'] ?? null, fn($q, $v) => $q->where('periode_awal', '>=', $v))
             ->when($filters['periode_akhir'] ?? null, fn($q, $v) => $q->where('periode_akhir', '<=', $v))
+            ->when($filters['segment'] ?? null, function ($q, $v) {
+                $types = match (strtoupper($v)) {
+                    'B2B'   => ['PT'],
+                    'B2C'   => ['RESTO'],
+                    default => ['PT', 'RESTO'],
+                };
+                $q->whereHas('klienAr', fn($q) => $q->withTrashed()->whereIn('tipe_klien', $types));
+            })
             ->orderByDesc('periode_akhir')
             ->orderBy('klien_ar_id')
             ->paginate($perPage);
