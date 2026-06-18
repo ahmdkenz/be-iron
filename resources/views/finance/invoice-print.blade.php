@@ -347,8 +347,8 @@
   {{-- ======== OPENING BALANCE: Invoice Bulan Berjalan ======== --}}
   @php
     $regularInvoicesInPeriod = $regularInvoicesInPeriod ?? collect();
-    $totalTagihanPeriode = $regularInvoicesInPeriod->sum('total_tagihan');
-    $totalSisaPeriode    = $regularInvoicesInPeriod->sum('sisa_tagihan');
+    $totalTagihanPeriode = $regularInvoicesInPeriod->sum('subtotal');
+    $totalSisaPeriode    = $regularInvoicesInPeriod->sum(fn($inv) => max(0, (float)$inv->subtotal - (float)$inv->total_pembayaran));
   @endphp
 
   <div class="ob-section-title" style="margin-top: 18px;">Invoice Bulan Berjalan</div>
@@ -371,8 +371,8 @@
         <td class="ob-detail-invoice font-bold" style="color:#b71c1c;">{{ $regInv->no_invoice }}</td>
         <td class="ob-detail-invoice" style="color:#555;">{{ $regInv->no_surat_jalan ?: '-' }}</td>
         <td class="ob-detail-date text-center" style="color:#555;">{{ \Carbon\Carbon::parse($regInv->tanggal_invoice)->isoFormat('D MMM YYYY') }}</td>
-        <td class="ob-detail-jumlah text-right" style="color:#555;">Rp {{ number_format((float)$regInv->total_tagihan, 0, ',', '.') }}</td>
-        <td class="ob-detail-sisa text-right font-bold">Rp {{ number_format((float)$regInv->sisa_tagihan, 0, ',', '.') }}</td>
+        <td class="ob-detail-jumlah text-right" style="color:#555;">Rp {{ number_format((float)$regInv->subtotal, 0, ',', '.') }}</td>
+        <td class="ob-detail-sisa text-right font-bold">Rp {{ number_format(max(0, (float)$regInv->subtotal - (float)$regInv->total_pembayaran), 0, ',', '.') }}</td>
       </tr>
       @empty
       <tr>
@@ -708,7 +708,7 @@
         <td class="summary-left">
           <div class="terbilang-box">
             <div class="terbilang-lbl">Terbilang</div>
-            <div class="terbilang-val">"{{ \App\Support\Helpers\Terbilang::convert((int) $regInv->total_tagihan) }} Rupiah"</div>
+            <div class="terbilang-val">"{{ \App\Support\Helpers\Terbilang::convert((int) $regSubtotal) }} Rupiah"</div>
           </div>
           @if($regInv->keterangan)
           <div class="note-box">
@@ -723,15 +723,9 @@
               <td class="totals-lbl">Total Barang</td>
               <td class="totals-val">Rp {{ number_format($regSubtotal, 0, ',', '.') }}</td>
             </tr>
-            @if($regTagihanSblm > 0)
-            <tr>
-              <td class="totals-lbl">Tagihan Sebelumnya</td>
-              <td class="totals-val">Rp {{ number_format($regTagihanSblm, 0, ',', '.') }}</td>
-            </tr>
-            @endif
             <tr class="totals-grand">
               <td class="totals-lbl">GRAND TOTAL</td>
-              <td class="totals-val">Rp {{ number_format((float)$regInv->total_tagihan, 0, ',', '.') }}</td>
+              <td class="totals-val">Rp {{ number_format($regSubtotal, 0, ',', '.') }}</td>
             </tr>
             @if((float)$regInv->total_pembayaran > 0)
             <tr>
@@ -741,7 +735,7 @@
             @endif
             <tr class="totals-sisa">
               <td class="totals-lbl">SISA BAYAR</td>
-              <td class="totals-val">Rp {{ number_format((float)$regInv->sisa_tagihan, 0, ',', '.') }}</td>
+              <td class="totals-val">Rp {{ number_format(max(0, $regSubtotal - (float)$regInv->total_pembayaran), 0, ',', '.') }}</td>
             </tr>
           </table>
         </td>
