@@ -646,6 +646,9 @@ class InvoiceController extends Controller
         $invoiceMapping    = [];
         $invoicesWithItems = [];
 
+        DB::beginTransaction();
+        try {
+
         // ── Pass 1: Buat invoice dari Sheet 1 "Data Invoice" ──
         $lineNumber = 0;
         foreach ($rows1 as $row) {
@@ -831,12 +834,19 @@ class InvoiceController extends Controller
 
         $failed = $totalData - $insertedCount;
 
+        DB::commit();
+
         return $this->successResponse([
             'total'    => $totalData,
             'inserted' => $insertedCount,
             'failed'   => $failed,
             'errors'   => $errors,
         ], "Import B2B selesai. {$insertedCount} invoice konsolidasi ditambahkan, {$failed} gagal.");
+
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            return $this->errorResponse('Terjadi kesalahan sistem saat proses import: ' . $e->getMessage(), 500);
+        }
     }
 
     private function importB2C(array $rows1, array $rows2, $user): JsonResponse
@@ -845,6 +855,9 @@ class InvoiceController extends Controller
         $totalData      = 0;
         $errors         = [];
         $invoiceMapping = [];
+
+        DB::beginTransaction();
+        try {
 
         // ── Pass 1: Invoice headers ──────────────────────────────────
         $lineNumber    = 0;
@@ -1038,12 +1051,19 @@ class InvoiceController extends Controller
 
         $failed = $totalData - $insertedCount;
 
+        DB::commit();
+
         return $this->successResponse([
             'total'    => $totalData,
             'inserted' => $insertedCount,
             'failed'   => $failed,
             'errors'   => $errors,
         ], "Import selesai. {$insertedCount} ditambahkan, {$failed} gagal.");
+
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            return $this->errorResponse('Terjadi kesalahan sistem saat proses import: ' . $e->getMessage(), 500);
+        }
     }
 
     public function publicPrint(string $token): Response
