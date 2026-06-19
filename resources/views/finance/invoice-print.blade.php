@@ -503,7 +503,7 @@
   <!-- Signatures -->
   <table class="signatures">
     <tr>
-      <td class="sig-col">
+      <td class="sig-col" style="width: {{ $invoice->is_opening_balance ? '50%' : '33.33%' }};">
         <div class="sig-title">{{ $invoice->is_opening_balance ? 'Diajukan Oleh' : 'Disiapkan Oleh' }}</div>
         @if(!empty($signatureData['prepared_qr_src']))
         <div class="sig-barcode-wrap">
@@ -515,20 +515,14 @@
         <div class="sig-name">{{ $signatureData['prepared_by_name'] ?? '___________________' }}</div>
         <div class="sig-role">{{ $invoice->is_opening_balance ? 'Pengaju Opening Balance' : 'Staff AR' }}</div>
       </td>
+      @if(!$invoice->is_opening_balance)
       <td class="sig-col">
         <div class="sig-title">Disetujui Oleh</div>
-        @if(!empty($signatureData['approved_qr_src']))
-        <div class="sig-barcode-wrap">
-          <div class="sig-barcode"><img src="{{ $signatureData['approved_qr_src'] }}" alt="QR verifikasi persetujuan dokumen"></div>
-        </div>
-        @else
         <div class="sig-placeholder"></div>
-        @endif
-        <div class="sig-name">{{ $signatureData['approved_by_name'] ?? '___________________' }}</div>
-        <div class="sig-role">Direktur</div>
-        <div class="sig-role" style="font-size:10px; margin-top:2px;">{{ $invoice->karyawan?->perusahaan?->nama_perusahaan ?? $invoice->perusahaan->nama_perusahaan }}</div>
+        <div class="sig-name">___________________</div>
       </td>
-      <td class="sig-col">
+      @endif
+      <td class="sig-col" style="width: {{ $invoice->is_opening_balance ? '50%' : '33.33%' }};">
         <div class="sig-title">Diterima Oleh</div>
         <div class="sig-placeholder"></div>
         <div class="sig-name">___________________</div>
@@ -759,16 +753,8 @@
         </td>
         <td class="sig-col">
           <div class="sig-title">Disetujui Oleh</div>
-          @if(!empty($regSigData['approved_qr_src']))
-          <div class="sig-barcode-wrap">
-            <div class="sig-barcode"><img src="{{ $regSigData['approved_qr_src'] }}" alt="QR verifikasi persetujuan dokumen"></div>
-          </div>
-          @else
           <div class="sig-placeholder"></div>
-          @endif
-          <div class="sig-name">{{ $regSigData['approved_by_name'] ?? '___________________' }}</div>
-          <div class="sig-role">Direktur</div>
-          <div class="sig-role" style="font-size:10px; margin-top:2px;">{{ $regInv->karyawan?->perusahaan?->nama_perusahaan ?? $regInv->perusahaan->nama_perusahaan }}</div>
+          <div class="sig-name">___________________</div>
         </td>
         <td class="sig-col">
           <div class="sig-title">Diterima Oleh</div>

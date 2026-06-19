@@ -19,17 +19,10 @@ class RoleSeeder extends Seeder
                 'status'     => true,
             ],
             [
-                'name'       => RoleEnum::DIREKTUR->value,
-                'guard_name' => 'web',
-                'nama_role'  => RoleEnum::DIREKTUR->label(),
-                'keterangan' => 'Approver final untuk opening balance dan monitoring eksekutif',
-                'status'     => true,
-            ],
-            [
                 'name'       => RoleEnum::MANAGER->value,
                 'guard_name' => 'web',
                 'nama_role'  => RoleEnum::MANAGER->label(),
-                'keterangan' => 'Pengelola operasional finance dan account receivable',
+                'keterangan' => 'Pengelola operasional finance, approver opening balance, dan monitoring eksekutif',
                 'status'     => true,
             ],
             [

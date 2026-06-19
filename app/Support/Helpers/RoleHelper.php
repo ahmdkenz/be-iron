@@ -34,19 +34,18 @@ class RoleHelper
 
     public static function hasGlobalFinanceAccess(?User $user): bool
     {
-        return self::hasAnyRole($user, [RoleEnum::ADMIN, RoleEnum::DIREKTUR]);
+        return self::hasAnyRole($user, [RoleEnum::ADMIN]);
     }
 
     public static function hasGlobalArAccess(?User $user): bool
     {
-        return self::hasAnyRole($user, [RoleEnum::ADMIN, RoleEnum::DIREKTUR, RoleEnum::MANAGER, RoleEnum::SUPERVISOR]);
+        return self::hasAnyRole($user, [RoleEnum::ADMIN, RoleEnum::MANAGER, RoleEnum::SUPERVISOR]);
     }
 
     public static function hasGlobalDashboardAccess(?User $user): bool
     {
         return self::hasAnyRole($user, [
             RoleEnum::ADMIN,
-            RoleEnum::DIREKTUR,
             RoleEnum::MANAGER,
             RoleEnum::SUPERVISOR,
         ]);
@@ -57,21 +56,8 @@ class RoleHelper
         return self::hasRole($user, RoleEnum::AR)
             && !self::hasAnyRole($user, [
                 RoleEnum::ADMIN,
-                RoleEnum::DIREKTUR,
                 RoleEnum::MANAGER,
                 RoleEnum::SUPERVISOR,
-            ]);
-    }
-
-    public static function isDirectorOnly(?User $user): bool
-    {
-        return self::hasRole($user, RoleEnum::DIREKTUR)
-            && !self::hasAnyRole($user, [
-                RoleEnum::ADMIN,
-                RoleEnum::MANAGER,
-                RoleEnum::SUPERVISOR,
-                RoleEnum::AR,
-                RoleEnum::AP,
             ]);
     }
 
@@ -79,7 +65,6 @@ class RoleHelper
     {
         return self::hasAnyRole($user, [
             RoleEnum::ADMIN,
-            RoleEnum::DIREKTUR,
             RoleEnum::MANAGER,
             RoleEnum::SUPERVISOR,
             RoleEnum::AR,
@@ -97,14 +82,13 @@ class RoleHelper
 
     public static function canApproveOpeningBalance(?User $user): bool
     {
-        return self::hasRole($user, RoleEnum::DIREKTUR);
+        return self::hasRole($user, RoleEnum::MANAGER);
     }
 
     public static function canViewEndingBalance(?User $user): bool
     {
         return self::hasAnyRole($user, [
             RoleEnum::ADMIN,
-            RoleEnum::DIREKTUR,
             RoleEnum::MANAGER,
             RoleEnum::SUPERVISOR,
             RoleEnum::AR,
@@ -143,7 +127,6 @@ class RoleHelper
         return self::hasAnyRole($user, [RoleEnum::AR])
             && !self::hasAnyRole($user, [
                 RoleEnum::ADMIN,
-                RoleEnum::DIREKTUR,
                 RoleEnum::MANAGER,
                 RoleEnum::SUPERVISOR,
             ]);

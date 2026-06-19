@@ -74,12 +74,6 @@ class KlienArController extends Controller
 
     public function store(StoreKlienArRequest $request): JsonResponse
     {
-        abort_if(
-            $this->isDirectorOnly(),
-            403,
-            'Direktur hanya memiliki akses lihat data Client'
-        );
-
         $klien = $this->service->create(KlienArDTO::fromRequest($request->validated()));
         return $this->createdResponse(new KlienArResource($klien), 'Client berhasil dibuat');
     }
@@ -752,12 +746,7 @@ class KlienArController extends Controller
     {
         $user = auth()->user();
 
-        return RoleHelper::isArOnly($user) || RoleHelper::isDirectorOnly($user);
-    }
-
-    private function isDirectorOnly(): bool
-    {
-        return RoleHelper::isDirectorOnly(auth()->user());
+        return RoleHelper::isArOnly($user);
     }
 
     private function isPicArOnly(): bool

@@ -129,7 +129,7 @@ class RekeningKoranUmumService
     {
         return User::query()
             ->with('karyawan:id,nama_karyawan')
-            ->whereHas('roles', fn($q) => $q->whereIn('name', ['AR', 'SUPERVISOR', 'DIREKTUR']))
+            ->whereHas('roles', fn($q) => $q->whereIn('name', ['AR', 'SUPERVISOR', 'MANAGER']))
             ->orderBy('username')
             ->get(['id', 'username', 'karyawan_id'])
             ->map(fn($u) => [

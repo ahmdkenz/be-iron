@@ -153,13 +153,8 @@ class UploadInvoiceToGDriveJob implements ShouldQueue
             $preparedByName = $preparedByUser?->karyawan?->nama_karyawan
                 ?? $preparedByUser?->username
                 ?? '___________________';
-
-            $approvedByName = $invoice->approvedBy?->karyawan?->nama_karyawan
-                ?? $invoice->approvedBy?->username
-                ?? '___________________';
         } else {
             $preparedByName = $invoice->klienAr?->karyawanAr?->nama_karyawan ?? '___________________';
-            $approvedByName = $invoice->karyawan?->perusahaan?->nama_direktur ?? 'Agung Tribuwono';
         }
 
         return [
@@ -167,10 +162,8 @@ class UploadInvoiceToGDriveJob implements ShouldQueue
             'prepared_qr_src'  => SignatureBarcodeHelper::generateDataUri(
                 SignatureBarcodeHelper::buildPreparedVerificationUrl($invoice), 150
             ),
-            'approved_by_name' => $approvedByName,
-            'approved_qr_src'  => SignatureBarcodeHelper::generateDataUri(
-                SignatureBarcodeHelper::buildApprovedVerificationUrl($invoice), 150
-            ),
+            'approved_by_name' => null,
+            'approved_qr_src'  => null,
         ];
     }
 }

@@ -71,24 +71,6 @@ class SignatureBarcodeHelper
         return implode("\n", $lines);
     }
 
-    public static function buildObApprovedPayload(Invoice $invoice, string $preparedByName): string
-    {
-        $periode    = Carbon::parse($invoice->tanggal_invoice)->format('d-m-Y');
-        $grandTotal = 'Rp ' . number_format((float) $invoice->total_tagihan, 0, ',', '.');
-        $sisaBayar  = 'Rp ' . number_format((float) $invoice->sisa_tagihan, 0, ',', '.');
-
-        $lines = [
-            "Diajukan Oleh: {$preparedByName}",
-            "No Invoice: {$invoice->no_invoice}",
-            "Periode: {$periode}",
-            "Grand Total: {$grandTotal}",
-            "Sisa Bayar: {$sisaBayar}",
-            "Status: Di Disetujui",
-        ];
-
-        return implode("\n", $lines);
-    }
-
     public static function buildInvoicePreparedPayload(Invoice $invoice, string $preparedByName): string
     {
         $periode    = Carbon::parse($invoice->tanggal_invoice)->format('d-m-Y');
@@ -103,31 +85,6 @@ class SignatureBarcodeHelper
             "Sisa Bayar: {$sisaBayar}",
             "Status: Di Ajukan",
         ];
-
-        return implode("\n", $lines);
-    }
-
-    public static function buildInvoiceApprovedPayload(Invoice $invoice, string $preparedByName, string $approvedByName = 'Agung Tribuwono'): string
-    {
-        $periode    = Carbon::parse($invoice->tanggal_invoice)->format('d-m-Y');
-        $grandTotal = 'Rp ' . number_format((float) $invoice->total_tagihan, 0, ',', '.');
-        $sisaBayar  = 'Rp ' . number_format((float) $invoice->sisa_tagihan, 0, ',', '.');
-
-        $lines = [
-            "Disetujui Oleh: {$approvedByName}",
-            "Jabatan: Direktur",
-            "No Invoice: {$invoice->no_invoice}",
-            "Periode: {$periode}",
-        ];
-
-        foreach ($invoice->items as $item) {
-            $qty = rtrim(rtrim(number_format((float) $item->qty, 4, '.', ''), '0'), '.');
-            $lines[] = "Nama Barang: {$item->nama_barang} | QTY: {$qty} | Satuan: {$item->satuan}";
-        }
-
-        $lines[] = "Grand Total: {$grandTotal}";
-        $lines[] = "Sisa Bayar: {$sisaBayar}";
-        $lines[] = "Status: Di Disetujui";
 
         return implode("\n", $lines);
     }

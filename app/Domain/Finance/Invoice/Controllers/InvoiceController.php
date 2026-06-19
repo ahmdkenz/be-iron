@@ -2040,25 +2040,18 @@ class InvoiceController extends Controller
                 ?? $preparedByUser?->username
                 ?? '___________________';
 
-            $approvedByName = $invoice->approvedBy?->karyawan?->nama_karyawan
-                ?? $invoice->approvedBy?->username
-                ?? '___________________';
-
             $preparedPayload = SignatureBarcodeHelper::buildObPreparedPayload($invoice, $preparedByName);
-            $approvedPayload = SignatureBarcodeHelper::buildObApprovedPayload($invoice, $preparedByName);
         } else {
             $preparedByName = $invoice->klienAr?->karyawanAr?->nama_karyawan ?? '___________________';
-            $approvedByName = $invoice->karyawan?->perusahaan?->nama_direktur ?? 'Agung Tribuwono';
 
             $preparedPayload = SignatureBarcodeHelper::buildInvoicePreparedPayload($invoice, $preparedByName);
-            $approvedPayload = SignatureBarcodeHelper::buildInvoiceApprovedPayload($invoice, $preparedByName, $approvedByName);
         }
 
         return [
             'prepared_by_name' => $preparedByName,
             'prepared_qr_src'  => SignatureBarcodeHelper::generateDataUri($preparedPayload, 250),
-            'approved_by_name' => $approvedByName,
-            'approved_qr_src'  => SignatureBarcodeHelper::generateDataUri($approvedPayload, 250),
+            'approved_by_name' => null,
+            'approved_qr_src'  => null,
         ];
     }
 }

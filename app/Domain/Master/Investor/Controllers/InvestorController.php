@@ -652,6 +652,6 @@ class InvestorController extends Controller
     {
         $user = auth()->user();
 
-        return RoleHelper::isArOnly($user) || RoleHelper::isDirectorOnly($user);
+        return RoleHelper::isArOnly($user);
     }
 }

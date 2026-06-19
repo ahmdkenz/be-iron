@@ -9,7 +9,7 @@ class ArFilterScope
     /**
      * Terapkan filter scoping untuk AR data berdasarkan role user.
      *
-     * - Non-global user (bukan ADMIN/DIREKTUR/MANAGER/SUPERVISOR): scope by perusahaan
+     * - Non-global user (bukan ADMIN/MANAGER/SUPERVISOR): scope by perusahaan
      * - AR-only user: scope by klien yang di-assign ke mereka (override perusahaan_id)
      */
     public static function apply(array &$filters, User $user): void
