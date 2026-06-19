@@ -8,6 +8,7 @@ use App\Domain\Finance\RekonsiliasiBankStatement\Services\BankStatementService;
 use App\Http\Controllers\Controller;
 use App\Models\BankStatement;
 use App\Models\BankStatementDetail;
+use App\Models\Invoice;
 use App\Support\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -217,6 +218,82 @@ class BankStatementController extends Controller
             );
 
             return $this->successResponse(null, 'Kelebihan berhasil dialokasikan.');
+        } catch (\Symfony\Component\HttpKernel\Exception\HttpException $e) {
+            return $this->errorResponse($e->getMessage(), $e->getStatusCode());
+        }
+    }
+
+    public function invoiceCandidates(Request $request, BankStatementDetail $detail): JsonResponse
+    {
+        $request->validate(['search' => ['nullable', 'string', 'max:100']]);
+
+        $list = $this->service->getInvoiceCandidatesForNewPayment(
+            $detail,
+            $request->string('search') ?: null,
+        );
+
+        return $this->successResponse($list);
+    }
+
+    public function catatBayar(Request $request, BankStatementDetail $detail): JsonResponse
+    {
+        $request->validate([
+            'invoice_id' => ['required', 'integer', 'exists:tb_invoice,id'],
+        ]);
+
+        try {
+            $invoice = Invoice::findOrFail($request->integer('invoice_id'));
+            $updated = $this->service->matchWithNewPayment($detail, $invoice);
+
+            $updated->load([
+                'pembayaranAr.alokasiKelebihan.invoice.klienAr',
+                'pembayaranAr.alokasiKelebihan.createdBy.karyawan',
+                'matchedBy.karyawan',
+            ]);
+
+            $pembayaran     = $updated->pembayaranAr;
+            $inv            = $pembayaran?->invoice;
+            $kelebihanBayar = null;
+            if ($inv) {
+                $kelebihanFromInvoice = max(0, round((float) $inv->total_pembayaran - (float) $inv->total_tagihan, 2));
+                $kelebihanFromBank    = max(0, round($updated->kredit - (float) $pembayaran->jumlah_pembayaran, 2));
+                $total                = max($kelebihanFromInvoice, $kelebihanFromBank);
+                if ($total > 0) {
+                    $dialokasi      = (float) $pembayaran->alokasiKelebihan->sum('jumlah_pembayaran');
+                    $kelebihanBayar = [
+                        'total'           => $total,
+                        'sudah_dialokasi' => round($dialokasi, 2),
+                        'sisa'            => max(0, round($total - $dialokasi, 2)),
+                        'riwayat'         => $pembayaran->alokasiKelebihan->map(fn($p) => [
+                            'id'         => $p->id,
+                            'jumlah'     => $p->jumlah_pembayaran,
+                            'no_invoice' => $p->invoice?->no_invoice,
+                            'klien'      => $p->invoice?->klienAr?->nama_klien,
+                            'keterangan' => $p->keterangan,
+                            'created_by' => $p->createdBy?->name,
+                            'tanggal'    => $p->tanggal_pembayaran?->toDateString(),
+                        ])->values(),
+                    ];
+                }
+            }
+
+            return $this->successResponse([
+                'id'              => $updated->id,
+                'status_cocok'    => $updated->status_cocok,
+                'matched_by'      => $updated->matchedBy?->name,
+                'selisih_bank'    => $pembayaran
+                    ? round($updated->kredit - (float) $pembayaran->jumlah_pembayaran, 2)
+                    : null,
+                'pembayaran'      => $pembayaran ? [
+                    'id'                 => $pembayaran->id,
+                    'no_referensi'       => $pembayaran->no_referensi,
+                    'tanggal_pembayaran' => $pembayaran->tanggal_pembayaran?->toDateString(),
+                    'jumlah_pembayaran'  => $pembayaran->jumlah_pembayaran,
+                    'metode_pembayaran'  => $pembayaran->metode_pembayaran,
+                    'klien'              => $inv?->klienAr?->nama_klien,
+                ] : null,
+                'kelebihan_bayar' => $kelebihanBayar,
+            ], 'Pembayaran berhasil dicatat dan dicocokkan.');
         } catch (\Symfony\Component\HttpKernel\Exception\HttpException $e) {
             return $this->errorResponse($e->getMessage(), $e->getStatusCode());
         }

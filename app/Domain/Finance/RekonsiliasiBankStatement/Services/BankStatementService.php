@@ -3,6 +3,7 @@
 namespace App\Domain\Finance\RekonsiliasiBankStatement\Services;
 
 use App\Domain\Finance\Invoice\Jobs\UploadInvoiceToGDriveJob;
+use App\Domain\Finance\PembayaranAr\Services\PembayaranArService;
 use App\Domain\Finance\RekonsiliasiBankStatement\Exceptions\DuplicateStatementException;
 use App\Domain\Finance\RekonsiliasiBankStatement\Parsers\BankParserFactory;
 use App\Models\BankStatement;
@@ -15,6 +16,10 @@ use Illuminate\Support\Facades\DB;
 
 class BankStatementService
 {
+    public function __construct(
+        private readonly PembayaranArService $pembayaranArService,
+    ) {}
+
     public function upload(UploadedFile $file, string $bankType, int $userId, bool $force = false): BankStatement
     {
         $parser = BankParserFactory::make($bankType);
@@ -463,6 +468,77 @@ class BankStatementService
         });
 
         UploadInvoiceToGDriveJob::dispatch($target->id);
+    }
+
+    public function getInvoiceCandidatesForNewPayment(
+        BankStatementDetail $detail,
+        ?string $search = null,
+    ): \Illuminate\Support\Collection {
+        $query = Invoice::with('klienAr')
+            ->whereNotIn('status', ['LUNAS', 'DRAFT'])
+            ->where(function ($q) {
+                $q->where('is_opening_balance', false)
+                  ->orWhere(function ($q2) {
+                      $q2->where('is_opening_balance', true)
+                         ->where('approval_status', 'APPROVED');
+                  });
+            })
+            ->orderByDesc('tanggal_invoice');
+
+        if ($search) {
+            $query->where(function ($q) use ($search) {
+                $q->where('no_invoice', 'LIKE', "%{$search}%")
+                  ->orWhereHas('klienAr', fn($q2) => $q2->where('nama_klien', 'LIKE', "%{$search}%"));
+            });
+        }
+
+        return $query->limit(30)->get()->map(function ($inv) {
+            $subtotal        = (float) $inv->subtotal;
+            $totalPembayaran = (float) $inv->total_pembayaran;
+            $sisaEfektif     = $subtotal > 0
+                ? max(0, $subtotal - $totalPembayaran)
+                : (float) $inv->sisa_tagihan;
+
+            return [
+                'id'                 => $inv->id,
+                'no_invoice'         => $inv->no_invoice,
+                'tanggal'            => $inv->tanggal_invoice?->toDateString(),
+                'total_tagihan'      => $subtotal > 0 ? $subtotal : (float) $inv->total_tagihan,
+                'sisa_tagihan'       => $sisaEfektif,
+                'status'             => $inv->status,
+                'nama_klien'         => $inv->klienAr?->nama_klien,
+                'is_opening_balance' => (bool) $inv->is_opening_balance,
+            ];
+        });
+    }
+
+    public function matchWithNewPayment(
+        BankStatementDetail $detail,
+        Invoice $invoice,
+    ): BankStatementDetail {
+        abort_if($detail->status_cocok === 'MATCHED', 422, 'Transaksi ini sudah dicocokkan.');
+        abort_if($detail->kredit <= 0, 422, 'Hanya transaksi kredit yang dapat dicatat pembayarannya.');
+
+        return DB::transaction(function () use ($detail, $invoice) {
+            $subtotal    = (float) $invoice->subtotal;
+            $totalBayar  = (float) $invoice->total_pembayaran;
+            $sisaEfektif = $subtotal > 0
+                ? max(0, $subtotal - $totalBayar)
+                : max(0, (float) $invoice->total_tagihan - $totalBayar);
+            $jumlahBayar = min((float) $detail->kredit, $sisaEfektif);
+
+            $paymentData = [
+                'tanggal_pembayaran' => $detail->tanggal,
+                'jumlah_pembayaran'  => $jumlahBayar,
+                'metode_pembayaran'  => 'TRANSFER',
+                'no_referensi'       => $detail->no_referensi ?: null,
+                'keterangan'         => null,
+            ];
+
+            $pembayaran = $this->pembayaranArService->create($invoice, $paymentData);
+
+            return $this->manualMatch($detail, $pembayaran->id);
+        });
     }
 
     private function nextAlokasiSuffix(PembayaranAr $pembayaran): int
