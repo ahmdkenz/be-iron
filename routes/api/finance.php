@@ -50,6 +50,7 @@ Route::prefix('invoices')->group(function () {
     Route::post('/import',         [InvoiceController::class, 'import']);
     Route::get('/{id}/print', [InvoiceController::class, 'print']);
     Route::get('/carryover', [InvoiceController::class, 'carryover']);
+    Route::get('/outstanding', [InvoiceController::class, 'outstanding']);
     Route::get('/preview-no', [InvoiceController::class, 'previewNo']);
     Route::get('/preview-no-konsolidasi', [InvoiceController::class, 'previewConsolidatedNo']);
     Route::post('/', [InvoiceController::class, 'store']);

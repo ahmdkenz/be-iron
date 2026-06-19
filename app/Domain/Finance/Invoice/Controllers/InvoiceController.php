@@ -89,6 +89,41 @@ class InvoiceController extends Controller
         return $this->successResponse(['carryover' => $carryover]);
     }
 
+    public function outstanding(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'klien_ar_id' => ['required', 'integer', 'exists:tb_klien_ar,id'],
+            'tanggal'     => ['nullable', 'date'],
+        ]);
+
+        $query = \App\Models\Invoice::where('klien_ar_id', $validated['klien_ar_id'])
+            ->whereIn('status', ['TERKIRIM', 'SEBAGIAN'])
+            ->where('is_opening_balance', false);
+
+        if (!empty($validated['tanggal'])) {
+            $batasAwal = Carbon::parse($validated['tanggal'])->startOfMonth()->toDateString();
+            $query->where('tanggal_invoice', '<', $batasAwal);
+        }
+
+        $invoices = $query
+            ->orderBy('tanggal_invoice')
+            ->orderBy('id')
+            ->get()
+            ->map(fn($inv) => [
+                'id'              => $inv->id,
+                'no_invoice'      => $inv->no_invoice,
+                'tanggal_invoice' => $inv->tanggal_invoice?->toDateString(),
+                'total_tagihan'   => (float) $inv->total_tagihan,
+                'sisa_tagihan'    => max(0.0, (float) $inv->subtotal - (float) $inv->total_pembayaran - (float) $inv->total_penyesuaian),
+                'status'          => $inv->status,
+                'keterangan'      => $inv->keterangan,
+                'periode_awal'    => $inv->periode_awal?->toDateString(),
+                'periode_akhir'   => $inv->periode_akhir?->toDateString(),
+            ]);
+
+        return $this->successResponse($invoices);
+    }
+
     public function previewNo(Request $request): JsonResponse
     {
         $payload = $request->validate([
