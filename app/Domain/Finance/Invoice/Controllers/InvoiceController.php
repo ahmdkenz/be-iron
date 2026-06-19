@@ -650,6 +650,7 @@ class InvoiceController extends Controller
     private function importB2B(array $rows1, array $rows2, $user): JsonResponse
     {
         $insertedCount     = 0;
+        $skippedCount      = 0;
         $totalData         = 0;
         $errors            = [];
         $invoiceMapping    = [];
@@ -699,6 +700,16 @@ class InvoiceController extends Controller
 
             if (!$periodeAwal)  $periodeAwal  = Carbon::parse($tanggalKirim)->startOfMonth()->format('Y-m-d');
             if (!$periodeAkhir) $periodeAkhir = Carbon::parse($tanggalKirim)->endOfMonth()->format('Y-m-d');
+
+            $existingInvoice = Invoice::where('klien_ar_id', $klien->id)
+                ->where('periode_awal', $periodeAwal)
+                ->where('periode_akhir', $periodeAkhir)
+                ->where('is_opening_balance', false)
+                ->first();
+            if ($existingInvoice) {
+                $skippedCount++;
+                continue;
+            }
 
             $carryover = $this->service->getMonthlyCarryover($klien->id, $tanggalKirim);
 
@@ -841,16 +852,17 @@ class InvoiceController extends Controller
             ->where('approval_status', 'APPROVED')
             ->each(fn($ob) => UploadInvoiceToGDriveJob::dispatch($ob->id));
 
-        $failed = $totalData - $insertedCount;
+        $failed = $totalData - $insertedCount - $skippedCount;
 
         DB::commit();
 
         return $this->successResponse([
             'total'    => $totalData,
             'inserted' => $insertedCount,
+            'skipped'  => $skippedCount,
             'failed'   => $failed,
             'errors'   => $errors,
-        ], "Import B2B selesai. {$insertedCount} invoice konsolidasi ditambahkan, {$failed} gagal.");
+        ], "Import B2B selesai. {$insertedCount} invoice konsolidasi ditambahkan, {$skippedCount} dilewati (sudah ada), {$failed} gagal.");
 
         } catch (\Throwable $e) {
             DB::rollBack();
@@ -861,6 +873,7 @@ class InvoiceController extends Controller
     private function importB2C(array $rows1, array $rows2, $user): JsonResponse
     {
         $insertedCount  = 0;
+        $skippedCount   = 0;
         $totalData      = 0;
         $errors         = [];
         $invoiceMapping = [];
@@ -917,6 +930,16 @@ class InvoiceController extends Controller
             $klien = KlienAr::with('perusahaan')->where('nama_klien', $namaKlien)->first();
             if (!$klien) {
                 $errors[] = ['sheet' => 'Invoice', 'row' => $lineNumber, 'message' => "Klien '{$namaKlien}' tidak ditemukan di sistem"];
+                continue;
+            }
+
+            $existingInvoice = Invoice::where('klien_ar_id', $klien->id)
+                ->where('periode_awal', $periodeAwal)
+                ->where('periode_akhir', $periodeAkhir)
+                ->where('is_opening_balance', false)
+                ->first();
+            if ($existingInvoice) {
+                $skippedCount++;
                 continue;
             }
 
@@ -1058,16 +1081,17 @@ class InvoiceController extends Controller
             ->where('approval_status', 'APPROVED')
             ->each(fn($ob) => UploadInvoiceToGDriveJob::dispatch($ob->id));
 
-        $failed = $totalData - $insertedCount;
+        $failed = $totalData - $insertedCount - $skippedCount;
 
         DB::commit();
 
         return $this->successResponse([
             'total'    => $totalData,
             'inserted' => $insertedCount,
+            'skipped'  => $skippedCount,
             'failed'   => $failed,
             'errors'   => $errors,
-        ], "Import selesai. {$insertedCount} ditambahkan, {$failed} gagal.");
+        ], "Import selesai. {$insertedCount} ditambahkan, {$skippedCount} dilewati (sudah ada), {$failed} gagal.");
 
         } catch (\Throwable $e) {
             DB::rollBack();

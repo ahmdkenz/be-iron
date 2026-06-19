@@ -276,6 +276,7 @@ class OpeningBalanceController extends Controller
         $isCsv     = in_array($extension, ['csv', 'txt']);
 
         $insertedOb     = 0;
+        $skippedOb      = 0;
         $insertedDetail = 0;
         $insertedItem   = 0;
         $totalOb        = 0;
@@ -297,11 +298,6 @@ class OpeningBalanceController extends Controller
         $sheet1Rows = $isCsv
             ? $this->parseObCsv($file->getRealPath())
             : $this->parseObSheetRows($file->getRealPath(), 0, 'nama_klien', 7);
-
-        if (count($sheet1Rows) > 2000) {
-            DB::rollBack();
-            return $this->errorResponse('File melebihi batas maksimal 2.000 baris data.', 422);
-        }
 
         $lineNumber    = 0;
         $headerSkipped = false;
@@ -369,7 +365,7 @@ class OpeningBalanceController extends Controller
                 ->exists();
 
             if ($exists) {
-                $errors[] = ['sheet' => 'Sheet 1', 'row' => $lineNumber, 'message' => "Opening balance untuk klien '{$namaKlien}' periode {$periodeAwal} s/d {$periodeAkhir} sudah ada."];
+                $skippedOb++;
                 continue;
             }
 
@@ -580,6 +576,7 @@ class OpeningBalanceController extends Controller
             return $this->errorResponse($message, 422, [
                 'total_ob'        => $totalOb,
                 'inserted_ob'     => 0,
+                'skipped_ob'      => $skippedOb,
                 'failed_ob'       => $failedOb,
                 'total_detail'    => $totalDetail,
                 'inserted_detail' => 0,
@@ -594,7 +591,7 @@ class OpeningBalanceController extends Controller
 
         DB::commit();
 
-        $message = "Import selesai. {$insertedOb} OB ditambahkan";
+        $message = "Import selesai. {$insertedOb} OB ditambahkan, {$skippedOb} dilewati (sudah ada)";
         if (!$isCsv) {
             $message .= ", {$insertedDetail} detail, {$insertedItem} item";
         }
@@ -603,6 +600,7 @@ class OpeningBalanceController extends Controller
         return $this->successResponse([
             'total_ob'       => $totalOb,
             'inserted_ob'    => $insertedOb,
+            'skipped_ob'     => $skippedOb,
             'failed_ob'      => 0,
             'total_detail'   => $totalDetail,
             'inserted_detail'=> $insertedDetail,
