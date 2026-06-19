@@ -73,19 +73,14 @@ class InvoiceService
     public function getMonthlyCarryover(int $klienArId, string $tanggalInvoice): float
     {
         $monthStart = Carbon::parse($tanggalInvoice)->startOfMonth()->toDateString();
-        $monthEnd   = Carbon::parse($tanggalInvoice)->endOfMonth()->toDateString();
 
+        // Hanya invoice reguler — OB adalah dokumen terpisah dan tidak masuk tagihan_periode_sebelumnya
         return (float) Invoice::where('klien_ar_id', $klienArId)
+            ->where('is_opening_balance', false)
             ->whereIn('status', ['TERKIRIM', 'SEBAGIAN'])
-            ->whereBetween('tanggal_invoice', [$monthStart, $monthEnd])
-            ->where(function ($q) {
-                $q->where('is_opening_balance', false)
-                    ->orWhere(function ($q2) {
-                        $q2->where('is_opening_balance', true)
-                            ->where('approval_status', 'APPROVED');
-                    });
-            })
-            ->selectRaw('COALESCE(SUM(GREATEST(0, CASE WHEN subtotal = 0 THEN sisa_tagihan ELSE subtotal - total_pembayaran - total_penyesuaian END)), 0) as total')
+            ->where('tanggal_invoice', '>=', $monthStart)
+            ->where('tanggal_invoice', '<=', $tanggalInvoice)
+            ->selectRaw('COALESCE(SUM(GREATEST(0, subtotal - total_pembayaran - total_penyesuaian)), 0) as total')
             ->value('total') ?? 0.0;
     }
 
@@ -464,11 +459,18 @@ class InvoiceService
         $totalPenyesuaian = (float) $invoice->total_penyesuaian;
         $subtotal         = (float) $invoice->subtotal;
 
+        // Untuk invoice reguler, hitung ulang tagihan_periode_sebelumnya dari riwayat aktual
+        // agar data yang salah (misal OB-carryover terbalik) bisa dikoreksi lewat recalculate.
+        $newCarryover    = $invoice->is_opening_balance ? 0.0 : $this->sumOwnSisaBeforeInvoice($invoice);
+        $newTotalTagihan = $invoice->is_opening_balance
+            ? (float) $invoice->total_tagihan   // OB: total_tagihan akan dikoreksi oleh cascadeCarryoverToNext
+            : $subtotal + $newCarryover;
+
         // Penyesuaian manual (write-off) diperlakukan setara pembayaran saat
         // menghitung sisa & status, tapi disimpan terpisah (tidak menambah total_pembayaran).
         $terbayarEfektif = (float) $totalPembayaran + $totalPenyesuaian;
 
-        $rawSisa = max(0, (float) $invoice->total_tagihan - $terbayarEfektif);
+        $rawSisa = max(0, $newTotalTagihan - $terbayarEfektif);
         // Regular invoice (subtotal > 0): LUNAS saat subtotal terbayar lunas.
         // OB invoice (subtotal = 0): LUNAS saat total_tagihan terbayar (perilaku lama).
         $isLunas = $subtotal > 0
@@ -486,12 +488,19 @@ class InvoiceService
             $sisaTagihan = $rawSisa;
         }
 
-        $invoice->update([
+        $updateData = [
             'total_pembayaran' => $totalPembayaran,
             'sisa_tagihan'     => $sisaTagihan,
             'status'           => $status,
             'updated_by'       => auth()->id(),
-        ]);
+        ];
+
+        if (!$invoice->is_opening_balance) {
+            $updateData['tagihan_periode_sebelumnya'] = $newCarryover;
+            $updateData['total_tagihan']              = $newTotalTagihan;
+        }
+
+        $invoice->update($updateData);
 
         $this->cascadeCarryoverToNext($invoice->fresh());
     }
@@ -505,7 +514,9 @@ class InvoiceService
     {
         $monthStart = Carbon::parse($invoice->tanggal_invoice)->startOfMonth()->toDateString();
 
+        // Hanya invoice reguler — OB adalah dokumen terpisah dan tidak masuk tagihan_periode_sebelumnya
         return (float) Invoice::where('klien_ar_id', $invoice->klien_ar_id)
+            ->where('is_opening_balance', false)
             ->whereIn('status', ['TERKIRIM', 'SEBAGIAN'])
             ->where('tanggal_invoice', '>=', $monthStart)
             ->where(function ($q) use ($invoice) {
@@ -515,14 +526,7 @@ class InvoiceService
                             ->where('id', '<', $invoice->id);
                     });
             })
-            ->where(function ($q) {
-                $q->where('is_opening_balance', false)
-                    ->orWhere(function ($q2) {
-                        $q2->where('is_opening_balance', true)
-                            ->where('approval_status', 'APPROVED');
-                    });
-            })
-            ->selectRaw('COALESCE(SUM(GREATEST(0, CASE WHEN subtotal = 0 THEN sisa_tagihan ELSE subtotal - total_pembayaran - total_penyesuaian END)), 0) as total')
+            ->selectRaw('COALESCE(SUM(GREATEST(0, subtotal - total_pembayaran - total_penyesuaian)), 0) as total')
             ->value('total') ?? 0.0;
     }
 
@@ -541,6 +545,30 @@ class InvoiceService
             ->first();
 
         if (!$nextInvoice) {
+            return;
+        }
+
+        // OB tidak boleh mewarisi carryover dari invoice reguler.
+        // Jika OB sudah terlanjur memiliki tagihan_periode_sebelumnya yang salah, koreksi.
+        // Setelah koreksi (atau jika sudah benar), selalu teruskan cascade ke invoice reguler sesudahnya.
+        if ($nextInvoice->is_opening_balance) {
+            if ((float) $nextInvoice->tagihan_periode_sebelumnya > 0.01) {
+                $subtotalOb   = (float) $nextInvoice->subtotal;
+                $terbayarEfOb = (float) $nextInvoice->total_pembayaran + (float) $nextInvoice->total_penyesuaian;
+                $rawSisaOb    = max(0, $subtotalOb - $terbayarEfOb);
+                $isLunasOb    = $terbayarEfOb >= $subtotalOb;
+
+                $nextInvoice->update([
+                    'tagihan_periode_sebelumnya' => 0,
+                    'total_tagihan'              => $subtotalOb,
+                    'sisa_tagihan'               => $isLunasOb ? 0 : $rawSisaOb,
+                    'status'                     => $terbayarEfOb <= 0 ? 'TERKIRIM' : ($isLunasOb ? 'LUNAS' : 'SEBAGIAN'),
+                    'updated_by'                 => auth()->id(),
+                ]);
+                UploadInvoiceToGDriveJob::dispatch($nextInvoice->id);
+            }
+            // Lanjutkan cascade melewati OB agar invoice reguler sesudahnya ikut diperbarui
+            $this->cascadeCarryoverToNext($nextInvoice->fresh());
             return;
         }
 

@@ -211,6 +211,15 @@ class InvoiceController extends Controller
         return $this->successResponse(new InvoiceResource($updated), 'Status invoice berhasil diubah');
     }
 
+    public function recalculate(Invoice $invoice): JsonResponse
+    {
+        $this->service->recalculate($invoice->fresh());
+        return $this->successResponse(
+            new InvoiceResource($this->service->findOrFail($invoice->id)),
+            'Recalculate invoice berhasil'
+        );
+    }
+
     public function destroy(int $id): JsonResponse
     {
         $invoice = $this->service->findOrFail($id);
