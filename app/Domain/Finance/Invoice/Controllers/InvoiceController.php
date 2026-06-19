@@ -96,7 +96,8 @@ class InvoiceController extends Controller
             'tanggal'     => ['nullable', 'date'],
         ]);
 
-        $query = \App\Models\Invoice::where('klien_ar_id', $validated['klien_ar_id'])
+        $query = \App\Models\Invoice::with('items.barang')
+            ->where('klien_ar_id', $validated['klien_ar_id'])
             ->whereIn('status', ['TERKIRIM', 'SEBAGIAN'])
             ->where('is_opening_balance', false);
 
@@ -119,6 +120,16 @@ class InvoiceController extends Controller
                 'keterangan'      => $inv->keterangan,
                 'periode_awal'    => $inv->periode_awal?->toDateString(),
                 'periode_akhir'   => $inv->periode_akhir?->toDateString(),
+                'items'           => $inv->items->map(fn($item) => [
+                    'barang_id'    => $item->barang_id,
+                    'kode_barang'  => $item->barang?->kode_barang ?? '',
+                    'nama_barang'  => $item->nama_barang,
+                    'qty'          => (float) $item->qty,
+                    'satuan'       => $item->satuan ?? 'pcs',
+                    'harga_satuan' => (float) $item->harga_satuan,
+                    'subtotal'     => (float) $item->subtotal,
+                    'keterangan'   => $item->keterangan ?? '',
+                ])->values()->all(),
             ]);
 
         return $this->successResponse($invoices);
