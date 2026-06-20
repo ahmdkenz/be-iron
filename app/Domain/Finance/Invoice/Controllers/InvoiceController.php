@@ -654,18 +654,21 @@ class InvoiceController extends Controller
         $totalData         = 0;
         $errors            = [];
         $invoiceMapping    = [];
+        $skippedUruts      = [];
         $invoicesWithItems = [];
 
         DB::beginTransaction();
         try {
 
         // ── Pass 1: Buat invoice dari Sheet 1 "Data Invoice" ──
-        $lineNumber = 0;
+        $lineNumber    = 0;
+        $headerSkipped = false;
         foreach ($rows1 as $row) {
             $lineNumber++;
             $firstCell = trim((string) ($row[0] ?? ''));
 
             if (str_starts_with($firstCell, '#')) continue;
+            if (!$headerSkipped) { $headerSkipped = true; continue; }
             if (str_starts_with($firstCell, '[CONTOH]')) continue;
             if ($firstCell === '' && count(array_filter(array_map('strval', $row))) === 0) continue;
 
@@ -702,11 +705,11 @@ class InvoiceController extends Controller
             if (!$periodeAkhir) $periodeAkhir = Carbon::parse($tanggalKirim)->endOfMonth()->format('Y-m-d');
 
             $existingInvoice = Invoice::where('klien_ar_id', $klien->id)
-                ->where('periode_awal', $periodeAwal)
-                ->where('periode_akhir', $periodeAkhir)
+                ->whereDate('tanggal_kirim_barang', $tanggalKirim)
                 ->where('is_opening_balance', false)
                 ->first();
             if ($existingInvoice) {
+                $skippedUruts[$noUrut] = true;
                 $skippedCount++;
                 continue;
             }
@@ -749,12 +752,14 @@ class InvoiceController extends Controller
         }
 
         // ── Pass 2: Buat item dari Sheet 2 "Item Invoice" ──
-        $lineNumber2 = 0;
+        $lineNumber2   = 0;
+        $headerSkipped = false;
         foreach ($rows2 as $row) {
             $lineNumber2++;
             $firstCell = trim((string) ($row[0] ?? ''));
 
             if (str_starts_with($firstCell, '#')) continue;
+            if (!$headerSkipped) { $headerSkipped = true; continue; }
             if (str_starts_with($firstCell, '[CONTOH]')) continue;
             if ($firstCell === '' && count(array_filter(array_map('strval', $row))) === 0) continue;
 
@@ -773,6 +778,7 @@ class InvoiceController extends Controller
                 continue;
             }
             if (!isset($invoiceMapping[$noUrutInvoice])) {
+                if (isset($skippedUruts[$noUrutInvoice])) continue;
                 $errors[] = ['sheet' => 'Item Invoice', 'row' => $lineNumber2, 'message' => "no_urut_invoice '{$noUrutInvoice}' tidak ditemukan di Sheet 'Data Invoice'"];
                 continue;
             }
@@ -877,6 +883,7 @@ class InvoiceController extends Controller
         $totalData      = 0;
         $errors         = [];
         $invoiceMapping = [];
+        $skippedUruts   = [];
 
         DB::beginTransaction();
         try {
@@ -933,12 +940,15 @@ class InvoiceController extends Controller
                 continue;
             }
 
+            if (!$periodeAwal)  $periodeAwal  = Carbon::parse($tanggal)->startOfMonth()->format('Y-m-d');
+            if (!$periodeAkhir) $periodeAkhir = Carbon::parse($tanggal)->endOfMonth()->format('Y-m-d');
+
             $existingInvoice = Invoice::where('klien_ar_id', $klien->id)
-                ->where('periode_awal', $periodeAwal)
-                ->where('periode_akhir', $periodeAkhir)
+                ->whereDate('tanggal_invoice', $tanggal)
                 ->where('is_opening_balance', false)
                 ->first();
             if ($existingInvoice) {
+                $skippedUruts[$noUrut] = true;
                 $skippedCount++;
                 continue;
             }
@@ -1006,6 +1016,7 @@ class InvoiceController extends Controller
                 continue;
             }
             if (!isset($invoiceMapping[$noUrutInvoice])) {
+                if (isset($skippedUruts[$noUrutInvoice])) continue;
                 $errors[] = ['sheet' => 'Item Invoice', 'row' => $lineNumber, 'message' => "no_urut_invoice '{$noUrutInvoice}' tidak ditemukan di Sheet Invoice"];
                 continue;
             }

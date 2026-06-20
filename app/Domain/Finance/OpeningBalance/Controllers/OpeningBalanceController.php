@@ -290,6 +290,8 @@ class OpeningBalanceController extends Controller
         $detailMap = [];
         // Set: no_urut yang ditemukan di Sheet 2 (untuk cleanup OB tanpa detail)
         $noUrutObWithSheet2Rows = [];
+        // Set: no_urut OB yang di-skip karena sudah ada (untuk silent-skip Sheet 2 & 3)
+        $skippedObUruts = [];
 
         DB::beginTransaction();
         try {
@@ -365,6 +367,7 @@ class OpeningBalanceController extends Controller
                 ->exists();
 
             if ($exists) {
+                if ($noUrut !== '') $skippedObUruts[$noUrut] = true;
                 $skippedOb++;
                 continue;
             }
@@ -402,6 +405,7 @@ class OpeningBalanceController extends Controller
                 $noUrutObWithSheet2Rows[$noUrutOb] = true;
 
                 if (!isset($obMap[$noUrutOb])) {
+                    if (isset($skippedObUruts[$noUrutOb])) continue;
                     $errors[] = ['sheet' => 'Sheet 2', 'row' => $lineNumber, 'message' => "no_urut_ob '{$noUrutOb}' tidak ditemukan atau Opening Balance-nya gagal dibuat."];
                     continue;
                 }
@@ -505,6 +509,7 @@ class OpeningBalanceController extends Controller
                 $mapKey        = "{$noUrutOb}|{$noInvoiceAsal}";
 
                 if (!isset($detailMap[$mapKey])) {
+                    if (isset($skippedObUruts[$noUrutOb])) continue;
                     $errors[] = ['sheet' => 'Sheet 3', 'row' => $lineNumber, 'message' => "Referensi no_urut_ob '{$noUrutOb}' + no_invoice_asal '{$noInvoiceAsal}' tidak ditemukan di Sheet 2."];
                     continue;
                 }
