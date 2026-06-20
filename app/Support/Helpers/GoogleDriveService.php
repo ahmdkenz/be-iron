@@ -20,7 +20,6 @@ class GoogleDriveService
         $client->setAccessType('offline');
         $client->addScope(GoogleDrive::DRIVE);
 
-        // Gunakan refresh token untuk mendapatkan access token otomatis
         $client->fetchAccessTokenWithRefreshToken(config('services.google_drive.refresh_token'));
 
         $this->drive = new GoogleDrive($client);
