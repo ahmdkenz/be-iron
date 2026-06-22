@@ -503,6 +503,99 @@ class InvoiceService
         $invoice->update($updateData);
 
         $this->cascadeCarryoverToNext($invoice->fresh());
+
+        // Invoice reguler bisa direferensikan oleh baris OB (snapshot statis) sebagai
+        // "invoice periode sebelumnya". Sinkronkan snapshot tersebut agar nominal OB
+        // ikut ter-recalculate saat invoice reguler dibayar / dibatalkan.
+        if (!$invoice->is_opening_balance) {
+            $this->syncOpeningBalanceSnapshots($invoice->fresh());
+        }
+    }
+
+    /**
+     * Entry point publik untuk backfill: sinkronkan snapshot OB dari satu invoice reguler.
+     */
+    public function resyncOpeningBalanceSnapshots(Invoice $invoice): void
+    {
+        if ($invoice->is_opening_balance) {
+            return;
+        }
+
+        $this->syncOpeningBalanceSnapshots($invoice);
+    }
+
+    /**
+     * Perbarui baris OB (tb_opening_balance_detail) yang merujuk invoice reguler ini
+     * via no_invoice_asal, lalu hitung ulang OB yang terdampak.
+     */
+    private function syncOpeningBalanceSnapshots(Invoice $invoice): void
+    {
+        $sisaAsal = max(0, (float) $invoice->subtotal
+            - (float) $invoice->total_pembayaran
+            - (float) $invoice->total_penyesuaian);
+
+        $details = OpeningBalanceDetail::where('no_invoice_asal', $invoice->no_invoice)
+            ->whereHas('invoice', fn($q) => $q->where('klien_ar_id', $invoice->klien_ar_id))
+            ->get();
+
+        if ($details->isEmpty()) {
+            return;
+        }
+
+        $affectedObIds = [];
+        foreach ($details as $detail) {
+            if (abs((float) $detail->sisa_tagihan_asal - $sisaAsal) < 0.01) {
+                continue;
+            }
+
+            $detail->update([
+                'sisa_tagihan_asal' => $sisaAsal,
+                'updated_by'        => auth()->id(),
+            ]);
+
+            $affectedObIds[$detail->invoice_id] = true;
+        }
+
+        foreach (array_keys($affectedObIds) as $obId) {
+            $ob = Invoice::find($obId);
+            if ($ob) {
+                $this->recomputeOpeningBalanceFromDetails($ob);
+            }
+        }
+    }
+
+    /**
+     * Hitung ulang nominal OB dari sum sisa_tagihan_asal baris-barisnya.
+     * Tidak memanggil recalculate()/cascade pada OB agar tidak terjadi rekursi.
+     */
+    private function recomputeOpeningBalanceFromDetails(Invoice $ob): void
+    {
+        $newSubtotal = (float) $ob->openingBalanceDetails()->sum('sisa_tagihan_asal');
+        $terbayarEf  = (float) $ob->total_pembayaran + (float) $ob->total_penyesuaian;
+
+        $rawSisa = max(0, $newSubtotal - $terbayarEf);
+        $isLunas = $rawSisa <= 0;
+
+        $updateData = [
+            'subtotal'      => $newSubtotal,
+            'total_tagihan' => $newSubtotal,
+            'sisa_tagihan'  => $isLunas ? 0 : $rawSisa,
+            'updated_by'    => auth()->id(),
+        ];
+
+        // Hanya ubah status untuk OB yang sudah disetujui (masuk financial flow).
+        // OB DRAFT/PENDING tidak boleh dipaksa menjadi TERKIRIM/LUNAS.
+        if ($ob->approval_status === 'APPROVED') {
+            $updateData['status'] = match (true) {
+                $terbayarEf <= 0 => $isLunas ? 'LUNAS' : 'TERKIRIM',
+                $isLunas         => 'LUNAS',
+                default          => 'SEBAGIAN',
+            };
+        }
+
+        $ob->update($updateData);
+
+        UploadInvoiceToGDriveJob::dispatch($ob->id);
     }
 
     public function propagateCarryover(Invoice $invoice): void
