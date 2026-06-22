@@ -6,20 +6,15 @@ use App\Domain\Master\Resto\DTO\RestoDTO;
 use App\Domain\Master\Resto\Requests\StoreRestoRequest;
 use App\Domain\Master\Resto\Requests\UpdateRestoRequest;
 use App\Domain\Master\Resto\Resources\RestoResource;
+use App\Domain\Master\Resto\Jobs\ImportRestoJob;
 use App\Domain\Master\Resto\Services\RestoService;
 use App\Http\Controllers\Controller;
-use App\Models\Brand;
-use App\Models\Investor;
-use App\Models\Karyawan;
-use App\Models\Perusahaan;
+use App\Models\RestoImportBatch;
 use App\Support\Helpers\RoleHelper;
 use App\Support\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Validator;
 use PhpOffice\PhpSpreadsheet\Cell\DataType;
-use PhpOffice\PhpSpreadsheet\IOFactory;
-use PhpOffice\PhpSpreadsheet\Shared\Date as PhpSpreadsheetDate;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
 use PhpOffice\PhpSpreadsheet\Style\Border;
@@ -240,6 +235,10 @@ class RestoController extends Controller
             ->deleteFileAfterSend(true);
     }
 
+    /**
+     * Terima file import lalu proses di latar belakang (queue).
+     * Mengembalikan batch_id yang dipakai frontend untuk polling progress.
+     */
     public function import(Request $request): JsonResponse
     {
         $this->forbidReadOnlyMutation();
@@ -249,249 +248,58 @@ class RestoController extends Controller
         }
 
         $request->validate([
-            'file' => ['required', 'file', 'mimes:csv,txt,xlsx,xls', 'max:2048'],
+            'file' => ['required', 'file', 'mimes:csv,txt,xlsx,xls', 'max:10240'],
         ]);
 
-        $file      = $request->file('file');
-        $extension = strtolower($file->getClientOriginalExtension());
-        $path      = $file->getRealPath();
+        // Bersihkan batch yang nyangkut (worker dihentikan host di tengah proses).
+        RestoImportBatch::failStale();
 
-        $rows = in_array($extension, ['xlsx', 'xls'])
-            ? $this->parseXlsx($path)
-            : $this->parseCsv($path);
+        $path = $request->file('file')->store('resto-imports');
 
-        if (in_array($extension, ['xlsx', 'xls']) && empty($rows)) {
-            return $this->errorResponse(
-                'Header kolom "kode_resto" tidak ditemukan dalam file. Pastikan menggunakan template import yang disediakan dan tidak mengubah nama kolom pada baris header.',
-                422
-            );
-        }
+        $batch = RestoImportBatch::create([
+            'user_id'   => auth()->id(),
+            'file_path' => $path,
+            'status'    => 'queued',
+        ]);
 
-        if (count($rows) > 1000) {
-            return $this->errorResponse('File melebihi batas maksimal 1.000 baris data.', 422);
-        }
-
-        $insertedCount = 0;
-        $updatedCount  = 0;
-        $totalData     = 0;
-        $errors        = [];
-        $lineNumber    = 0;
-        $headerSkipped = false;
-
-        foreach ($rows as $row) {
-            $lineNumber++;
-            $firstCell = trim((string) ($row[0] ?? ''));
-
-            if (str_starts_with($firstCell, '#')) continue;
-
-            if (!$headerSkipped) {
-                $headerSkipped = true;
-                continue;
-            }
-
-            if (str_starts_with($firstCell, '[CONTOH]')) continue;
-
-            if ($firstCell === '' && count(array_filter(array_map('strval', $row))) === 0) continue;
-
-            $totalData++;
-
-            $kodeResto      = $this->importValue($row[0] ?? '') ?? '';
-            $namaResto      = trim((string) ($row[1] ?? ''));
-            $namaInvestor   = $this->importValue($row[2] ?? '') ?? '';
-            $namaPerusahaan = $this->importValue($row[3] ?? '') ?? '';
-            $namaBrand      = $this->importValue($row[4] ?? '') ?? '';
-            $namaPic        = $this->importValue($row[5] ?? '') ?? '';
-            // cols 6,7,8 = supervisor, no_hp_supervisor, stokis (no lookup needed)
-
-            $investorId   = null;
-            $perusahaanId = null;
-            $brandId      = null;
-            $karyawanId   = null;
-            $rowErrors    = [];
-
-            if ($namaInvestor) {
-                $investor = Investor::whereRaw('LOWER(nama_investor) = ?', [strtolower($namaInvestor)])->first();
-                if (!$investor) {
-                    $rowErrors[] = "Investor '{$namaInvestor}' tidak ditemukan";
-                } else {
-                    $investorId = $investor->id;
-                }
-            }
-
-            if ($namaPerusahaan) {
-                $perusahaan = Perusahaan::whereRaw('LOWER(nama_perusahaan) = ?', [strtolower($namaPerusahaan)])
-                    ->orWhereRaw('LOWER(nama_singkatan_perusahaan) = ?', [strtolower($namaPerusahaan)])
-                    ->first();
-                if (!$perusahaan) {
-                    $rowErrors[] = "Entitas '{$namaPerusahaan}' tidak ditemukan";
-                } else {
-                    $perusahaanId = $perusahaan->id;
-                }
-            }
-
-            if ($namaBrand) {
-                $brand = Brand::whereRaw('LOWER(nama_brand) = ?', [strtolower($namaBrand)])->first();
-                if (!$brand) {
-                    $rowErrors[] = "Brand '{$namaBrand}' tidak ditemukan";
-                } else {
-                    $brandId = $brand->id;
-                }
-            }
-
-            if ($namaPic) {
-                $karyawan = Karyawan::whereRaw('LOWER(nama_karyawan) = ?', [strtolower($namaPic)])->first();
-                if (!$karyawan) {
-                    $rowErrors[] = "PIC (karyawan) '{$namaPic}' tidak ditemukan";
-                } else {
-                    $karyawanId = $karyawan->id;
-                }
-            }
-
-            if (!empty($rowErrors)) {
-                $errors[] = ['row' => $lineNumber, 'message' => implode('; ', $rowErrors)];
-                continue;
-            }
-
-            $existing = \App\Models\Resto::where('nama_resto', $namaResto)->latest()->first();
-
-            if (!$existing && $kodeResto === '') {
-                $errors[] = ['row' => $lineNumber, 'message' => "kode_resto wajib diisi untuk data baru '{$namaResto}'"];
-                continue;
-            }
-
-            $data = [
-                'nama_resto'       => $namaResto,
-                'kode_resto'       => $kodeResto ?: null,
-                'investor_id'      => $investorId,
-                'perusahaan_id'    => $perusahaanId,
-                'brand_id'         => $brandId,
-                'karyawan_id'      => $karyawanId,
-                'supervisor'       => $this->importValue($row[6] ?? ''),
-                'no_hp_supervisor' => $this->importValue($row[7] ?? ''),
-                'stokis'           => $this->importValue($row[8] ?? ''),
-                'area'             => $this->importValue($row[9] ?? ''),
-                'kota'             => $this->importValue($row[10] ?? ''),
-                'alamat'           => $this->importValue($row[11] ?? ''),
-                'no_telp'          => $this->importValue($row[12] ?? ''),
-                'tgl_aktif'        => $this->importDate($row[13] ?? ''),
-                'keterangan'       => $this->importValue($row[14] ?? ''),
-                'status'           => isset($row[15]) && trim((string) $row[15]) !== '' ? (bool) (int) $row[15] : true,
-            ];
-
-            $validator = Validator::make($data, [
-                'nama_resto'       => ['required', 'string', 'max:150'],
-                'kode_resto'       => ['nullable', 'string', 'max:100'],
-                'investor_id'      => ['nullable', 'integer'],
-                'perusahaan_id'    => ['nullable', 'integer'],
-                'brand_id'         => ['nullable', 'integer'],
-                'karyawan_id'      => ['nullable', 'integer'],
-                'supervisor'       => ['nullable', 'string', 'max:150'],
-                'no_hp_supervisor' => ['nullable', 'string', 'max:20'],
-                'stokis'           => ['nullable', 'string', 'max:150'],
-                'area'             => ['nullable', 'string', 'max:100'],
-                'kota'             => ['nullable', 'string', 'max:100'],
-                'alamat'           => ['nullable', 'string'],
-                'no_telp'          => ['nullable', 'string', 'max:20'],
-                'tgl_aktif'        => ['nullable', 'date'],
-                'keterangan'       => ['nullable', 'string'],
-                'status'           => ['nullable', 'boolean'],
-            ]);
-
-            if ($validator->fails()) {
-                $errors[] = ['row' => $lineNumber, 'message' => implode('; ', $validator->errors()->all())];
-                continue;
-            }
-
-            try {
-                if ($existing) {
-                    $this->service->update($existing, RestoDTO::fromRequest($data));
-                    $updatedCount++;
-                } else {
-                    $this->service->create(RestoDTO::fromRequest($data));
-                    $insertedCount++;
-                }
-            } catch (\Exception $e) {
-                $errors[] = ['row' => $lineNumber, 'message' => 'Gagal menyimpan: ' . $e->getMessage()];
-            }
-        }
-
-        $failed = $totalData - $insertedCount - $updatedCount;
+        ImportRestoJob::dispatch($batch->id);
 
         return $this->successResponse([
-            'total'    => $totalData,
-            'inserted' => $insertedCount,
-            'updated'  => $updatedCount,
-            'failed'   => $failed,
-            'errors'   => $errors,
-        ], "Import selesai. {$insertedCount} ditambahkan, {$updatedCount} diperbarui, {$failed} gagal.");
+            'batch_id' => $batch->id,
+            'status'   => $batch->status,
+        ], 'File diterima. Import sedang diproses di latar belakang.', 202);
     }
 
-    private function parseXlsx(string $path): array
+    /**
+     * Status & progress sebuah batch import (di-poll frontend).
+     */
+    public function importStatus(string $id): JsonResponse
     {
-        $spreadsheet = IOFactory::load($path);
-        $sheet       = $spreadsheet->getActiveSheet();
-        $rows        = [];
-        $headerFound = false;
+        // Bersihkan batch yang nyangkut (worker dihentikan host di tengah proses).
+        RestoImportBatch::failStale();
 
-        foreach ($sheet->getRowIterator() as $rowObj) {
-            $cellIter = $rowObj->getCellIterator();
-            $cellIter->setIterateOnlyExistingCells(false);
-
-            $cells = [];
-            foreach ($cellIter as $cell) {
-                $cells[] = $this->xlsxCellToString($cell);
-            }
-
-            $cells     = array_slice($cells, 0, 16);
-            $firstCell = trim($cells[0] ?? '');
-
-            if (!$headerFound) {
-                if (strtolower($firstCell) === 'kode_resto') {
-                    $headerFound = true;
-                    $rows[]      = $cells;
-                }
-                continue;
-            }
-
-            $rows[] = $cells;
+        $batch = RestoImportBatch::find($id);
+        if (!$batch) {
+            return $this->notFoundResponse('Batch import tidak ditemukan');
         }
 
-        return $rows;
-    }
-
-    private function parseCsv(string $path): array
-    {
-        $rows   = [];
-        $handle = fopen($path, 'r');
-
-        $bom = fread($handle, 3);
-        if ($bom !== "\xEF\xBB\xBF") {
-            rewind($handle);
+        $user = auth()->user();
+        if ($batch->user_id !== $user->id && !RoleHelper::hasAnyRole($user, ['ADMIN', 'MANAGER', 'SUPERVISOR'])) {
+            return $this->unauthorizedResponse();
         }
 
-        while (($row = fgetcsv($handle)) !== false) {
-            $rows[] = $row;
-        }
-        fclose($handle);
-        return $rows;
-    }
-
-    private function xlsxCellToString(\PhpOffice\PhpSpreadsheet\Cell\Cell $cell): string
-    {
-        $value = $cell->getValue();
-
-        if ($value === null) return '';
-        if (is_bool($value)) return $value ? '1' : '0';
-        if (is_int($value)) return (string) $value;
-        if (is_float($value)) {
-            if (PhpSpreadsheetDate::isDateTime($cell)) {
-                return PhpSpreadsheetDate::excelToDateTimeObject($value)->format('d-m-Y');
-            }
-            return fmod($value, 1.0) === 0.0
-                ? sprintf('%.0f', $value)
-                : (string) $value;
-        }
-        return trim((string) $value);
+        return $this->successResponse([
+            'batch_id'       => $batch->id,
+            'status'         => $batch->status,
+            'processed'      => $batch->processed,
+            'progress_total' => $batch->total,
+            'total'          => $batch->total_data,
+            'inserted'       => $batch->inserted,
+            'updated'        => $batch->updated,
+            'failed'         => $batch->failed,
+            'errors'         => $batch->errors ?? [],
+            'message'        => $batch->message,
+        ]);
     }
 
     private function buildDataSheet(Worksheet $sheet): void
@@ -757,24 +565,6 @@ class RestoController extends Controller
         }
     }
 
-    private function importValue(mixed $val): ?string
-    {
-        $s = trim((string) $val);
-        return ($s === '' || $s === '-') ? null : $s;
-    }
-
-    private function importDate(mixed $val): ?string
-    {
-        $s = trim((string) $val);
-        if ($s === '' || $s === '-') return null;
-
-        // DD-MM-YYYY → Y-m-d
-        if (preg_match('/^(\d{1,2})-(\d{1,2})-(\d{4})$/', $s, $m)) {
-            return sprintf('%04d-%02d-%02d', (int) $m[3], (int) $m[2], (int) $m[1]);
-        }
-
-        return $s; // pass through, let validator catch invalid formats
-    }
 
     private function forbidReadOnlyMutation(): void
     {

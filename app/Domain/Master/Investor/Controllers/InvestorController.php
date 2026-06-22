@@ -3,20 +3,18 @@
 namespace App\Domain\Master\Investor\Controllers;
 
 use App\Domain\Master\Investor\DTO\InvestorDTO;
+use App\Domain\Master\Investor\Jobs\ImportInvestorJob;
 use App\Domain\Master\Investor\Requests\StoreInvestorRequest;
 use App\Domain\Master\Investor\Requests\UpdateInvestorRequest;
 use App\Domain\Master\Investor\Resources\InvestorResource;
 use App\Domain\Master\Investor\Services\InvestorService;
 use App\Http\Controllers\Controller;
+use App\Models\InvestorImportBatch;
 use App\Support\Helpers\RoleHelper;
 use App\Support\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Validator;
-use Illuminate\Validation\Rule;
 use PhpOffice\PhpSpreadsheet\Cell\DataType;
-use PhpOffice\PhpSpreadsheet\IOFactory;
-use PhpOffice\PhpSpreadsheet\Shared\Date as PhpSpreadsheetDate;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
 use PhpOffice\PhpSpreadsheet\Style\Border;
@@ -218,6 +216,10 @@ class InvestorController extends Controller
             ->deleteFileAfterSend(true);
     }
 
+    /**
+     * Terima file import lalu proses di latar belakang (queue).
+     * Mengembalikan batch_id yang dipakai frontend untuk polling progress.
+     */
     public function import(Request $request): JsonResponse
     {
         $this->forbidReadOnlyMutation();
@@ -227,178 +229,58 @@ class InvestorController extends Controller
         }
 
         $request->validate([
-            'file' => ['required', 'file', 'mimes:csv,txt,xlsx,xls', 'max:2048'],
+            'file' => ['required', 'file', 'mimes:csv,txt,xlsx,xls', 'max:10240'],
         ]);
 
-        $file      = $request->file('file');
-        $extension = strtolower($file->getClientOriginalExtension());
-        $path      = $file->getRealPath();
+        // Bersihkan batch yang nyangkut (worker dihentikan host di tengah proses).
+        InvestorImportBatch::failStale();
 
-        $rows = in_array($extension, ['xlsx', 'xls'])
-            ? $this->parseXlsx($path)
-            : $this->parseCsv($path);
+        $path = $request->file('file')->store('investor-imports');
 
-        if (in_array($extension, ['xlsx', 'xls']) && empty($rows)) {
-            return $this->errorResponse(
-                'Header kolom "nama_investor" tidak ditemukan dalam file. Pastikan menggunakan template import yang disediakan dan tidak mengubah nama kolom pada baris header.',
-                422
-            );
-        }
+        $batch = InvestorImportBatch::create([
+            'user_id'   => auth()->id(),
+            'file_path' => $path,
+            'status'    => 'queued',
+        ]);
 
-        $insertedCount = 0;
-        $updatedCount  = 0;
-        $totalData     = 0;
-        $errors        = [];
-        $lineNumber    = 0;
-        $headerSkipped = false;
-
-        foreach ($rows as $row) {
-            $lineNumber++;
-            $firstCell = trim((string) ($row[0] ?? ''));
-
-            if (str_starts_with($firstCell, '#')) continue;
-
-            if (!$headerSkipped) {
-                $headerSkipped = true;
-                continue;
-            }
-
-            if (str_starts_with($firstCell, '[CONTOH]')) continue;
-
-            if ($firstCell === '' && count(array_filter(array_map('strval', $row))) === 0) continue;
-
-            $totalData++;
-
-            $data = [
-                'nama_investor'   => trim((string) ($row[0] ?? '')),
-                'ktp'             => $this->importValue($row[1] ?? ''),
-                'npwp'            => $this->importValue($row[2] ?? ''),
-                'no_hp'           => $this->importValue($row[3] ?? ''),
-                'pengelola'       => $this->importValue($row[4] ?? ''),
-                'no_hp_pengelola' => $this->importValue($row[5] ?? ''),
-                'kode_cabang'     => $this->importValue($row[6] ?? ''),
-                'id_cabang'       => $this->importValue($row[7] ?? ''),
-                'status'          => isset($row[8]) && trim((string) $row[8]) !== '' ? (bool) (int) $row[8] : true,
-            ];
-
-            $existing = \App\Models\Investor::where('nama_investor', $data['nama_investor'])->latest()->first();
-
-            $uniqueKtp  = $existing
-                ? Rule::unique('tb_investor', 'ktp')->ignore($existing->id)
-                : 'unique:tb_investor,ktp';
-            $uniqueNpwp = $existing
-                ? Rule::unique('tb_investor', 'npwp')->ignore($existing->id)
-                : 'unique:tb_investor,npwp';
-
-            $validator = Validator::make($data, [
-                'nama_investor'   => ['required', 'string', 'max:150'],
-                'ktp'             => ['nullable', 'string', 'max:20', $uniqueKtp],
-                'npwp'            => ['nullable', 'string', 'max:20', $uniqueNpwp],
-                'no_hp'           => ['nullable', 'string', 'max:20'],
-                'pengelola'       => ['nullable', 'string', 'max:150'],
-                'no_hp_pengelola' => ['nullable', 'string', 'max:20'],
-                'kode_cabang'     => ['nullable', 'string', 'max:50'],
-                'id_cabang'       => ['nullable', 'string', 'max:50'],
-                'status'          => ['nullable', 'boolean'],
-            ]);
-
-            if ($validator->fails()) {
-                $errors[] = ['row' => $lineNumber, 'message' => implode('; ', $validator->errors()->all())];
-                continue;
-            }
-
-            try {
-                if ($existing) {
-                    $this->service->update($existing, InvestorDTO::fromRequest($data));
-                    $updatedCount++;
-                } else {
-                    $this->service->create(InvestorDTO::fromRequest($data));
-                    $insertedCount++;
-                }
-            } catch (\Exception $e) {
-                $errors[] = ['row' => $lineNumber, 'message' => 'Gagal menyimpan: ' . $e->getMessage()];
-            }
-        }
-
-        $failed = $totalData - $insertedCount - $updatedCount;
+        ImportInvestorJob::dispatch($batch->id);
 
         return $this->successResponse([
-            'total'    => $totalData,
-            'inserted' => $insertedCount,
-            'updated'  => $updatedCount,
-            'failed'   => $failed,
-            'errors'   => $errors,
-        ], "Import selesai. {$insertedCount} ditambahkan, {$updatedCount} diperbarui, {$failed} gagal.");
+            'batch_id' => $batch->id,
+            'status'   => $batch->status,
+        ], 'File diterima. Import sedang diproses di latar belakang.', 202);
     }
 
-    private function parseXlsx(string $path): array
+    /**
+     * Status & progress sebuah batch import (di-poll frontend).
+     */
+    public function importStatus(string $id): JsonResponse
     {
-        $spreadsheet = IOFactory::load($path);
-        $sheet       = $spreadsheet->getActiveSheet();
-        $rows        = [];
-        $headerFound = false;
+        // Bersihkan batch yang nyangkut (worker dihentikan host di tengah proses).
+        InvestorImportBatch::failStale();
 
-        foreach ($sheet->getRowIterator() as $rowObj) {
-            $cellIter = $rowObj->getCellIterator();
-            $cellIter->setIterateOnlyExistingCells(false);
-
-            $cells = [];
-            foreach ($cellIter as $cell) {
-                $cells[] = $this->xlsxCellToString($cell);
-            }
-
-            $cells     = array_slice($cells, 0, 9);
-            $firstCell = trim($cells[0] ?? '');
-
-            if (!$headerFound) {
-                // Locate the actual header row by column name
-                if (strtolower($firstCell) === 'nama_investor') {
-                    $headerFound = true;
-                    $rows[]      = $cells;
-                }
-                continue;
-            }
-
-            $rows[] = $cells;
+        $batch = InvestorImportBatch::find($id);
+        if (!$batch) {
+            return $this->notFoundResponse('Batch import tidak ditemukan');
         }
 
-        return $rows;
-    }
-
-    private function parseCsv(string $path): array
-    {
-        $rows   = [];
-        $handle = fopen($path, 'r');
-
-        // Strip UTF-8 BOM if present
-        $bom = fread($handle, 3);
-        if ($bom !== "\xEF\xBB\xBF") {
-            rewind($handle);
+        $user = auth()->user();
+        if ($batch->user_id !== $user->id && !RoleHelper::hasAnyRole($user, ['ADMIN', 'MANAGER', 'SUPERVISOR'])) {
+            return $this->unauthorizedResponse();
         }
 
-        while (($row = fgetcsv($handle)) !== false) {
-            $rows[] = $row;
-        }
-        fclose($handle);
-        return $rows;
-    }
-
-    private function xlsxCellToString(\PhpOffice\PhpSpreadsheet\Cell\Cell $cell): string
-    {
-        $value = $cell->getValue();
-
-        if ($value === null) return '';
-        if (is_bool($value)) return $value ? '1' : '0';
-        if (is_int($value)) return (string) $value;
-        if (is_float($value)) {
-            if (PhpSpreadsheetDate::isDateTime($cell)) {
-                return PhpSpreadsheetDate::excelToDateTimeObject($value)->format('d-m-Y');
-            }
-            return fmod($value, 1.0) === 0.0
-                ? sprintf('%.0f', $value)
-                : (string) $value;
-        }
-        return trim((string) $value);
+        return $this->successResponse([
+            'batch_id'       => $batch->id,
+            'status'         => $batch->status,
+            'processed'      => $batch->processed,
+            'progress_total' => $batch->total,
+            'total'          => $batch->total_data,
+            'inserted'       => $batch->inserted,
+            'updated'        => $batch->updated,
+            'failed'         => $batch->failed,
+            'errors'         => $batch->errors ?? [],
+            'message'        => $batch->message,
+        ]);
     }
 
     private function buildDataSheet(Worksheet $sheet): void
@@ -631,12 +513,6 @@ class InvestorController extends Controller
             $sheet->getRowDimension($row)->setRowHeight(18);
             $row++;
         }
-    }
-
-    private function importValue(mixed $val): ?string
-    {
-        $s = trim((string) $val);
-        return ($s === '' || $s === '-') ? null : $s;
     }
 
     private function forbidReadOnlyMutation(): void
