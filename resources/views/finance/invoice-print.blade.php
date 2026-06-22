@@ -337,7 +337,7 @@
     </tbody>
     <tfoot>
       <tr class="ob-grand-row">
-        <td colspan="5" class="text-right">TOTAL SALDO AWAL</td>
+        <td colspan="5" class="text-right">Tagihan Periode Sebelumnya</td>
         <td class="text-right">Rp {{ number_format($obSubtotal, 0, ',', '.') }}</td>
       </tr>
     </tfoot>

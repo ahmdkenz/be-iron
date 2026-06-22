@@ -225,11 +225,15 @@ class BankStatementController extends Controller
 
     public function invoiceCandidates(Request $request, BankStatementDetail $detail): JsonResponse
     {
-        $request->validate(['search' => ['nullable', 'string', 'max:100']]);
+        $request->validate([
+            'search' => ['nullable', 'string', 'max:100'],
+            'type'   => ['nullable', 'string', 'in:ob,regular'],
+        ]);
 
         $list = $this->service->getInvoiceCandidatesForNewPayment(
             $detail,
             $request->string('search') ?: null,
+            $request->string('type') ?: null,
         );
 
         return $this->successResponse($list);

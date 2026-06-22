@@ -473,6 +473,7 @@ class BankStatementService
     public function getInvoiceCandidatesForNewPayment(
         BankStatementDetail $detail,
         ?string $search = null,
+        ?string $type = null,
     ): \Illuminate\Support\Collection {
         $query = Invoice::with('klienAr')
             ->whereNotIn('status', ['LUNAS', 'DRAFT'])
@@ -484,6 +485,12 @@ class BankStatementService
                   });
             })
             ->orderByDesc('tanggal_invoice');
+
+        if ($type === 'ob') {
+            $query->where('is_opening_balance', true);
+        } elseif ($type === 'regular') {
+            $query->where('is_opening_balance', false);
+        }
 
         if ($search) {
             $query->where(function ($q) use ($search) {
