@@ -114,6 +114,7 @@ class InvoiceController extends Controller
                 'id'              => $inv->id,
                 'no_invoice'      => $inv->no_invoice,
                 'tanggal_invoice' => $inv->tanggal_invoice?->toDateString(),
+                'subtotal'        => (float) $inv->subtotal,
                 'total_tagihan'   => (float) $inv->total_tagihan,
                 'sisa_tagihan'    => max(0.0, (float) $inv->subtotal - (float) $inv->total_pembayaran - (float) $inv->total_penyesuaian),
                 'status'          => $inv->status,
