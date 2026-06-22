@@ -278,14 +278,30 @@ class BankStatementService
     {
         abort_if($detail->status_cocok !== 'MATCHED', 422, 'Hanya transaksi MATCHED yang dapat dibatalkan.');
 
-        $detail->update([
-            'status_cocok'    => 'UNMATCHED',
-            'pembayaran_ar_id'=> null,
-        ]);
+        $pembayaran = $detail->pembayaranAr;
 
-        $this->refreshCounter($detail->bank_statement_id);
+        return DB::transaction(function () use ($detail, $pembayaran) {
+            // Pembayaran yang dibuat otomatis oleh "Catat Bayar" harus ikut dibatalkan
+            // agar invoice tidak tetap tercatat terbayar (mencegah dobel bayar saat
+            // detail bank dicocokkan ulang). PembayaranArService::delete() sudah
+            // melepas tautan detail bank, recalculate invoice, dan refresh counter.
+            if ($pembayaran && $pembayaran->dibuat_dari_rekonsiliasi) {
+                $this->pembayaranArService->delete($pembayaran);
 
-        return $detail->fresh();
+                return $detail->fresh();
+            }
+
+            // Pembayaran pre-existing yang dicocokkan manual: cukup lepas tautannya,
+            // pembayaran tetap dipertahankan.
+            $detail->update([
+                'status_cocok'    => 'UNMATCHED',
+                'pembayaran_ar_id'=> null,
+            ]);
+
+            $this->refreshCounter($detail->bank_statement_id);
+
+            return $detail->fresh();
+        });
     }
 
     public function markDiabaikan(BankStatementDetail $detail): void
@@ -522,11 +538,12 @@ class BankStatementService
     public function matchWithNewPayment(
         BankStatementDetail $detail,
         Invoice $invoice,
+        array $settleOriginalInvoiceIds = [],
     ): BankStatementDetail {
         abort_if($detail->status_cocok === 'MATCHED', 422, 'Transaksi ini sudah dicocokkan.');
         abort_if($detail->kredit <= 0, 422, 'Hanya transaksi kredit yang dapat dicatat pembayarannya.');
 
-        return DB::transaction(function () use ($detail, $invoice) {
+        return DB::transaction(function () use ($detail, $invoice, $settleOriginalInvoiceIds) {
             $subtotal    = (float) $invoice->subtotal;
             $totalBayar  = (float) $invoice->total_pembayaran;
             $sisaEfektif = $subtotal > 0
@@ -535,11 +552,13 @@ class BankStatementService
             $jumlahBayar = min((float) $detail->kredit, $sisaEfektif);
 
             $paymentData = [
-                'tanggal_pembayaran' => $detail->tanggal,
-                'jumlah_pembayaran'  => $jumlahBayar,
-                'metode_pembayaran'  => 'TRANSFER',
-                'no_referensi'       => $detail->no_referensi ?: null,
-                'keterangan'         => null,
+                'tanggal_pembayaran'          => $detail->tanggal,
+                'jumlah_pembayaran'           => $jumlahBayar,
+                'metode_pembayaran'           => 'TRANSFER',
+                'no_referensi'                => $detail->no_referensi ?: null,
+                'keterangan'                  => null,
+                'dibuat_dari_rekonsiliasi'    => true,
+                'settle_original_invoice_ids' => $settleOriginalInvoiceIds,
             ];
 
             $pembayaran = $this->pembayaranArService->create($invoice, $paymentData);

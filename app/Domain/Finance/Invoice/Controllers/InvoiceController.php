@@ -136,6 +136,14 @@ class InvoiceController extends Controller
         return $this->successResponse($invoices);
     }
 
+    public function settleableOriginals(int $id): JsonResponse
+    {
+        $ob = $this->service->findOrFail($id);
+        abort_if(!$ob->is_opening_balance, 422, 'Invoice ini bukan Opening Balance.');
+
+        return $this->successResponse($this->service->getSettleableOriginals($ob));
+    }
+
     public function previewNo(Request $request): JsonResponse
     {
         $payload = $request->validate([

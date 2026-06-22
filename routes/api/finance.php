@@ -55,6 +55,7 @@ Route::prefix('invoices')->group(function () {
     Route::get('/preview-no-konsolidasi', [InvoiceController::class, 'previewConsolidatedNo']);
     Route::post('/', [InvoiceController::class, 'store']);
     Route::delete('/bulk', [InvoiceController::class, 'bulkDestroy']);
+    Route::get('/{invoice}/settleable-originals', [InvoiceController::class, 'settleableOriginals']);
     Route::get('/{invoice}', [InvoiceController::class, 'show']);
     Route::put('/{invoice}', [InvoiceController::class, 'update']);
     Route::delete('/{invoice}', [InvoiceController::class, 'destroy']);

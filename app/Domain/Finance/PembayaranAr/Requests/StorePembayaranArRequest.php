@@ -24,6 +24,10 @@ class StorePembayaranArRequest extends FormRequest
             ],
             'keterangan'         => ['nullable', 'string'],
             'bukti_pembayaran'   => ['nullable', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:10240'],
+
+            // OB → pelunasan invoice reguler periode sebelumnya yang dipilih user.
+            'settle_original_invoice_ids'   => ['nullable', 'array'],
+            'settle_original_invoice_ids.*' => ['integer', 'exists:tb_invoice,id'],
         ];
     }
 

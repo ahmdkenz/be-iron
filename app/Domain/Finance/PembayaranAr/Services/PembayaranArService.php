@@ -45,6 +45,7 @@ class PembayaranArService
             'metode_pembayaran'  => $data['metode_pembayaran'],
             'no_referensi'       => $data['no_referensi'] ?? null,
             'keterangan'         => $data['keterangan'] ?? null,
+            'dibuat_dari_rekonsiliasi' => $data['dibuat_dari_rekonsiliasi'] ?? false,
             'created_by'         => auth()->id(),
         ]);
 
@@ -56,6 +57,15 @@ class PembayaranArService
         ]);
 
         $this->invoiceService->recalculate($invoice->fresh());
+
+        // Pelunasan OB → lunaskan invoice reguler periode sebelumnya yang dipilih user.
+        if ($invoice->is_opening_balance && !empty($data['settle_original_invoice_ids'])) {
+            $this->invoiceService->settleOriginalsFromOpeningBalance(
+                $invoice->fresh(),
+                $pembayaran,
+                $data['settle_original_invoice_ids'],
+            );
+        }
 
         UploadInvoiceToGDriveJob::dispatch($invoice->id);
 

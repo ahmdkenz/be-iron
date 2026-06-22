@@ -242,12 +242,18 @@ class BankStatementController extends Controller
     public function catatBayar(Request $request, BankStatementDetail $detail): JsonResponse
     {
         $request->validate([
-            'invoice_id' => ['required', 'integer', 'exists:tb_invoice,id'],
+            'invoice_id'                    => ['required', 'integer', 'exists:tb_invoice,id'],
+            'settle_original_invoice_ids'   => ['nullable', 'array'],
+            'settle_original_invoice_ids.*' => ['integer', 'exists:tb_invoice,id'],
         ]);
 
         try {
             $invoice = Invoice::findOrFail($request->integer('invoice_id'));
-            $updated = $this->service->matchWithNewPayment($detail, $invoice);
+            $updated = $this->service->matchWithNewPayment(
+                $detail,
+                $invoice,
+                $request->input('settle_original_invoice_ids', []),
+            );
 
             $updated->load([
                 'pembayaranAr.alokasiKelebihan.invoice.klienAr',

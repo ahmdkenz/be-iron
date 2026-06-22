@@ -9,6 +9,8 @@ use App\Models\Invoice;
 use App\Models\InvoiceApprovalLog;
 use App\Models\KlienAr;
 use App\Models\OpeningBalanceDetail;
+use App\Models\PembayaranAr;
+use App\Models\PembayaranArLog;
 use App\Models\User;
 use App\Support\Helpers\RoleHelper;
 use Carbon\Carbon;
@@ -530,8 +532,14 @@ class InvoiceService
      */
     private function syncOpeningBalanceSnapshots(Invoice $invoice): void
     {
+        // Pembayaran yang berasal dari pelunasan OB (child payment) TIDAK boleh ikut
+        // mengurangi snapshot sisa_tagihan_asal — kalau ikut, subtotal OB akan ter-nol-kan
+        // (circular clobber). Hitung sisa "asli" invoice reguler dengan mengecualikan
+        // pembayaran yang sumbernya pembayaran milik invoice OB.
+        $obOriginPembayaran = $this->sumOpeningBalanceOriginPayments($invoice);
+
         $sisaAsal = max(0, (float) $invoice->subtotal
-            - (float) $invoice->total_pembayaran
+            - ((float) $invoice->total_pembayaran - $obOriginPembayaran)
             - (float) $invoice->total_penyesuaian);
 
         $details = OpeningBalanceDetail::where('no_invoice_asal', $invoice->no_invoice)
@@ -601,6 +609,221 @@ class InvoiceService
     public function propagateCarryover(Invoice $invoice): void
     {
         $this->cascadeCarryoverToNext($invoice);
+    }
+
+    /**
+     * Total pembayaran pada invoice reguler yang BERASAL dari pelunasan OB
+     * (child payment yang sumber_pembayaran_ar_id-nya menunjuk pembayaran invoice OB).
+     */
+    private function sumOpeningBalanceOriginPayments(Invoice $invoice): float
+    {
+        return (float) $invoice->pembayarans()
+            ->whereHas('sumberPembayaran.invoice', fn($q) => $q->where('is_opening_balance', true))
+            ->sum('jumlah_pembayaran');
+    }
+
+    /**
+     * Daftar invoice reguler "periode sebelumnya" yang dirujuk rincian OB dan masih
+     * bisa dilunaskan, plus dana OB yang masih tersedia untuk dialokasikan.
+     * Dipakai picker pada form Catat Bayar & dialog Cocokkan Transaksi.
+     */
+    public function getSettleableOriginals(Invoice $ob): array
+    {
+        if (!$ob->is_opening_balance) {
+            return ['available' => 0.0, 'invoices' => []];
+        }
+
+        $ob->loadMissing('openingBalanceDetails');
+        $noAsals = $ob->openingBalanceDetails
+            ->pluck('no_invoice_asal')->filter()->unique()->values();
+
+        $invoices = [];
+        if ($noAsals->isNotEmpty()) {
+            $regulars = Invoice::where('klien_ar_id', $ob->klien_ar_id)
+                ->where('is_opening_balance', false)
+                ->whereIn('no_invoice', $noAsals)
+                ->where('status', '!=', 'LUNAS')
+                ->orderBy('tanggal_invoice')
+                ->orderBy('id')
+                ->get();
+
+            foreach ($regulars as $inv) {
+                $sisa = $this->ownSisa($inv);
+                if ($sisa <= 0.01) {
+                    continue;
+                }
+                $invoices[] = [
+                    'id'              => $inv->id,
+                    'no_invoice'      => $inv->no_invoice,
+                    'tanggal_invoice' => $inv->tanggal_invoice?->toDateString(),
+                    'sisa_tagihan'    => $sisa,
+                    'status'          => $inv->status,
+                ];
+            }
+        }
+
+        return [
+            'available' => $this->availableOpeningBalancePayment($ob),
+            'invoices'  => $invoices,
+        ];
+    }
+
+    /**
+     * Lunaskan invoice reguler yang dipilih dari pembayaran sebuah OB.
+     * Membuat child payment ber-no_referensi unik ("{ref}/OB-{n}") yang menautkan
+     * ke pembayaran OB lewat sumber_pembayaran_ar_id, lalu meng-update invoice reguler
+     * SECARA LANGSUNG (tanpa recalculate) agar tidak memicu syncOpeningBalanceSnapshots
+     * yang akan menge-nol-kan subtotal OB.
+     */
+    public function settleOriginalsFromOpeningBalance(
+        Invoice $ob,
+        PembayaranAr $obPayment,
+        array $selectedInvoiceIds
+    ): void {
+        if (!$ob->is_opening_balance || !$ob->isApprovedForFinanceFlow()) {
+            return;
+        }
+
+        $selectedInvoiceIds = array_values(array_unique(array_map('intval', $selectedInvoiceIds)));
+        if (empty($selectedInvoiceIds)) {
+            return;
+        }
+
+        $available = $this->availableOpeningBalancePayment($ob);
+        if ($available <= 0.01) {
+            return;
+        }
+
+        $noAsals = $ob->openingBalanceDetails()
+            ->pluck('no_invoice_asal')->filter()->unique()->values();
+        if ($noAsals->isEmpty()) {
+            return;
+        }
+
+        $regulars = Invoice::whereIn('id', $selectedInvoiceIds)
+            ->where('klien_ar_id', $ob->klien_ar_id)
+            ->where('is_opening_balance', false)
+            ->whereIn('no_invoice', $noAsals)
+            ->where('status', '!=', 'LUNAS')
+            ->orderBy('tanggal_invoice')
+            ->orderBy('id')
+            ->get();
+
+        foreach ($regulars as $target) {
+            if ($available <= 0.01) {
+                break;
+            }
+
+            // Idempoten: jangan buat pelunasan ganda dari pembayaran OB yang sama.
+            $sudahAda = PembayaranAr::where('invoice_id', $target->id)
+                ->where('sumber_pembayaran_ar_id', $obPayment->id)
+                ->exists();
+            if ($sudahAda) {
+                continue;
+            }
+
+            $sisa = $this->ownSisa($target);
+            if ($sisa <= 0.01) {
+                continue;
+            }
+
+            $jumlah = round(min($sisa, $available), 2);
+            if ($jumlah <= 0) {
+                continue;
+            }
+
+            $child = PembayaranAr::create([
+                'invoice_id'              => $target->id,
+                'tanggal_pembayaran'      => $obPayment->tanggal_pembayaran,
+                'jumlah_pembayaran'       => $jumlah,
+                'metode_pembayaran'       => $obPayment->metode_pembayaran,
+                'no_referensi'            => $obPayment->no_referensi
+                                                ? $obPayment->no_referensi . '/OB-' . $this->nextObSettleSuffix($obPayment)
+                                                : null,
+                'keterangan'              => 'Pelunasan otomatis dari OB ' . $ob->no_invoice,
+                'sumber_pembayaran_ar_id' => $obPayment->id,
+                'created_by'              => auth()->id(),
+            ]);
+
+            PembayaranArLog::create([
+                'pembayaran_ar_id' => $child->id,
+                'aksi'             => 'DIBUAT',
+                'actor_id'         => auth()->id(),
+                'data_sesudah'     => $child->toArray(),
+            ]);
+
+            // Update invoice reguler langsung tanpa cascade/recalculate (mirror applyKelebihan).
+            $fresh     = $target->fresh();
+            $newTotal  = (float) $fresh->pembayarans()->sum('jumlah_pembayaran');
+            $subtotal  = (float) $fresh->subtotal;
+            $rawSisa   = max(0, (float) $fresh->total_tagihan - $newTotal);
+            $isLunas   = $subtotal > 0 ? $newTotal >= $subtotal : $rawSisa <= 0;
+            $newStatus = match (true) {
+                $isLunas      => 'LUNAS',
+                $newTotal > 0 => 'SEBAGIAN',
+                default       => 'TERKIRIM',
+            };
+            $fresh->update([
+                'total_pembayaran' => $newTotal,
+                'sisa_tagihan'     => $isLunas ? 0 : $rawSisa,
+                'status'           => $newStatus,
+                'updated_by'       => auth()->id(),
+            ]);
+
+            UploadInvoiceToGDriveJob::dispatch($fresh->id);
+
+            $available = round($available - $jumlah, 2);
+        }
+    }
+
+    /**
+     * Sisa tagihan "milik sendiri" invoice (berbasis subtotal, mengikuti pola
+     * outstanding()/applyKelebihan), bukan total_tagihan yang memuat carryover.
+     */
+    private function ownSisa(Invoice $invoice): float
+    {
+        $subtotal   = (float) $invoice->subtotal;
+        $totalBayar = (float) $invoice->pembayarans()->sum('jumlah_pembayaran');
+
+        return $subtotal > 0
+            ? max(0, $subtotal - $totalBayar)
+            : max(0, (float) $invoice->total_tagihan - $totalBayar);
+    }
+
+    /**
+     * Dana pembayaran OB yang belum dialokasikan ke invoice reguler manapun.
+     */
+    private function availableOpeningBalancePayment(Invoice $ob): float
+    {
+        $totalBayarOb    = (float) $ob->pembayarans()->sum('jumlah_pembayaran');
+        $sudahDialokasi  = (float) PembayaranAr::whereHas(
+            'sumberPembayaran',
+            fn($q) => $q->where('invoice_id', $ob->id)
+        )->sum('jumlah_pembayaran');
+
+        return max(0, round($totalBayarOb - $sudahDialokasi, 2));
+    }
+
+    /**
+     * Suffix berikutnya untuk no_referensi child pelunasan OB ("{ref}/OB-{n}").
+     */
+    private function nextObSettleSuffix(PembayaranAr $obPayment): int
+    {
+        $prefix = $obPayment->no_referensi . '/OB-';
+        $max    = 0;
+
+        $refs = PembayaranAr::where('sumber_pembayaran_ar_id', $obPayment->id)
+            ->where('no_referensi', 'LIKE', $prefix . '%')
+            ->pluck('no_referensi');
+
+        foreach ($refs as $ref) {
+            $n = (int) str_replace($prefix, '', (string) $ref);
+            if ($n > $max) {
+                $max = $n;
+            }
+        }
+
+        return $max + 1;
     }
 
     private function sumOwnSisaBeforeInvoice(Invoice $invoice): float

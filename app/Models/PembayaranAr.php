@@ -21,6 +21,7 @@ class PembayaranAr extends Model
         'no_referensi',
         'keterangan',
         'sumber_pembayaran_ar_id',
+        'dibuat_dari_rekonsiliasi',
         'bukti_gdrive_file_id',
         'bukti_gdrive_folder_id',
         'bukti_file_name',
@@ -32,9 +33,10 @@ class PembayaranAr extends Model
     ];
 
     protected $casts = [
-        'tanggal_pembayaran' => 'date',
-        'jumlah_pembayaran'  => 'decimal:2',
-        'bukti_uploaded_at'  => 'datetime',
+        'tanggal_pembayaran'       => 'date',
+        'jumlah_pembayaran'        => 'decimal:2',
+        'bukti_uploaded_at'        => 'datetime',
+        'dibuat_dari_rekonsiliasi' => 'boolean',
     ];
 
     public function invoice()
