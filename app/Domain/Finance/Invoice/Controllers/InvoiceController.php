@@ -3,7 +3,9 @@
 namespace App\Domain\Finance\Invoice\Controllers;
 
 use App\Domain\Finance\Invoice\DTO\InvoiceDTO;
+use App\Domain\Finance\Invoice\Jobs\ImportInvoiceJob;
 use App\Domain\Finance\Invoice\Jobs\UploadInvoiceToGDriveJob;
+use App\Models\InvoiceImportBatch;
 use App\Domain\Finance\Invoice\Requests\StoreInvoiceRequest;
 use App\Domain\Finance\Invoice\Requests\UpdateInvoiceRequest;
 use App\Domain\Finance\Invoice\Resources\InvoiceResource;
@@ -611,6 +613,10 @@ class InvoiceController extends Controller
             ->deleteFileAfterSend(true);
     }
 
+    /**
+     * Terima file import lalu proses di latar belakang (queue).
+     * Mengembalikan batch_id yang dipakai frontend untuk polling progress.
+     */
     public function import(Request $request): JsonResponse
     {
         if (!class_exists('ZipArchive')) {
@@ -618,505 +624,64 @@ class InvoiceController extends Controller
         }
 
         $request->validate([
-            'file' => ['required', 'file', 'mimes:csv,txt,xlsx,xls', 'max:2048'],
+            'file' => ['required', 'file', 'mimes:csv,txt,xlsx,xls', 'max:10240'],
             'type' => ['nullable', 'in:b2b,b2c'],
         ]);
-
-        $type      = $request->input('type', 'b2c');
-        $file      = $request->file('file');
-        $extension = strtolower($file->getClientOriginalExtension());
-        $path      = $file->getRealPath();
-        $isCsv     = in_array($extension, ['csv', 'txt']);
 
         $user = auth()->user()->load('karyawan');
         abort_if(!$user?->karyawan?->id, 422, 'User tidak terhubung dengan data karyawan');
 
-        if ($isCsv) {
-            $rows1 = $this->invoiceParseCsv($path);
-            $rows2 = [];
-        } else {
-            $spreadsheet = IOFactory::load($path);
-            if ($type === 'b2b') {
-                $rows1 = $this->invoiceParseXlsxSheet($spreadsheet->getSheet(0), 'no_urut');
-                $rows2 = $spreadsheet->getSheetCount() > 1
-                    ? $this->invoiceParseXlsxSheet($spreadsheet->getSheet(1), 'no_urut_invoice')
-                    : [];
-            } else {
-                $rows1 = $this->invoiceParseXlsxSheet($spreadsheet->getSheet(0), 'no_urut');
-                $rows2 = $spreadsheet->getSheetCount() > 1
-                    ? $this->invoiceParseXlsxSheet($spreadsheet->getSheet(1), 'no_urut_invoice')
-                    : [];
-            }
-        }
+        // Bersihkan batch yang nyangkut (worker dihentikan host di tengah proses).
+        InvoiceImportBatch::failStale();
 
-        if ($type === 'b2b') {
-            return $this->importB2B($rows1, $rows2, $user);
-        }
+        $type = $request->input('type', 'b2c');
+        $path = $request->file('file')->store('invoice-imports');
 
-        return $this->importB2C($rows1, $rows2, $user);
-    }
+        $batch = InvoiceImportBatch::create([
+            'user_id'   => $user->id,
+            'type'      => $type,
+            'file_path' => $path,
+            'status'    => 'queued',
+        ]);
 
-    private function importB2B(array $rows1, array $rows2, $user): JsonResponse
-    {
-        $insertedCount     = 0;
-        $skippedCount      = 0;
-        $totalData         = 0;
-        $errors            = [];
-        $invoiceMapping    = [];
-        $skippedUruts      = [];
-        $invoicesWithItems = [];
-
-        DB::beginTransaction();
-        try {
-
-        // ── Pass 1: Buat invoice dari Sheet 1 "Data Invoice" ──
-        $lineNumber    = 0;
-        $headerSkipped = false;
-        foreach ($rows1 as $row) {
-            $lineNumber++;
-            $firstCell = trim((string) ($row[0] ?? ''));
-
-            if (str_starts_with($firstCell, '#')) continue;
-            if (!$headerSkipped) { $headerSkipped = true; continue; }
-            if (str_starts_with($firstCell, '[CONTOH]')) continue;
-            if ($firstCell === '' && count(array_filter(array_map('strval', $row))) === 0) continue;
-
-            $noUrut       = $this->invoiceImportStr($row[0] ?? '');
-            $namaKlien    = $this->invoiceImportStr($row[1] ?? '');
-            $tanggalKirim = $this->invoiceImportDate($row[2] ?? '');
-            $noSuratJalan = $this->invoiceImportStr($row[3] ?? '');
-            $jatuhTempo   = $this->invoiceImportDate($row[4] ?? '');
-            $periodeAwal  = $this->invoiceImportDate($row[5] ?? '');
-            $periodeAkhir = $this->invoiceImportDate($row[6] ?? '');
-
-            $totalData++;
-
-            if (!$noUrut) {
-                $errors[] = ['sheet' => 'Data Invoice', 'row' => $lineNumber, 'message' => 'no_urut wajib diisi'];
-                continue;
-            }
-            if (!$namaKlien) {
-                $errors[] = ['sheet' => 'Data Invoice', 'row' => $lineNumber, 'message' => "no_urut '{$noUrut}': nama_klien wajib diisi"];
-                continue;
-            }
-            if (!$tanggalKirim) {
-                $errors[] = ['sheet' => 'Data Invoice', 'row' => $lineNumber, 'message' => "no_urut '{$noUrut}': tanggal_kirim_barang wajib diisi"];
-                continue;
-            }
-
-            $klien = KlienAr::with('perusahaan')->where('nama_klien', $namaKlien)->first();
-            if (!$klien) {
-                $errors[] = ['sheet' => 'Data Invoice', 'row' => $lineNumber, 'message' => "Klien '{$namaKlien}' tidak ditemukan di sistem"];
-                continue;
-            }
-
-            if (!$periodeAwal)  $periodeAwal  = Carbon::parse($tanggalKirim)->startOfMonth()->format('Y-m-d');
-            if (!$periodeAkhir) $periodeAkhir = Carbon::parse($tanggalKirim)->endOfMonth()->format('Y-m-d');
-
-            $existingInvoice = Invoice::where('klien_ar_id', $klien->id)
-                ->whereDate('tanggal_kirim_barang', $tanggalKirim)
-                ->where('is_opening_balance', false)
-                ->first();
-            if ($existingInvoice) {
-                $skippedUruts[$noUrut] = true;
-                $skippedCount++;
-                continue;
-            }
-
-            $carryover = $this->service->getMonthlyCarryover($klien->id, $tanggalKirim);
-
-            $noInvKons = $this->service->generateConsolidatedInvoiceNo($klien, $tanggalKirim);
-
-            try {
-                $invoice = Invoice::create([
-                    'no_invoice'                 => $noInvKons,
-                    'tanggal_invoice'            => $tanggalKirim,
-                    'tanggal_kirim_barang'       => $tanggalKirim,
-                    'no_surat_jalan'             => $noSuratJalan ?: null,
-                    'tanggal_jatuh_tempo'        => $jatuhTempo ?: null,
-                    'periode_awal'               => $periodeAwal,
-                    'periode_akhir'              => $periodeAkhir,
-                    'klien_ar_id'                => $klien->id,
-                    'resto_id'                   => null,
-                    'perusahaan_id'              => $klien->perusahaan_id,
-                    'karyawan_id'                => $this->service->resolveInvoiceKaryawanId($user, $klien),
-                    'subtotal'                   => 0,
-                    'tagihan_periode_sebelumnya' => $carryover,
-                    'total_tagihan'              => $carryover,
-                    'total_pembayaran'           => 0,
-                    'sisa_tagihan'               => $carryover,
-                    'status'                     => 'TERKIRIM',
-                    'is_opening_balance'         => false,
-                    'prepared_token'             => Str::uuid()->toString(),
-                    'approved_token'             => Str::uuid()->toString(),
-                    'created_by'                 => auth()->id(),
-                ]);
-            } catch (\Throwable $e) {
-                $errors[] = ['sheet' => 'Data Invoice', 'row' => $lineNumber, 'message' => "Gagal membuat invoice '{$noInvKons}': " . $e->getMessage()];
-                continue;
-            }
-
-            $invoiceMapping[$noUrut] = $invoice;
-            $insertedCount++;
-        }
-
-        // ── Pass 2: Buat item dari Sheet 2 "Item Invoice" ──
-        $lineNumber2   = 0;
-        $headerSkipped = false;
-        foreach ($rows2 as $row) {
-            $lineNumber2++;
-            $firstCell = trim((string) ($row[0] ?? ''));
-
-            if (str_starts_with($firstCell, '#')) continue;
-            if (!$headerSkipped) { $headerSkipped = true; continue; }
-            if (str_starts_with($firstCell, '[CONTOH]')) continue;
-            if ($firstCell === '' && count(array_filter(array_map('strval', $row))) === 0) continue;
-
-            $noUrutInvoice = $this->invoiceImportStr($row[0] ?? '');
-            $noInvResto    = $this->invoiceImportStr($row[1] ?? '');
-            $kodeResto     = $this->invoiceImportStr($row[2] ?? '');
-            $namaResto     = $this->invoiceImportStr($row[3] ?? '');
-            $kodeBarang    = $this->invoiceImportStr($row[4] ?? '');
-            $namaBarang    = $this->invoiceImportStr($row[5] ?? '');
-            $qty           = $this->invoiceImportNum($row[6] ?? '');
-            $satuan        = $this->invoiceImportStr($row[7] ?? '');
-            $harga         = $this->invoiceImportNum($row[8] ?? '');
-
-            if (!$noUrutInvoice) {
-                $errors[] = ['sheet' => 'Item Invoice', 'row' => $lineNumber2, 'message' => 'no_urut_invoice wajib diisi'];
-                continue;
-            }
-            if (!isset($invoiceMapping[$noUrutInvoice])) {
-                if (isset($skippedUruts[$noUrutInvoice])) continue;
-                $errors[] = ['sheet' => 'Item Invoice', 'row' => $lineNumber2, 'message' => "no_urut_invoice '{$noUrutInvoice}' tidak ditemukan di Sheet 'Data Invoice'"];
-                continue;
-            }
-            if (!$namaBarang) {
-                $errors[] = ['sheet' => 'Item Invoice', 'row' => $lineNumber2, 'message' => 'nama_barang wajib diisi'];
-                continue;
-            }
-            if ($qty <= 0) {
-                $errors[] = ['sheet' => 'Item Invoice', 'row' => $lineNumber2, 'message' => 'qty harus lebih dari 0'];
-                continue;
-            }
-
-            $invoice  = $invoiceMapping[$noUrutInvoice];
-            $barangId = null;
-            if ($kodeBarang) {
-                $barang = \App\Models\Barang::where('kode_barang', $kodeBarang)->first();
-                if ($barang) $barangId = $barang->id;
-            }
-
-            $invoice->items()->create([
-                'barang_id'        => $barangId,
-                'nama_barang'      => $namaBarang,
-                'qty'              => $qty,
-                'satuan'           => $satuan  ?: null,
-                'harga_satuan'     => $harga,
-                'subtotal'         => $qty * $harga,
-                'no_invoice_resto' => $noInvResto ?: null,
-                'kode_resto'       => $kodeResto  ?: null,
-                'nama_resto'       => $namaResto  ?: null,
-            ]);
-
-            $invoicesWithItems[$noUrutInvoice] = $invoice;
-        }
-
-        // ── Post-process: Hitung subtotal untuk invoice yang punya item ──
-        foreach ($invoiceMapping as $noUrut => $invoice) {
-            if (isset($invoicesWithItems[$noUrut])) {
-                $subtotal     = (float) $invoice->items()->sum('subtotal');
-                $tagihanSblm  = (float) $invoice->tagihan_periode_sebelumnya;
-                $totalTagihan = $subtotal + $tagihanSblm;
-                $invoice->update([
-                    'subtotal'      => $subtotal,
-                    'total_tagihan' => $totalTagihan,
-                    'sisa_tagihan'  => $totalTagihan,
-                    'updated_by'    => auth()->id(),
-                ]);
-            }
-        }
-
-        // ── Cascade carryover: propagasi tagihan_sebelumnya antar invoice dalam batch ──
-        $firstByKlien = [];
-        foreach ($invoiceMapping as $invoice) {
-            $klienId = $invoice->klien_ar_id;
-            if (
-                !isset($firstByKlien[$klienId]) ||
-                $invoice->tanggal_invoice < $firstByKlien[$klienId]->tanggal_invoice ||
-                ($invoice->tanggal_invoice === $firstByKlien[$klienId]->tanggal_invoice
-                    && $invoice->id < $firstByKlien[$klienId]->id)
-            ) {
-                $firstByKlien[$klienId] = $invoice;
-            }
-        }
-        foreach ($firstByKlien as $firstInvoice) {
-            $this->service->propagateCarryover($firstInvoice->fresh());
-        }
-
-        // Dispatch upload PDF SETELAH semua propagasi carryover selesai,
-        // sehingga PDF yang di-generate selalu memuat tagihan_periode_sebelumnya yang benar.
-        foreach ($invoiceMapping as $invoice) {
-            UploadInvoiceToGDriveJob::dispatch($invoice->fresh()->id);
-        }
-
-        // Re-upload OB invoices agar bagian "Invoice Bulan Berjalan" terupdate
-        $klienIds = collect(array_values($firstByKlien))->pluck('klien_ar_id')->unique()->toArray();
-        Invoice::whereIn('klien_ar_id', $klienIds)
-            ->where('is_opening_balance', true)
-            ->where('approval_status', 'APPROVED')
-            ->each(fn($ob) => UploadInvoiceToGDriveJob::dispatch($ob->id));
-
-        $failed = $totalData - $insertedCount - $skippedCount;
-
-        DB::commit();
+        ImportInvoiceJob::dispatch($batch->id);
 
         return $this->successResponse([
-            'total'    => $totalData,
-            'inserted' => $insertedCount,
-            'skipped'  => $skippedCount,
-            'failed'   => $failed,
-            'errors'   => $errors,
-        ], "Import B2B selesai. {$insertedCount} invoice konsolidasi ditambahkan, {$skippedCount} dilewati (sudah ada), {$failed} gagal.");
-
-        } catch (\Throwable $e) {
-            DB::rollBack();
-            return $this->errorResponse('Terjadi kesalahan sistem saat proses import: ' . $e->getMessage(), 500);
-        }
+            'batch_id' => $batch->id,
+            'status'   => $batch->status,
+        ], 'File diterima. Import sedang diproses di latar belakang.', 202);
     }
 
-    private function importB2C(array $rows1, array $rows2, $user): JsonResponse
+    /**
+     * Status & progress sebuah batch import (di-poll frontend).
+     */
+    public function importStatus(string $id): JsonResponse
     {
-        $insertedCount  = 0;
-        $skippedCount   = 0;
-        $totalData      = 0;
-        $errors         = [];
-        $invoiceMapping = [];
-        $skippedUruts   = [];
+        // Bersihkan batch yang nyangkut (worker dihentikan host di tengah proses).
+        InvoiceImportBatch::failStale();
 
-        DB::beginTransaction();
-        try {
-
-        // ── Pass 1: Invoice headers ──────────────────────────────────
-        $lineNumber    = 0;
-        $headerSkipped = false;
-
-        foreach ($rows1 as $row) {
-            $lineNumber++;
-            $firstCell = trim((string) ($row[0] ?? ''));
-
-            if (str_starts_with($firstCell, '#')) continue;
-            if (!$headerSkipped) { $headerSkipped = true; continue; }
-            if (str_starts_with($firstCell, '[CONTOH]')) continue;
-            if ($firstCell === '' && count(array_filter(array_map('strval', $row))) === 0) continue;
-
-            $totalData++;
-            $noUrut       = $this->invoiceImportStr($row[0] ?? '');   // A
-            $namaKlien    = $this->invoiceImportStr($row[1] ?? '');   // B
-            $tanggal      = $this->invoiceImportDate($row[2] ?? '');  // C: tanggal_invoice
-            $tanggalKirim = $this->invoiceImportDate($row[3] ?? '');  // D: tanggal_kirim_barang
-            $jatuhTempo   = $this->invoiceImportDate($row[4] ?? '');  // E: tanggal_jatuh_tempo
-            $periodeAwal  = $this->invoiceImportDate($row[5] ?? '');  // F: periode_awal
-            $periodeAkhir = $this->invoiceImportDate($row[6] ?? '');  // G: periode_akhir
-            $noSuratJalan = $this->invoiceImportStr($row[7] ?? '');   // H: no_surat_jalan
-            $keterangan   = $this->invoiceImportStr($row[8] ?? '');   // I: keterangan
-
-            $validated = Validator::make(
-                [
-                    'no_urut'         => $noUrut,
-                    'nama_klien'      => $namaKlien,
-                    'tanggal_invoice' => $tanggal,
-                    'periode_awal'    => $periodeAwal,
-                    'periode_akhir'   => $periodeAkhir,
-                ],
-                [
-                    'no_urut'         => ['required'],
-                    'nama_klien'      => ['required'],
-                    'tanggal_invoice' => ['required', 'date'],
-                    'periode_awal'    => ['required', 'date'],
-                    'periode_akhir'   => ['required', 'date'],
-                ]
-            );
-
-            if ($validated->fails()) {
-                $errors[] = ['sheet' => 'Invoice', 'row' => $lineNumber, 'message' => implode(', ', $validated->errors()->all())];
-                continue;
-            }
-
-            $klien = KlienAr::with('perusahaan')->where('nama_klien', $namaKlien)->first();
-            if (!$klien) {
-                $errors[] = ['sheet' => 'Invoice', 'row' => $lineNumber, 'message' => "Klien '{$namaKlien}' tidak ditemukan di sistem"];
-                continue;
-            }
-
-            if (!$periodeAwal)  $periodeAwal  = Carbon::parse($tanggal)->startOfMonth()->format('Y-m-d');
-            if (!$periodeAkhir) $periodeAkhir = Carbon::parse($tanggal)->endOfMonth()->format('Y-m-d');
-
-            $existingInvoice = Invoice::where('klien_ar_id', $klien->id)
-                ->whereDate('tanggal_invoice', $tanggal)
-                ->where('is_opening_balance', false)
-                ->first();
-            if ($existingInvoice) {
-                $skippedUruts[$noUrut] = true;
-                $skippedCount++;
-                continue;
-            }
-
-            $carryover = $this->service->getMonthlyCarryover($klien->id, $tanggal);
-
-            $noInvoice = $this->service->generateNoInvoice($klien, $tanggal);
-
-            try {
-                $invoice = Invoice::create([
-                    'no_invoice'                 => $noInvoice,
-                    'tanggal_invoice'            => $tanggal,
-                    'tanggal_kirim_barang'       => $tanggalKirim ?: null,
-                    'tanggal_jatuh_tempo'        => $jatuhTempo,
-                    'periode_awal'               => $periodeAwal,
-                    'periode_akhir'              => $periodeAkhir,
-                    'klien_ar_id'                => $klien->id,
-                    'resto_id'                   => $klien->resto_id,
-                    'perusahaan_id'              => $klien->perusahaan_id,
-                    'karyawan_id'                => $this->service->resolveInvoiceKaryawanId($user, $klien),
-                    'no_surat_jalan'             => $noSuratJalan,
-                    'subtotal'                   => 0,
-                    'tagihan_periode_sebelumnya' => $carryover,
-                    'total_tagihan'              => $carryover,
-                    'total_pembayaran'           => 0,
-                    'sisa_tagihan'               => $carryover,
-                    'status'                     => 'TERKIRIM',
-                    'is_opening_balance'         => false,
-                    'keterangan'                 => $keterangan,
-                    'prepared_token'             => Str::uuid()->toString(),
-                    'approved_token'             => Str::uuid()->toString(),
-                    'created_by'                 => auth()->id(),
-                ]);
-
-                $invoiceMapping[$noUrut] = $invoice;
-                $insertedCount++;
-            } catch (\Throwable $e) {
-                $errors[] = ['sheet' => 'Invoice', 'row' => $lineNumber, 'message' => 'Gagal menyimpan: ' . $e->getMessage()];
-            }
+        $batch = InvoiceImportBatch::find($id);
+        if (!$batch) {
+            return $this->notFoundResponse('Batch import tidak ditemukan');
         }
 
-        // ── Pass 2: Invoice items ────────────────────────────────────
-        $invoicesWithItems = [];
-        $lineNumber        = 0;
-        $headerSkipped     = false;
-
-        foreach ($rows2 as $row) {
-            $lineNumber++;
-            $firstCell = trim((string) ($row[0] ?? ''));
-
-            if (str_starts_with($firstCell, '#')) continue;
-            if (!$headerSkipped) { $headerSkipped = true; continue; }
-            if (str_starts_with($firstCell, '[CONTOH]')) continue;
-            if ($firstCell === '' && count(array_filter(array_map('strval', $row))) === 0) continue;
-
-            $noUrutInvoice = $this->invoiceImportStr($row[0] ?? '');
-            $kodeBarang    = $this->invoiceImportStr($row[1] ?? '');
-            $namaBarang    = $this->invoiceImportStr($row[2] ?? '');
-            $qty           = $this->invoiceImportNum($row[3] ?? '');
-            $satuan        = $this->invoiceImportStr($row[4] ?? '');
-            $hargaSatuan   = $this->invoiceImportNum($row[5] ?? '');
-
-            if (!$noUrutInvoice) {
-                $errors[] = ['sheet' => 'Item Invoice', 'row' => $lineNumber, 'message' => 'no_urut_invoice wajib diisi'];
-                continue;
-            }
-            if (!isset($invoiceMapping[$noUrutInvoice])) {
-                if (isset($skippedUruts[$noUrutInvoice])) continue;
-                $errors[] = ['sheet' => 'Item Invoice', 'row' => $lineNumber, 'message' => "no_urut_invoice '{$noUrutInvoice}' tidak ditemukan di Sheet Invoice"];
-                continue;
-            }
-            if (!$namaBarang) {
-                $errors[] = ['sheet' => 'Item Invoice', 'row' => $lineNumber, 'message' => 'nama_barang wajib diisi'];
-                continue;
-            }
-            if ($qty <= 0) {
-                $errors[] = ['sheet' => 'Item Invoice', 'row' => $lineNumber, 'message' => 'qty harus lebih dari 0'];
-                continue;
-            }
-
-            $barangId = null;
-            if ($kodeBarang) {
-                $barang = \App\Models\Barang::where('kode_barang', $kodeBarang)->first();
-                if ($barang) {
-                    $barangId = $barang->id;
-                } else {
-                    $errors[] = ['sheet' => 'Item Invoice', 'row' => $lineNumber, 'message' => "Kode barang '{$kodeBarang}' tidak ditemukan di master barang (item tetap disimpan tanpa referensi barang)"];
-                }
-            }
-
-            $invoice = $invoiceMapping[$noUrutInvoice];
-            $invoice->items()->create([
-                'barang_id'    => $barangId,
-                'nama_barang'  => $namaBarang,
-                'qty'          => $qty,
-                'satuan'       => $satuan,
-                'harga_satuan' => $hargaSatuan,
-                'subtotal'     => $qty * $hargaSatuan,
-            ]);
-            $invoicesWithItems[$noUrutInvoice] = $invoice;
+        $user = auth()->user();
+        if ($batch->user_id !== $user->id && !RoleHelper::hasAnyRole($user, ['ADMIN', 'MANAGER', 'SUPERVISOR'])) {
+            return $this->unauthorizedResponse();
         }
-
-        foreach ($invoicesWithItems as $invoice) {
-            $subtotal     = (float) $invoice->items()->sum('subtotal');
-            $totalTagihan = $subtotal + (float) $invoice->tagihan_periode_sebelumnya;
-            $invoice->update([
-                'subtotal'      => $subtotal,
-                'total_tagihan' => $totalTagihan,
-                'sisa_tagihan'  => $totalTagihan,
-                'updated_by'    => auth()->id(),
-            ]);
-        }
-
-        // ── Cascade carryover: propagasi tagihan_sebelumnya antar invoice dalam batch ──
-        $firstByKlien = [];
-        foreach ($invoiceMapping as $invoice) {
-            $klienId = $invoice->klien_ar_id;
-            if (
-                !isset($firstByKlien[$klienId]) ||
-                $invoice->tanggal_invoice < $firstByKlien[$klienId]->tanggal_invoice ||
-                ($invoice->tanggal_invoice === $firstByKlien[$klienId]->tanggal_invoice
-                    && $invoice->id < $firstByKlien[$klienId]->id)
-            ) {
-                $firstByKlien[$klienId] = $invoice;
-            }
-        }
-        foreach ($firstByKlien as $firstInvoice) {
-            $this->service->propagateCarryover($firstInvoice->fresh());
-        }
-
-        // Dispatch upload PDF SETELAH semua propagasi carryover selesai,
-        // sehingga PDF yang di-generate selalu memuat tagihan_periode_sebelumnya yang benar.
-        foreach ($invoiceMapping as $invoice) {
-            UploadInvoiceToGDriveJob::dispatch($invoice->fresh()->id);
-        }
-
-        // Re-upload OB invoices agar bagian "Invoice Bulan Berjalan" terupdate
-        $klienIds = collect(array_values($firstByKlien))->pluck('klien_ar_id')->unique()->toArray();
-        Invoice::whereIn('klien_ar_id', $klienIds)
-            ->where('is_opening_balance', true)
-            ->where('approval_status', 'APPROVED')
-            ->each(fn($ob) => UploadInvoiceToGDriveJob::dispatch($ob->id));
-
-        $failed = $totalData - $insertedCount - $skippedCount;
-
-        DB::commit();
 
         return $this->successResponse([
-            'total'    => $totalData,
-            'inserted' => $insertedCount,
-            'skipped'  => $skippedCount,
-            'failed'   => $failed,
-            'errors'   => $errors,
-        ], "Import selesai. {$insertedCount} ditambahkan, {$skippedCount} dilewati (sudah ada), {$failed} gagal.");
-
-        } catch (\Throwable $e) {
-            DB::rollBack();
-            return $this->errorResponse('Terjadi kesalahan sistem saat proses import: ' . $e->getMessage(), 500);
-        }
+            'batch_id'       => $batch->id,
+            'status'         => $batch->status,
+            'processed'      => $batch->processed,
+            'progress_total' => $batch->total,
+            'total'          => $batch->total_data,
+            'inserted'       => $batch->inserted,
+            'skipped'        => $batch->skipped,
+            'failed'         => $batch->failed,
+            'errors'         => $batch->errors ?? [],
+            'message'        => $batch->message,
+        ]);
     }
 
     public function publicPrint(string $token): Response
@@ -1986,103 +1551,6 @@ class InvoiceController extends Controller
             ['satuan',          'Satuan barang atau jasa',                                  'Opsional', 'Contoh: Paket, Bulan, Unit, Kg'],
             ['harga_satuan',    'Harga per satuan',                                         'Ya',       'Angka tanpa format ribu. Contoh: 500000'],
         ];
-    }
-
-    private function invoiceParseXlsxSheet(Worksheet $sheet, string $firstHeader): array
-    {
-        $rows        = [];
-        $headerFound = false;
-
-        foreach ($sheet->getRowIterator() as $rowObj) {
-            $cellIter = $rowObj->getCellIterator();
-            $cellIter->setIterateOnlyExistingCells(false);
-
-            $cells = [];
-            foreach ($cellIter as $cell) {
-                $cells[] = $this->invoiceXlsxCellStr($cell);
-            }
-
-            $firstCell = trim($cells[0] ?? '');
-
-            if (!$headerFound) {
-                if (strtolower($firstCell) === strtolower($firstHeader)) {
-                    $headerFound = true;
-                    $rows[]      = $cells;
-                }
-                continue;
-            }
-
-            $rows[] = $cells;
-        }
-
-        return $rows;
-    }
-
-    private function invoiceParseCsv(string $path): array
-    {
-        $rows   = [];
-        $handle = fopen($path, 'r');
-        $bom    = fread($handle, 3);
-        if ($bom !== "\xEF\xBB\xBF") {
-            rewind($handle);
-        }
-        while (($row = fgetcsv($handle)) !== false) {
-            $rows[] = $row;
-        }
-        fclose($handle);
-        return $rows;
-    }
-
-    private function invoiceXlsxCellStr(\PhpOffice\PhpSpreadsheet\Cell\Cell $cell): string
-    {
-        $value = $cell->getValue();
-        if ($value === null) return '';
-        if (is_bool($value)) return $value ? '1' : '0';
-
-        // Jika cell berformat tanggal Excel, konversi serial number → Y-m-d
-        if (is_numeric($value)) {
-            $formatCode = $cell->getStyle()->getNumberFormat()->getFormatCode();
-            if (\PhpOffice\PhpSpreadsheet\Shared\Date::isDateTimeFormatCode($formatCode)) {
-                return \PhpOffice\PhpSpreadsheet\Shared\Date::excelToDateTimeObject((float) $value)
-                    ->format('Y-m-d');
-            }
-        }
-
-        if (is_int($value)) return (string) $value;
-        if (is_float($value)) {
-            return fmod($value, 1.0) === 0.0 ? sprintf('%.0f', $value) : (string) $value;
-        }
-        return trim((string) $value);
-    }
-
-    private function invoiceImportStr(mixed $val): ?string
-    {
-        $s = trim((string) $val);
-        return ($s === '' || $s === '-') ? null : $s;
-    }
-
-    private function invoiceImportDate(mixed $val): ?string
-    {
-        $s = trim((string) $val);
-        if ($s === '' || $s === '-') return null;
-
-        // Sudah format Y-m-d
-        if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $s)) return $s;
-
-        // Format DD/MM/YYYY atau DD-MM-YYYY (umum di Indonesia)
-        if (preg_match('/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/', $s, $m)) {
-            return sprintf('%04d-%02d-%02d', $m[3], $m[2], $m[1]);
-        }
-
-        // Fallback: biarkan validator menolak jika format tidak dikenali
-        return $s;
-    }
-
-    private function invoiceImportNum(mixed $val): float
-    {
-        $s = trim((string) $val);
-        $s = str_replace(['.', ','], ['', '.'], $s);
-        return is_numeric($s) ? (float) $s : 0.0;
     }
 
     private function buildSignatureData($invoice): array

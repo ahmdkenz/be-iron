@@ -846,84 +846,94 @@ class InvoiceService
             ->value('total') ?? 0.0;
     }
 
+    /**
+     * Propagasi carryover ke invoice-invoice sesudahnya (iteratif).
+     *
+     * Sengaja TIDAK rekursif: pada import batch besar satu klien bisa punya
+     * ribuan invoice, sehingga rekursi akan menabrak batas kedalaman PHP.
+     */
     private function cascadeCarryoverToNext(Invoice $invoice): void
     {
-        $nextInvoice = Invoice::where('klien_ar_id', $invoice->klien_ar_id)
-            ->where(function ($q) use ($invoice) {
-                $q->where('tanggal_invoice', '>', $invoice->tanggal_invoice)
-                    ->orWhere(function ($q2) use ($invoice) {
-                        $q2->where('tanggal_invoice', $invoice->tanggal_invoice)
-                            ->where('id', '>', $invoice->id);
-                    });
-            })
-            ->orderBy('tanggal_invoice')
-            ->orderBy('id')
-            ->first();
+        $current = $invoice;
 
-        if (!$nextInvoice) {
-            return;
-        }
+        while (true) {
+            $nextInvoice = Invoice::where('klien_ar_id', $current->klien_ar_id)
+                ->where(function ($q) use ($current) {
+                    $q->where('tanggal_invoice', '>', $current->tanggal_invoice)
+                        ->orWhere(function ($q2) use ($current) {
+                            $q2->where('tanggal_invoice', $current->tanggal_invoice)
+                                ->where('id', '>', $current->id);
+                        });
+                })
+                ->orderBy('tanggal_invoice')
+                ->orderBy('id')
+                ->first();
 
-        // OB tidak boleh mewarisi carryover dari invoice reguler.
-        // Jika OB sudah terlanjur memiliki tagihan_periode_sebelumnya yang salah, koreksi.
-        // Setelah koreksi (atau jika sudah benar), selalu teruskan cascade ke invoice reguler sesudahnya.
-        if ($nextInvoice->is_opening_balance) {
-            if ((float) $nextInvoice->tagihan_periode_sebelumnya > 0.01) {
-                $subtotalOb   = (float) $nextInvoice->subtotal;
-                $terbayarEfOb = (float) $nextInvoice->total_pembayaran + (float) $nextInvoice->total_penyesuaian;
-                $rawSisaOb    = max(0, $subtotalOb - $terbayarEfOb);
-                $isLunasOb    = $terbayarEfOb >= $subtotalOb;
-
-                $nextInvoice->update([
-                    'tagihan_periode_sebelumnya' => 0,
-                    'total_tagihan'              => $subtotalOb,
-                    'sisa_tagihan'               => $isLunasOb ? 0 : $rawSisaOb,
-                    'status'                     => $terbayarEfOb <= 0 ? 'TERKIRIM' : ($isLunasOb ? 'LUNAS' : 'SEBAGIAN'),
-                    'updated_by'                 => auth()->id(),
-                ]);
-                UploadInvoiceToGDriveJob::dispatch($nextInvoice->id);
+            if (!$nextInvoice) {
+                return;
             }
-            // Lanjutkan cascade melewati OB agar invoice reguler sesudahnya ikut diperbarui
-            $this->cascadeCarryoverToNext($nextInvoice->fresh());
-            return;
+
+            // OB tidak boleh mewarisi carryover dari invoice reguler.
+            // Jika OB sudah terlanjur memiliki tagihan_periode_sebelumnya yang salah, koreksi.
+            // Setelah koreksi (atau jika sudah benar), selalu teruskan cascade ke invoice reguler sesudahnya.
+            if ($nextInvoice->is_opening_balance) {
+                if ((float) $nextInvoice->tagihan_periode_sebelumnya > 0.01) {
+                    $subtotalOb   = (float) $nextInvoice->subtotal;
+                    $terbayarEfOb = (float) $nextInvoice->total_pembayaran + (float) $nextInvoice->total_penyesuaian;
+                    $rawSisaOb    = max(0, $subtotalOb - $terbayarEfOb);
+                    $isLunasOb    = $terbayarEfOb >= $subtotalOb;
+
+                    $nextInvoice->update([
+                        'tagihan_periode_sebelumnya' => 0,
+                        'total_tagihan'              => $subtotalOb,
+                        'sisa_tagihan'               => $isLunasOb ? 0 : $rawSisaOb,
+                        'status'                     => $terbayarEfOb <= 0 ? 'TERKIRIM' : ($isLunasOb ? 'LUNAS' : 'SEBAGIAN'),
+                        'updated_by'                 => auth()->id(),
+                    ]);
+                    UploadInvoiceToGDriveJob::dispatch($nextInvoice->id);
+                }
+                // Lanjutkan cascade melewati OB agar invoice reguler sesudahnya ikut diperbarui
+                $current = $nextInvoice->fresh();
+                continue;
+            }
+
+            $oldCarryover = (float) $nextInvoice->tagihan_periode_sebelumnya;
+            $newCarryover = $this->sumOwnSisaBeforeInvoice($nextInvoice);
+
+            if (abs($oldCarryover - $newCarryover) < 0.01) {
+                return;
+            }
+
+            $newTotalTagihan      = (float) $nextInvoice->subtotal + $newCarryover;
+            $subtotalNext         = (float) $nextInvoice->subtotal;
+            $totalPembayaranNext  = (float) $nextInvoice->total_pembayaran;
+            $totalPenyesuaianNext = (float) $nextInvoice->total_penyesuaian;
+            $terbayarEfektifNext  = $totalPembayaranNext + $totalPenyesuaianNext;
+
+            $rawSisaNext  = max(0, $newTotalTagihan - $terbayarEfektifNext);
+            $isLunasNext  = $subtotalNext > 0
+                ? $terbayarEfektifNext >= $subtotalNext
+                : $rawSisaNext <= 0;
+            $newSisaTagihan = $isLunasNext ? 0.0 : $rawSisaNext;
+
+            $newStatus = match (true) {
+                $terbayarEfektifNext <= 0 => 'TERKIRIM',
+                $isLunasNext              => 'LUNAS',
+                default                   => 'SEBAGIAN',
+            };
+
+            $nextInvoice->update([
+                'tagihan_periode_sebelumnya' => $newCarryover,
+                'total_tagihan'              => $newTotalTagihan,
+                'sisa_tagihan'               => $newSisaTagihan,
+                'status'                     => $newStatus,
+                'updated_by'                 => auth()->id(),
+            ]);
+
+            UploadInvoiceToGDriveJob::dispatch($nextInvoice->id);
+
+            $current = $nextInvoice->fresh();
         }
-
-        $oldCarryover = (float) $nextInvoice->tagihan_periode_sebelumnya;
-        $newCarryover = $this->sumOwnSisaBeforeInvoice($nextInvoice);
-
-        if (abs($oldCarryover - $newCarryover) < 0.01) {
-            return;
-        }
-
-        $newTotalTagihan      = (float) $nextInvoice->subtotal + $newCarryover;
-        $subtotalNext         = (float) $nextInvoice->subtotal;
-        $totalPembayaranNext  = (float) $nextInvoice->total_pembayaran;
-        $totalPenyesuaianNext = (float) $nextInvoice->total_penyesuaian;
-        $terbayarEfektifNext  = $totalPembayaranNext + $totalPenyesuaianNext;
-
-        $rawSisaNext  = max(0, $newTotalTagihan - $terbayarEfektifNext);
-        $isLunasNext  = $subtotalNext > 0
-            ? $terbayarEfektifNext >= $subtotalNext
-            : $rawSisaNext <= 0;
-        $newSisaTagihan = $isLunasNext ? 0.0 : $rawSisaNext;
-
-        $newStatus = match (true) {
-            $terbayarEfektifNext <= 0 => 'TERKIRIM',
-            $isLunasNext              => 'LUNAS',
-            default                   => 'SEBAGIAN',
-        };
-
-        $nextInvoice->update([
-            'tagihan_periode_sebelumnya' => $newCarryover,
-            'total_tagihan'              => $newTotalTagihan,
-            'sisa_tagihan'               => $newSisaTagihan,
-            'status'                     => $newStatus,
-            'updated_by'                 => auth()->id(),
-        ]);
-
-        UploadInvoiceToGDriveJob::dispatch($nextInvoice->id);
-
-        $this->cascadeCarryoverToNext($nextInvoice->fresh());
     }
 
     public function delete(Invoice $invoice): void
