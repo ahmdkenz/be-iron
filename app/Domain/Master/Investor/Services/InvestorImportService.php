@@ -120,14 +120,15 @@ class InvestorImportService
                     continue;
                 }
 
-                // Cocokkan per kode_cabang (penanda unik per outlet/cabang), bukan
-                // per nama_investor — satu orang bisa punya banyak outlet sehingga
-                // pencocokan by nama akan menggabungkan semuanya jadi satu record.
-                // Baris tanpa kode_cabang selalu di-insert sebagai data baru.
-                $kodeCabang = $data['kode_cabang'];
-                $existing   = $kodeCabang !== null
-                    ? Investor::where('kode_cabang', $kodeCabang)->latest()->first()
-                    : null;
+                // Identitas baris = kombinasi nama_investor + kode_cabang + id_cabang.
+                // Investor dengan nama sama tapi cabang (kode/id) berbeda dianggap
+                // data BARU; update hanya bila ketiganya sama (idempotent saat re-import).
+                // Catatan: where('kolom', null) otomatis jadi "IS NULL" di Laravel.
+                $existing = Investor::where('nama_investor', $data['nama_investor'])
+                    ->where('kode_cabang', $data['kode_cabang'])
+                    ->where('id_cabang', $data['id_cabang'])
+                    ->latest()
+                    ->first();
                 $existingId = $existing?->id;
 
                 // Keunikan KTP/NPWP — terhadap data lama (DB) maupun baris lain dalam file.
