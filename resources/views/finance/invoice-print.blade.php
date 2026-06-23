@@ -196,12 +196,6 @@
               <td class="dl-lbl">No. Invoice</td><td class="dl-colon">:</td>
               <td class="dl-val">{{ $invoice->no_invoice }}</td>
             </tr>
-            @if($invoice->tanggal_kirim_barang)
-            <tr>
-              <td class="dl-lbl">Tanggal Kirim Barang</td><td class="dl-colon">:</td>
-              <td class="dl-val" style="font-weight:bold;">{{ \Carbon\Carbon::parse($invoice->tanggal_kirim_barang)->isoFormat('D MMMM YYYY') }}</td>
-            </tr>
-            @endif
             <tr>
               <td class="dl-lbl">Tgl. Invoice</td><td class="dl-colon">:</td>
               <td class="dl-val">{{ \Carbon\Carbon::parse($invoice->tanggal_invoice)->isoFormat('D MMMM YYYY') }}</td>
@@ -212,14 +206,6 @@
               <td class="dl-val">{{ \Carbon\Carbon::parse($invoice->tanggal_jatuh_tempo)->isoFormat('D MMMM YYYY') }}</td>
             </tr>
             @endif
-            <tr>
-              <td class="dl-lbl">Periode</td><td class="dl-colon">:</td>
-              <td class="dl-val">{{ \Carbon\Carbon::parse($invoice->periode_awal)->isoFormat('D MMM YYYY') }} &ndash; {{ \Carbon\Carbon::parse($invoice->periode_akhir)->isoFormat('D MMM YYYY') }}</td>
-            </tr>
-            <tr>
-              <td class="dl-lbl">No. Surat Jalan</td><td class="dl-colon">:</td>
-              <td class="dl-val">{{ $invoice->no_surat_jalan ?: '-' }}</td>
-            </tr>
             <tr>
               <td class="dl-lbl">Status</td><td class="dl-colon">:</td>
               <td class="dl-val">
@@ -253,7 +239,7 @@
               <td class="dl-lbl">Staff AR</td><td class="dl-colon">:</td>
               <td class="dl-val">{{ $invoice->klienAr->karyawanAr->nama_karyawan ?? '-' }}</td>
             </tr>
-            @if($invoice->klienAr->tipe_klien === 'PT' && $invoice->resto && !$invoice->tanggal_kirim_barang)
+            @if($invoice->klienAr->tipe_klien === 'PT' && $invoice->resto)
             <tr>
               <td class="dl-lbl">Resto Tagihan</td><td class="dl-colon">:</td>
               <td class="dl-val">{{ $invoice->resto->nama_resto }} ({{ $invoice->resto->kode_resto }})</td>
@@ -265,7 +251,7 @@
                 @if($invoice->klienAr->tipe_klien === 'PT')
                   {{ $invoice->karyawan?->perusahaan?->nama_perusahaan ?? '-' }}
                 @else
-                  {{ $invoice->perusahaan->nama_perusahaan }}
+                  {{ $invoice->klienAr->karyawanAr?->perusahaan?->nama_perusahaan ?? $invoice->perusahaan?->nama_perusahaan ?? '-' }}
                 @endif
               </td>
             </tr>
@@ -606,10 +592,6 @@
               </tr>
               @endif
               <tr>
-                <td class="dl-lbl">Periode</td><td class="dl-colon">:</td>
-                <td class="dl-val">{{ \Carbon\Carbon::parse($regInv->periode_awal)->isoFormat('D MMM YYYY') }} &ndash; {{ \Carbon\Carbon::parse($regInv->periode_akhir)->isoFormat('D MMM YYYY') }}</td>
-              </tr>
-              <tr>
                 <td class="dl-lbl">No. Surat Jalan</td><td class="dl-colon">:</td>
                 <td class="dl-val">{{ $regInv->no_surat_jalan ?: '-' }}</td>
               </tr>
@@ -649,7 +631,7 @@
                   @if($regInv->klienAr->tipe_klien === 'PT')
                     {{ $regInv->karyawan?->perusahaan?->nama_perusahaan ?? '-' }}
                   @else
-                    {{ $regInv->perusahaan->nama_perusahaan }}
+                    {{ $regInv->klienAr->karyawanAr?->perusahaan?->nama_perusahaan ?? $regInv->perusahaan?->nama_perusahaan ?? '-' }}
                   @endif
                 </td>
               </tr>

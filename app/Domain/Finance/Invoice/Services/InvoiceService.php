@@ -130,10 +130,7 @@ class InvoiceService
             $invoice = $this->repository->create([
                 'no_invoice'                 => $noInvoice,
                 'tanggal_invoice'            => $dto->tanggal_invoice,
-                'tanggal_kirim_barang'       => $dto->tanggal_kirim_barang,
                 'tanggal_jatuh_tempo'        => $dto->tanggal_jatuh_tempo,
-                'periode_awal'               => $dto->periode_awal,
-                'periode_akhir'              => $dto->periode_akhir,
                 'klien_ar_id'                => $dto->klien_ar_id,
                 'resto_id'                   => $dto->resto_id,
                 'perusahaan_id'              => $klien->perusahaan_id,
@@ -190,8 +187,6 @@ class InvoiceService
             $invoice = $this->repository->create([
                 'no_invoice'                 => $data['no_invoice'],
                 'tanggal_invoice'            => $data['tanggal'],
-                'periode_awal'               => $data['periode_awal'],
-                'periode_akhir'              => $data['periode_akhir'],
                 'klien_ar_id'                => $data['klien_ar_id'],
                 'perusahaan_id'              => $klien->perusahaan_id,
                 'karyawan_id'                => $this->resolveInvoiceKaryawanId($user, $klien),
@@ -239,8 +234,6 @@ class InvoiceService
         $invoice->update([
             'no_invoice'                 => $data['no_invoice'],
             'tanggal_invoice'            => $data['tanggal'],
-            'periode_awal'               => $data['periode_awal'],
-            'periode_akhir'              => $data['periode_akhir'],
             'klien_ar_id'                => $data['klien_ar_id'],
             'perusahaan_id'              => $klien->perusahaan_id,
             'subtotal'                   => $saldoAwal,
@@ -388,10 +381,7 @@ class InvoiceService
         $invoice->update([
             'no_invoice'                 => $dto->no_invoice,
             'tanggal_invoice'            => $dto->tanggal_invoice,
-            'tanggal_kirim_barang'       => $dto->tanggal_kirim_barang,
             'tanggal_jatuh_tempo'        => $dto->tanggal_jatuh_tempo,
-            'periode_awal'               => $dto->periode_awal,
-            'periode_akhir'              => $dto->periode_akhir,
             'klien_ar_id'                => $dto->klien_ar_id,
             'resto_id'                   => $dto->resto_id,
             'perusahaan_id'              => $klien->perusahaan_id,

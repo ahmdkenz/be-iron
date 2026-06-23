@@ -121,8 +121,6 @@ class InvoiceController extends Controller
                 'sisa_tagihan'    => max(0.0, (float) $inv->subtotal - (float) $inv->total_pembayaran - (float) $inv->total_penyesuaian),
                 'status'          => $inv->status,
                 'keterangan'      => $inv->keterangan,
-                'periode_awal'    => $inv->periode_awal?->toDateString(),
-                'periode_akhir'   => $inv->periode_akhir?->toDateString(),
                 'items'           => $inv->items->map(fn($item) => [
                     'barang_id'    => $item->barang_id,
                     'kode_barang'  => $item->barang?->kode_barang ?? '',
@@ -457,14 +455,13 @@ class InvoiceController extends Controller
             'E' => ['QTY',             10],
             'F' => ['Harga Satuan',    18],
             'G' => ['TOTAL',           18],
-            'H' => ['Stokis',           28],
-            'I' => ['Tanggal Kirim',   16],
-            'J' => ['Kode Resto',      16],
-            'K' => ['Nama Klien',      32],
-            'L' => ['Entitas',         24],
-            'M' => ['NOMOR INVOICE 2', 28],
+            'H' => ['Stokis',          28],
+            'I' => ['Kode Resto',      16],
+            'J' => ['Nama Klien',      32],
+            'K' => ['Entitas',         24],
+            'L' => ['NOMOR INVOICE 2', 28],
         ];
-        $lastCol2 = 'M';
+        $lastCol2 = 'L';
 
         $sheet2->mergeCells("A1:{$lastCol2}1");
         $sheet2->setCellValue('A1', 'DATA DETAIL TAGIHAN INVOICE');
@@ -539,11 +536,10 @@ class InvoiceController extends Controller
                 'F' => [(float) $d->harga_satuan,                                   DataType::TYPE_NUMERIC],
                 'G' => [(float) $d->subtotal,                                       DataType::TYPE_NUMERIC],
                 'H' => [$stokis,                                                    DataType::TYPE_STRING],
-                'I' => [$inv2?->tanggal_kirim_barang?->format('d-m-Y')      ?? '-', DataType::TYPE_STRING],
-                'J' => [$kodeResto,                                                 DataType::TYPE_STRING],
-                'K' => [$inv2?->klienAr?->nama_klien                        ?? '-', DataType::TYPE_STRING],
-                'L' => [$entitas,                                                   DataType::TYPE_STRING],
-                'M' => [$inv2?->no_invoice                                  ?? '-', DataType::TYPE_STRING],
+                'I' => [$kodeResto,                                                 DataType::TYPE_STRING],
+                'J' => [$inv2?->klienAr?->nama_klien                        ?? '-', DataType::TYPE_STRING],
+                'K' => [$entitas,                                                   DataType::TYPE_STRING],
+                'L' => [$inv2?->no_invoice                                  ?? '-', DataType::TYPE_STRING],
             ];
 
             foreach ($rowData2 as $col => [$val, $type]) {
@@ -823,17 +819,14 @@ class InvoiceController extends Controller
         $isB2B = $type === 'b2b';
         $sheet->setTitle('Invoice');
         $cols = [
-            'A' => ['no_urut',              12],
-            'B' => ['nama_klien *',         32],
-            'C' => ['tanggal_invoice *',    20],
-            'D' => ['tanggal_kirim_barang', 22],
-            'E' => ['tanggal_jatuh_tempo',  20],
-            'F' => ['periode_awal',         20],
-            'G' => ['periode_akhir',        20],
-            'H' => ['no_surat_jalan',       22],
-            'I' => ['keterangan',           32],
+            'A' => ['no_urut',             12],
+            'B' => ['nama_klien *',        32],
+            'C' => ['tanggal_invoice *',   20],
+            'D' => ['tanggal_jatuh_tempo', 20],
+            'E' => ['no_surat_jalan',      22],
+            'F' => ['keterangan',          32],
         ];
-        $lastCol = 'I';
+        $lastCol = 'F';
 
         $sheet->mergeCells("A1:{$lastCol}1");
         $sheet->setCellValue('A1', 'TEMPLATE TAGIHAN INVOICE B2C — SHEET 1: DATA INVOICE');
@@ -871,11 +864,8 @@ class InvoiceController extends Controller
             'B' => 'Budi Santoso',
             'C' => date('d-m-Y'),
             'D' => '',
-            'E' => '',
-            'F' => date('01-m-Y'),
-            'G' => date('t-m-Y'),
-            'H' => 'SJ-001',
-            'I' => 'Invoice bulan ini',
+            'E' => 'SJ-001',
+            'F' => 'Invoice bulan ini',
         ];
         foreach ($example as $col => $val) {
             $sheet->getCell("{$col}5")->setValueExplicit($val, DataType::TYPE_STRING);
@@ -894,7 +884,7 @@ class InvoiceController extends Controller
                 'fill'    => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => $bg]],
                 'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_HAIR, 'color' => ['argb' => 'FFE0E0E0']]],
             ]);
-            foreach (['C', 'D', 'E', 'F', 'G'] as $dateCol) {
+            foreach (['C', 'D'] as $dateCol) {
                 $sheet->getStyle("{$dateCol}{$row}")->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
             }
             $sheet->getRowDimension($row)->setRowHeight(18);
@@ -1020,7 +1010,7 @@ class InvoiceController extends Controller
             '4. Sheet "Invoice": satu baris per invoice. Kolom no_urut digunakan untuk menghubungkan ke item.',
             '5. Sheet "Item Invoice": satu baris per item. no_urut_invoice harus sesuai no_urut di Sheet "Invoice".',
             '6. Satu invoice dapat memiliki lebih dari satu item (lebih dari satu baris dengan no_urut_invoice sama).',
-            '7. Format tanggal: DD-MM-YYYY (contoh: 01-06-2025). Berlaku untuk tanggal_invoice, tanggal_jatuh_tempo, periode_awal, dan periode_akhir.',
+            '7. Format tanggal: DD-MM-YYYY (contoh: 01-06-2025). Berlaku untuk tanggal_invoice dan tanggal_jatuh_tempo.',
             '8. Kolom opsional dapat dikosongkan.',
             '9. Simpan file sebagai .xlsx sebelum diupload. CSV hanya mengimpor Sheet "Invoice" tanpa item.',
         ];
@@ -1088,15 +1078,13 @@ class InvoiceController extends Controller
     {
         $sheet->setTitle('Data Invoice');
         $cols = [
-            'A' => ['no_urut',                12],
-            'B' => ['nama_klien *',           30],
-            'C' => ['tanggal_kirim_barang *', 22],
-            'D' => ['no_surat_jalan',         22],
-            'E' => ['tanggal_jatuh_tempo',    22],
-            'F' => ['periode_awal',           20],
-            'G' => ['periode_akhir',          20],
+            'A' => ['no_urut',             12],
+            'B' => ['nama_klien *',        30],
+            'C' => ['tanggal_invoice *',   22],
+            'D' => ['no_surat_jalan',      22],
+            'E' => ['tanggal_jatuh_tempo', 22],
         ];
-        $lastCol = 'G';
+        $lastCol = 'E';
 
         $sheet->mergeCells("A1:{$lastCol}1");
         $sheet->setCellValue('A1', 'TEMPLATE TAGIHAN INVOICE B2B KONSOLIDASI — SHEET 1: DATA INVOICE');
@@ -1130,10 +1118,10 @@ class InvoiceController extends Controller
         $sheet->getRowDimension(4)->setRowHeight(24);
 
         $examples = [
-            ['[CONTOH] 1', 'PT. Setya Kuliner Mandiri', date('01-m-Y'), '', '', date('01-m-Y'), date('t-m-Y')],
-            ['[CONTOH] 2', 'PT. Arkhan Berkah Bersama', date('01-m-Y'), '', '', date('01-m-Y'), date('t-m-Y')],
+            ['[CONTOH] 1', 'PT. Setya Kuliner Mandiri', date('01-m-Y'), '', ''],
+            ['[CONTOH] 2', 'PT. Arkhan Berkah Bersama', date('01-m-Y'), '', ''],
         ];
-        $exampleColKeys = ['A', 'B', 'C', 'D', 'E', 'F', 'G'];
+        $exampleColKeys = ['A', 'B', 'C', 'D', 'E'];
         foreach ($examples as $i => $ex) {
             $rowNum = 5 + $i;
             foreach ($exampleColKeys as $j => $col) {
@@ -1154,7 +1142,7 @@ class InvoiceController extends Controller
                 'fill'    => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => $bg]],
                 'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_HAIR, 'color' => ['argb' => 'FFE0E0E0']]],
             ]);
-            foreach (['C', 'E', 'F', 'G'] as $dateCol) {
+            foreach (['C', 'E'] as $dateCol) {
                 $sheet->getStyle("{$dateCol}{$row}")->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
             }
             $sheet->getRowDimension($row)->setRowHeight(18);
@@ -1281,11 +1269,10 @@ class InvoiceController extends Controller
             '3. Sheet "Item Invoice" — satu baris = satu item kiriman per resto. Satu invoice bisa memiliki banyak baris item.',
             '4. Kolom no_urut di Sheet "Data Invoice" adalah kunci penghubung. Isi no_urut_invoice di Sheet "Item Invoice" dengan angka yang sama.',
             '5. Kolom no_invoice_konsolidasi WAJIB diisi — ini adalah nomor invoice konsolidasi (misal: ABBINV-46143).',
-            '6. Kolom tanggal_kirim_barang WAJIB diisi dengan format DD-MM-YYYY (contoh: 01-05-2026).',
+            '6. Kolom tanggal_invoice WAJIB diisi dengan format DD-MM-YYYY (contoh: 01-05-2026).',
             '7. Kolom nama_klien harus persis sesuai dengan data klien PT yang terdaftar di sistem.',
-            '8. Kolom periode_awal dan periode_akhir opsional — jika kosong, sistem otomatis isi awal/akhir bulan tanggal_kirim.',
-            '9. Setiap baris di Sheet "Item Invoice" menjadi satu baris Item Tagihan di sistem.',
-            '10. Hapus baris [CONTOH] sebelum upload. Di halaman Import, pilih jenis "B2B Konsolidasi".',
+            '8. Setiap baris di Sheet "Item Invoice" menjadi satu baris Item Tagihan di sistem.',
+            '9. Hapus baris [CONTOH] sebelum upload. Di halaman Import, pilih jenis "B2B Konsolidasi".',
         ];
 
         foreach ($steps as $i => $step) {
@@ -1304,15 +1291,13 @@ class InvoiceController extends Controller
         $row++;
 
         $sections = [
-            ['  KETERANGAN KOLOM — SHEET 1: DATA INVOICE (A–H)', 'FF1565C0', [
+            ['  KETERANGAN KOLOM — SHEET 1: DATA INVOICE (A–E)', 'FF1565C0', [
                 ['no_urut',               'Nomor urut baris — kunci penghubung ke Sheet "Item Invoice"',  'Ya',       'Angka unik per baris. Contoh: 1, 2, 3'],
                 ['no_invoice_konsolidasi','Nomor invoice konsolidasi ke klien PT',                        'Ya',       'Harus unik di sistem. Contoh: ABBINV-46143'],
                 ['nama_klien',            'Nama Klien PT sesuai data di sistem',                          'Ya',       'Harus persis sesuai. Contoh: PT. Arkhan Berkah Bersama'],
-                ['tanggal_kirim_barang',  'Tanggal pengiriman barang (menjadi tanggal invoice)',           'Ya',       'Format DD-MM-YYYY. Contoh: 01-05-2026'],
+                ['tanggal_invoice',       'Tanggal invoice (tanggal tagihan diterbitkan)',                 'Ya',       'Format DD-MM-YYYY. Contoh: 01-05-2026'],
                 ['no_surat_jalan',        'Nomor surat jalan pengiriman',                                 'Opsional', 'Contoh: SJ-20260601-001. Kosongkan jika tidak ada'],
                 ['tanggal_jatuh_tempo',   'Tanggal jatuh tempo pembayaran',                               'Opsional', 'Format DD-MM-YYYY. Kosongkan jika tidak ada'],
-                ['periode_awal',          'Awal periode tagihan (default: awal bulan tanggal_kirim)',      'Opsional', 'Format DD-MM-YYYY. Contoh: 01-05-2026'],
-                ['periode_akhir',         'Akhir periode tagihan (default: akhir bulan tanggal_kirim)',    'Opsional', 'Format DD-MM-YYYY. Contoh: 31-05-2026'],
             ]],
             ['  KETERANGAN KOLOM — SHEET 2: ITEM INVOICE (A–I)', 'FF2E7D32', [
                 ['no_urut_invoice', 'Nomor urut invoice dari Sheet "Data Invoice" (kolom no_urut)',    'Ya',       'Harus sesuai no_urut di Sheet "Data Invoice". Contoh: 1'],
@@ -1527,9 +1512,7 @@ class InvoiceController extends Controller
             ['nama_klien',                 'Nama Client sesuai data di sistem',                                       'Ya',       'Harus persis sesuai nama klien di sistem'],
             ['tanggal_invoice',            'Tanggal pembuatan invoice',                                               'Ya',       'Format DD-MM-YYYY. Contoh: 15-06-2025'],
             ['tanggal_jatuh_tempo',        'Tanggal jatuh tempo pembayaran invoice',                                  'Opsional', 'Format DD-MM-YYYY. Contoh: 15-07-2025. Kosongkan jika tidak ada.'],
-            ['periode_awal',               'Tanggal awal periode tagihan',                                            'Ya',       'Format DD-MM-YYYY. Contoh: 01-06-2025'],
-            ['periode_akhir',              'Tanggal akhir periode tagihan',                                           'Ya',       'Format DD-MM-YYYY. Contoh: 30-06-2025'],
-            ['no_surat_jalan',             'Nomor surat jalan',                                                                          'Opsional', 'Teks bebas. Contoh: SJ-001/VI/2025'],
+            ['no_surat_jalan',             'Nomor surat jalan',                                                       'Opsional', 'Teks bebas. Contoh: SJ-001/VI/2025'],
             ['keterangan',                 'Catatan tambahan untuk invoice',                                                         'Opsional', 'Teks bebas'],
             ['tagihan_periode_sebelumnya', 'Saldo tagihan dari periode sebelumnya — dihitung OTOMATIS oleh sistem, tidak perlu diisi', '—',        'Otomatis dari sisa tagihan klien yang belum lunas di database'],
         ];

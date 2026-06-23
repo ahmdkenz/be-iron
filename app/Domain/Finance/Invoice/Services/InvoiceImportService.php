@@ -7,7 +7,6 @@ use App\Models\Barang;
 use App\Models\Invoice;
 use App\Models\InvoiceImportBatch;
 use App\Models\KlienAr;
-use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
@@ -115,27 +114,20 @@ class InvoiceImportService
                 $noUrut       = $this->importStr($row[0] ?? '');   // A
                 $namaKlien    = $this->importStr($row[1] ?? '');   // B
                 $tanggal      = $this->importDate($row[2] ?? '');  // C: tanggal_invoice
-                $tanggalKirim = $this->importDate($row[3] ?? '');  // D: tanggal_kirim_barang
-                $jatuhTempo   = $this->importDate($row[4] ?? '');  // E: tanggal_jatuh_tempo
-                $periodeAwal  = $this->importDate($row[5] ?? '');  // F: periode_awal
-                $periodeAkhir = $this->importDate($row[6] ?? '');  // G: periode_akhir
-                $noSuratJalan = $this->importStr($row[7] ?? '');   // H: no_surat_jalan
-                $keterangan   = $this->importStr($row[8] ?? '');   // I: keterangan
+                $jatuhTempo   = $this->importDate($row[3] ?? '');  // D: tanggal_jatuh_tempo
+                $noSuratJalan = $this->importStr($row[4] ?? '');   // E: no_surat_jalan
+                $keterangan   = $this->importStr($row[5] ?? '');   // F: keterangan
 
                 $validated = Validator::make(
                     [
                         'no_urut'         => $noUrut,
                         'nama_klien'      => $namaKlien,
                         'tanggal_invoice' => $tanggal,
-                        'periode_awal'    => $periodeAwal,
-                        'periode_akhir'   => $periodeAkhir,
                     ],
                     [
                         'no_urut'         => ['required'],
                         'nama_klien'      => ['required'],
                         'tanggal_invoice' => ['required', 'date'],
-                        'periode_awal'    => ['required', 'date'],
-                        'periode_akhir'   => ['required', 'date'],
                     ]
                 );
 
@@ -149,9 +141,6 @@ class InvoiceImportService
                     $errors[] = ['sheet' => 'Invoice', 'row' => $lineNumber, 'message' => "Klien '{$namaKlien}' tidak ditemukan di sistem"];
                     continue;
                 }
-
-                if (!$periodeAwal)  $periodeAwal  = Carbon::parse($tanggal)->startOfMonth()->format('Y-m-d');
-                if (!$periodeAkhir) $periodeAkhir = Carbon::parse($tanggal)->endOfMonth()->format('Y-m-d');
 
                 $existingInvoice = Invoice::where('klien_ar_id', $klien->id)
                     ->whereDate('tanggal_invoice', $tanggal)
@@ -170,10 +159,7 @@ class InvoiceImportService
                     $invoice = Invoice::create([
                         'no_invoice'                 => $noInvoice,
                         'tanggal_invoice'            => $tanggal,
-                        'tanggal_kirim_barang'       => $tanggalKirim ?: null,
                         'tanggal_jatuh_tempo'        => $jatuhTempo,
-                        'periode_awal'               => $periodeAwal,
-                        'periode_akhir'              => $periodeAkhir,
                         'klien_ar_id'                => $klien->id,
                         'resto_id'                   => $klien->resto_id,
                         'perusahaan_id'              => $klien->perusahaan_id,
@@ -343,11 +329,9 @@ class InvoiceImportService
 
                 $noUrut       = $this->importStr($row[0] ?? '');
                 $namaKlien    = $this->importStr($row[1] ?? '');
-                $tanggalKirim = $this->importDate($row[2] ?? '');
+                $tanggal      = $this->importDate($row[2] ?? '');
                 $noSuratJalan = $this->importStr($row[3] ?? '');
                 $jatuhTempo   = $this->importDate($row[4] ?? '');
-                $periodeAwal  = $this->importDate($row[5] ?? '');
-                $periodeAkhir = $this->importDate($row[6] ?? '');
 
                 $totalData++;
 
@@ -359,8 +343,8 @@ class InvoiceImportService
                     $errors[] = ['sheet' => 'Data Invoice', 'row' => $lineNumber, 'message' => "no_urut '{$noUrut}': nama_klien wajib diisi"];
                     continue;
                 }
-                if (!$tanggalKirim) {
-                    $errors[] = ['sheet' => 'Data Invoice', 'row' => $lineNumber, 'message' => "no_urut '{$noUrut}': tanggal_kirim_barang wajib diisi"];
+                if (!$tanggal) {
+                    $errors[] = ['sheet' => 'Data Invoice', 'row' => $lineNumber, 'message' => "no_urut '{$noUrut}': tanggal_invoice wajib diisi"];
                     continue;
                 }
 
@@ -370,11 +354,8 @@ class InvoiceImportService
                     continue;
                 }
 
-                if (!$periodeAwal)  $periodeAwal  = Carbon::parse($tanggalKirim)->startOfMonth()->format('Y-m-d');
-                if (!$periodeAkhir) $periodeAkhir = Carbon::parse($tanggalKirim)->endOfMonth()->format('Y-m-d');
-
                 $existingInvoice = Invoice::where('klien_ar_id', $klien->id)
-                    ->whereDate('tanggal_kirim_barang', $tanggalKirim)
+                    ->whereDate('tanggal_invoice', $tanggal)
                     ->where('is_opening_balance', false)
                     ->first();
                 if ($existingInvoice) {
@@ -383,18 +364,15 @@ class InvoiceImportService
                     continue;
                 }
 
-                $carryover = $this->service->getMonthlyCarryover($klien->id, $tanggalKirim);
-                $noInvKons = $this->service->generateConsolidatedInvoiceNo($klien, $tanggalKirim);
+                $carryover = $this->service->getMonthlyCarryover($klien->id, $tanggal);
+                $noInvKons = $this->service->generateConsolidatedInvoiceNo($klien, $tanggal);
 
                 try {
                     $invoice = Invoice::create([
                         'no_invoice'                 => $noInvKons,
-                        'tanggal_invoice'            => $tanggalKirim,
-                        'tanggal_kirim_barang'       => $tanggalKirim,
+                        'tanggal_invoice'            => $tanggal,
                         'no_surat_jalan'             => $noSuratJalan ?: null,
                         'tanggal_jatuh_tempo'        => $jatuhTempo ?: null,
-                        'periode_awal'               => $periodeAwal,
-                        'periode_akhir'              => $periodeAkhir,
                         'klien_ar_id'                => $klien->id,
                         'resto_id'                   => null,
                         'perusahaan_id'              => $klien->perusahaan_id,

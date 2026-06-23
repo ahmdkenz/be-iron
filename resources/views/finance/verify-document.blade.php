@@ -180,15 +180,6 @@
     </div>
 
     <div class="field">
-      <div class="field-label">Periode</div>
-      <div class="field-value">
-        {{ \Carbon\Carbon::parse($invoice->periode_awal)->isoFormat('D MMM YYYY') }}
-        &ndash;
-        {{ \Carbon\Carbon::parse($invoice->periode_akhir)->isoFormat('D MMM YYYY') }}
-      </div>
-    </div>
-
-    <div class="field">
       <div class="field-label">Status</div>
       <div class="field-value">
         <span class="pill pill-{{ $invoice->status }}">{{ $invoice->status }}</span>
