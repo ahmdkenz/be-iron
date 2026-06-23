@@ -628,18 +628,16 @@ class OpeningBalanceController extends Controller
             'C' => ['Kode Klien',           18],
             'D' => ['Entitas Penagih',       20],
             'E' => ['Tanggal OB',           16],
-            'F' => ['Periode Awal',         16],
-            'G' => ['Periode Akhir',        16],
-            'H' => ['Saldo Awal',           20],
-            'I' => ['Total Terbayar',       20],
-            'J' => ['Sisa Tagihan',         20],
-            'K' => ['Keterangan',           32],
-            'L' => ['Status',              14],
-            'M' => ['Approval',             16],
-            'N' => ['Dibuat Oleh',          20],
-            'O' => ['Tanggal Dibuat',       20],
+            'F' => ['Saldo Awal',           20],
+            'G' => ['Total Terbayar',       20],
+            'H' => ['Sisa Tagihan',         20],
+            'I' => ['Keterangan',           32],
+            'J' => ['Status',               14],
+            'K' => ['Approval',             16],
+            'L' => ['Dibuat Oleh',          20],
+            'M' => ['Tanggal Dibuat',       20],
         ];
-        $lastCol = 'O';
+        $lastCol = 'M';
 
         $sheet->mergeCells("A1:{$lastCol}1");
         $sheet->setCellValue('A1', 'DATA OPENING BALANCE');
@@ -684,23 +682,21 @@ class OpeningBalanceController extends Controller
                 'C' => [$inv->klienAr?->kode_klien ?? '-',                             DataType::TYPE_STRING],
                 'D' => [$inv->perusahaan?->nama_singkatan_perusahaan ?? '-',           DataType::TYPE_STRING],
                 'E' => [$inv->tanggal_invoice ? \Carbon\Carbon::parse($inv->tanggal_invoice)->format('d-m-Y') : '-', DataType::TYPE_STRING],
-                'F' => [$inv->periode_awal    ? \Carbon\Carbon::parse($inv->periode_awal)->format('d-m-Y')    : '-', DataType::TYPE_STRING],
-                'G' => [$inv->periode_akhir   ? \Carbon\Carbon::parse($inv->periode_akhir)->format('d-m-Y')   : '-', DataType::TYPE_STRING],
-                'H' => [(float) $inv->subtotal,         DataType::TYPE_NUMERIC],
-                'I' => [(float) $inv->total_pembayaran, DataType::TYPE_NUMERIC],
-                'J' => [(float) $inv->sisa_tagihan,     DataType::TYPE_NUMERIC],
-                'K' => [$inv->keterangan ?? '-',                                       DataType::TYPE_STRING],
-                'L' => [$inv->status ?? '-',                                           DataType::TYPE_STRING],
-                'M' => [$inv->approval_status ?? '-',                                  DataType::TYPE_STRING],
-                'N' => [$inv->createdBy?->username ?? '-',                             DataType::TYPE_STRING],
-                'O' => [$inv->created_at ? \Carbon\Carbon::parse($inv->created_at)->format('d-m-Y H:i') : '-', DataType::TYPE_STRING],
+                'F' => [(float) $inv->subtotal,         DataType::TYPE_NUMERIC],
+                'G' => [(float) $inv->total_pembayaran, DataType::TYPE_NUMERIC],
+                'H' => [(float) $inv->sisa_tagihan,     DataType::TYPE_NUMERIC],
+                'I' => [$inv->keterangan ?? '-',                                       DataType::TYPE_STRING],
+                'J' => [$inv->status ?? '-',                                           DataType::TYPE_STRING],
+                'K' => [$inv->approval_status ?? '-',                                  DataType::TYPE_STRING],
+                'L' => [$inv->createdBy?->username ?? '-',                             DataType::TYPE_STRING],
+                'M' => [$inv->created_at ? \Carbon\Carbon::parse($inv->created_at)->format('d-m-Y H:i') : '-', DataType::TYPE_STRING],
             ];
 
             foreach ($rowData as $col => [$val, $type]) {
                 $sheet->getCell("{$col}{$rowNum}")->setValueExplicit($val, $type);
             }
 
-            foreach (['H', 'I', 'J'] as $numCol) {
+            foreach (['F', 'G', 'H'] as $numCol) {
                 $sheet->getStyle("{$numCol}{$rowNum}")->getNumberFormat()->setFormatCode($numFmt);
             }
 
@@ -713,12 +709,12 @@ class OpeningBalanceController extends Controller
             // Status color
             $statusColors = ['DRAFT' => 'FF757575', 'TERKIRIM' => 'FF1565C0', 'SEBAGIAN' => 'FFE65100', 'LUNAS' => 'FF2E7D32'];
             $statusColor  = $statusColors[$inv->status] ?? 'FF212121';
-            $sheet->getStyle("L{$rowNum}")->getFont()->setColor(new \PhpOffice\PhpSpreadsheet\Style\Color($statusColor))->setBold(true);
+            $sheet->getStyle("J{$rowNum}")->getFont()->setColor(new \PhpOffice\PhpSpreadsheet\Style\Color($statusColor))->setBold(true);
 
             // Approval color
             $approvalColors = ['PENDING' => 'FFE65100', 'APPROVED' => 'FF2E7D32', 'REJECTED' => 'FFC62828'];
             $approvalColor  = $approvalColors[$inv->approval_status] ?? 'FF212121';
-            $sheet->getStyle("M{$rowNum}")->getFont()->setColor(new \PhpOffice\PhpSpreadsheet\Style\Color($approvalColor))->setBold(true);
+            $sheet->getStyle("K{$rowNum}")->getFont()->setColor(new \PhpOffice\PhpSpreadsheet\Style\Color($approvalColor))->setBold(true);
 
             $sheet->getRowDimension($rowNum)->setRowHeight(18);
             $rowNum++;
