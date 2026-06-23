@@ -16,6 +16,8 @@ class InvestorRepository
             ->when($filters['search'] ?? null, fn($q, $v) => $q->where(fn($q) => $q
                 ->where('nama_investor', 'like', "%{$v}%")
                 ->orWhere('pengelola', 'like', "%{$v}%")
+                ->orWhere('kode_cabang', 'like', "%{$v}%")
+                ->orWhere('id_cabang', 'like', "%{$v}%")
             ))
             ->when(isset($filters['status']), fn($q) => $q->where('status', $filters['status']))
             ->latest()
@@ -34,6 +36,8 @@ class InvestorRepository
         return Investor::when($filters['search'] ?? null, fn($q, $v) => $q->where(fn($q) => $q
                 ->where('nama_investor', 'like', "%{$v}%")
                 ->orWhere('pengelola', 'like', "%{$v}%")
+                ->orWhere('kode_cabang', 'like', "%{$v}%")
+                ->orWhere('id_cabang', 'like', "%{$v}%")
             ))
             ->when(isset($filters['status']), fn($q) => $q->where('status', $filters['status']))
             ->latest()
