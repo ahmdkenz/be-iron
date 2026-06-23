@@ -3,22 +3,18 @@
 namespace App\Domain\Finance\KlienAr\Controllers;
 
 use App\Domain\Finance\KlienAr\DTO\KlienArDTO;
+use App\Domain\Finance\KlienAr\Jobs\ImportKlienArJob;
 use App\Domain\Finance\KlienAr\Requests\StoreKlienArRequest;
 use App\Domain\Finance\KlienAr\Requests\UpdateKlienArRequest;
 use App\Domain\Finance\KlienAr\Resources\KlienArResource;
 use App\Domain\Finance\KlienAr\Services\KlienArService;
 use App\Http\Controllers\Controller;
-use App\Models\KlienAr;
-use App\Models\Karyawan;
-use App\Models\Perusahaan;
-use App\Models\Resto;
+use App\Models\KlienArImportBatch;
 use App\Support\Helpers\RoleHelper;
 use App\Support\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Validator;
 use PhpOffice\PhpSpreadsheet\Cell\DataType;
-use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
 use PhpOffice\PhpSpreadsheet\Style\Border;
@@ -259,6 +255,10 @@ class KlienArController extends Controller
             ->deleteFileAfterSend(true);
     }
 
+    /**
+     * Terima file import lalu proses di latar belakang (queue).
+     * Mengembalikan batch_id yang dipakai frontend untuk polling progress.
+     */
     public function import(Request $request): JsonResponse
     {
         $this->forbidReadOnlyMutation();
@@ -268,138 +268,56 @@ class KlienArController extends Controller
         }
 
         $request->validate([
-            'file' => ['required', 'file', 'mimes:csv,txt,xlsx,xls', 'max:2048'],
+            'file' => ['required', 'file', 'mimes:csv,txt,xlsx,xls', 'max:10240'],
         ]);
 
-        $file      = $request->file('file');
-        $extension = strtolower($file->getClientOriginalExtension());
-        $path      = $file->getRealPath();
+        KlienArImportBatch::failStale();
 
-        $rows = in_array($extension, ['xlsx', 'xls'])
-            ? $this->parseXlsx($path)
-            : $this->parseCsv($path);
+        $path = $request->file('file')->store('klien-ar-imports');
 
-        $insertedCount = 0;
-        $updatedCount  = 0;
-        $totalData     = 0;
-        $errors        = [];
-        $lineNumber    = 0;
-        $headerSkipped = false;
+        $batch = KlienArImportBatch::create([
+            'user_id'   => auth()->id(),
+            'file_path' => $path,
+            'status'    => 'queued',
+        ]);
 
-        foreach ($rows as $row) {
-            $lineNumber++;
-            $firstCell = trim((string) ($row[0] ?? ''));
-
-            if (str_starts_with($firstCell, '#')) continue;
-
-            if (!$headerSkipped) {
-                $headerSkipped = true;
-                continue;
-            }
-
-            if (str_starts_with($firstCell, '[CONTOH]')) continue;
-
-            if ($firstCell === '' && count(array_filter(array_map('strval', $row))) === 0) continue;
-
-            $totalData++;
-
-            $namaKlien       = trim((string) ($row[1] ?? ''));
-            $tipeKlien       = strtoupper(trim((string) ($row[2] ?? '')));
-            $namaResto       = $this->importValue($row[3] ?? '');
-            $namaKaryawanAr  = $this->importValue($row[4] ?? '');
-            $namaEntitas     = $this->importValue($row[8] ?? '');
-
-            // Lookup Resto
-            $restoId = null;
-            if ($namaResto) {
-                $resto = Resto::where('nama_resto', $namaResto)->latest()->first();
-                if (!$resto) {
-                    $errors[] = ['row' => $lineNumber, 'message' => "Resto '{$namaResto}' tidak ditemukan di sistem."];
-                    continue;
-                }
-                $restoId = $resto->id;
-            } elseif ($tipeKlien === 'RESTO') {
-                $errors[] = ['row' => $lineNumber, 'message' => "Kolom nama_resto wajib diisi untuk tipe klien {$tipeKlien}."];
-                continue;
-            }
-
-            // Lookup Karyawan AR
-            $karyawanArId = null;
-            if ($namaKaryawanAr) {
-                $karyawan = Karyawan::where('nama_karyawan', $namaKaryawanAr)->latest()->first();
-                if (!$karyawan) {
-                    $errors[] = ['row' => $lineNumber, 'message' => "Karyawan AR '{$namaKaryawanAr}' tidak ditemukan di sistem."];
-                    continue;
-                }
-                $karyawanArId = $karyawan->id;
-            }
-
-            // Lookup Perusahaan via kolom nama_entitas (opsional, eksplisit untuk PT)
-            $perusahaanId = null;
-            if ($namaEntitas) {
-                $perusahaan = Perusahaan::where('nama_perusahaan', $namaEntitas)->first();
-                if (!$perusahaan) {
-                    $errors[] = ['row' => $lineNumber, 'message' => "Entitas '{$namaEntitas}' tidak ditemukan di sistem."];
-                    continue;
-                }
-                $perusahaanId = $perusahaan->id;
-            }
-
-            $data = [
-                'kode_klien'     => $this->importValue($row[0] ?? ''),
-                'nama_klien'     => $namaKlien,
-                'tipe_klien'     => $tipeKlien,
-                'resto_id'       => $restoId,
-                'karyawan_ar_id' => $karyawanArId,
-                'perusahaan_id'  => $perusahaanId,
-                'no_npwp'        => $this->importValue($row[5] ?? ''),
-                'no_wa'          => $this->importValue($row[6] ?? ''),
-                'status'         => isset($row[7]) && trim((string) $row[7]) !== '' ? (bool) (int) $row[7] : true,
-            ];
-
-            $validator = Validator::make($data, [
-                'kode_klien'     => ['required', 'string', 'max:30'],
-                'nama_klien'     => ['required', 'string', 'max:150'],
-                'tipe_klien'     => ['required', 'in:PT,RESTO'],
-                'resto_id'       => ['nullable', 'integer'],
-                'karyawan_ar_id' => ['required', 'integer'],
-                'perusahaan_id'  => ['nullable', 'integer'],
-                'no_npwp'        => ['nullable', 'string', 'max:30'],
-                'no_wa'          => ['nullable', 'string', 'max:20'],
-                'status'         => ['nullable', 'boolean'],
-            ]);
-
-            if ($validator->fails()) {
-                $errors[] = ['row' => $lineNumber, 'message' => implode('; ', $validator->errors()->all())];
-                continue;
-            }
-
-            $existing = KlienAr::where('kode_klien', $data['kode_klien'])->latest()->first();
-            if (!$existing) {
-                $existing = KlienAr::where('nama_klien', $data['nama_klien'])
-                    ->where('tipe_klien', $data['tipe_klien'])
-                    ->latest()
-                    ->first();
-            }
-
-            if ($existing) {
-                $this->service->update($existing, KlienArDTO::fromRequest($data));
-                $updatedCount++;
-            } else {
-                $this->service->create(KlienArDTO::fromRequest($data));
-                $insertedCount++;
-            }
-        }
-
-        $failed = $totalData - $insertedCount - $updatedCount;
+        ImportKlienArJob::dispatch($batch->id);
 
         return $this->successResponse([
-            'total'    => $totalData,
-            'inserted' => $insertedCount,
-            'updated'  => $updatedCount,
-            'failed'   => $failed,
-            'errors'   => $errors,
-        ], "Import selesai. {$insertedCount} ditambahkan, {$updatedCount} diperbarui, {$failed} gagal.");
+            'batch_id' => $batch->id,
+            'status'   => $batch->status,
+        ], 'File diterima. Import sedang diproses di latar belakang.', 202);
+    }
+
+    /**
+     * Status & progress sebuah batch import (di-poll frontend).
+     */
+    public function importStatus(string $id): JsonResponse
+    {
+        KlienArImportBatch::failStale();
+
+        $batch = KlienArImportBatch::find($id);
+        if (!$batch) {
+            return $this->notFoundResponse('Batch import tidak ditemukan');
+        }
+
+        $user = auth()->user();
+        if ($batch->user_id !== $user->id && !RoleHelper::hasAnyRole($user, ['ADMIN', 'MANAGER', 'SUPERVISOR'])) {
+            return $this->unauthorizedResponse();
+        }
+
+        return $this->successResponse([
+            'batch_id'       => $batch->id,
+            'status'         => $batch->status,
+            'processed'      => $batch->processed,
+            'progress_total' => $batch->total,
+            'total'          => $batch->total_data,
+            'inserted'       => $batch->inserted,
+            'updated'        => $batch->updated,
+            'failed'         => $batch->failed,
+            'errors'         => $batch->errors ?? [],
+            'message'        => $batch->message,
+        ]);
     }
 
     private function buildDataSheet(Worksheet $sheet): void
@@ -636,77 +554,6 @@ class KlienArController extends Controller
             $sheet->getRowDimension($row)->setRowHeight(18);
             $row++;
         }
-    }
-
-    private function parseXlsx(string $path): array
-    {
-        $spreadsheet = IOFactory::load($path);
-        $sheet       = $spreadsheet->getActiveSheet();
-        $rows        = [];
-        $headerFound = false;
-
-        foreach ($sheet->getRowIterator() as $rowObj) {
-            $cellIter = $rowObj->getCellIterator();
-            $cellIter->setIterateOnlyExistingCells(false);
-
-            $cells = [];
-            foreach ($cellIter as $cell) {
-                $cells[] = $this->xlsxCellToString($cell);
-            }
-
-            $cells     = array_slice($cells, 0, 9);
-            $firstCell = trim($cells[0] ?? '');
-
-            if (!$headerFound) {
-                if (strtolower($firstCell) === 'kode_klien') {
-                    $headerFound = true;
-                    $rows[]      = $cells;
-                }
-                continue;
-            }
-
-            $rows[] = $cells;
-        }
-
-        return $rows;
-    }
-
-    private function parseCsv(string $path): array
-    {
-        $rows   = [];
-        $handle = fopen($path, 'r');
-
-        $bom = fread($handle, 3);
-        if ($bom !== "\xEF\xBB\xBF") {
-            rewind($handle);
-        }
-
-        while (($row = fgetcsv($handle)) !== false) {
-            $rows[] = $row;
-        }
-        fclose($handle);
-        return $rows;
-    }
-
-    private function xlsxCellToString(\PhpOffice\PhpSpreadsheet\Cell\Cell $cell): string
-    {
-        $value = $cell->getValue();
-
-        if ($value === null) return '';
-        if (is_bool($value)) return $value ? '1' : '0';
-        if (is_int($value)) return (string) $value;
-        if (is_float($value)) {
-            return fmod($value, 1.0) === 0.0
-                ? sprintf('%.0f', $value)
-                : (string) $value;
-        }
-        return trim((string) $value);
-    }
-
-    private function importValue(mixed $val): ?string
-    {
-        $s = trim((string) $val);
-        return ($s === '' || $s === '-') ? null : $s;
     }
 
     private function applyPicArScope(array &$filters): void
