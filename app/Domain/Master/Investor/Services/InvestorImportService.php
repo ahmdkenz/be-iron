@@ -120,15 +120,26 @@ class InvestorImportService
                     continue;
                 }
 
-                // Identitas baris = kombinasi nama_investor + kode_cabang + id_cabang.
-                // Investor dengan nama sama tapi cabang (kode/id) berbeda dianggap
-                // data BARU; update hanya bila ketiganya sama (idempotent saat re-import).
-                // Catatan: where('kolom', null) otomatis jadi "IS NULL" di Laravel.
+                // Langkah 1: exact match — nama + kode_cabang + id_cabang.
+                // Menangani "beda cabang = insert" dan "re-import sama = update".
                 $existing = Investor::where('nama_investor', $data['nama_investor'])
                     ->where('kode_cabang', $data['kode_cabang'])
                     ->where('id_cabang', $data['id_cabang'])
                     ->latest()
                     ->first();
+
+                // Langkah 2: jika tidak ada exact match dan baris ini punya info cabang,
+                // cari record "stub" (nama sama, kode_cabang & id_cabang masih NULL).
+                // Investor yang diimport sebelumnya tanpa info cabang akan di-update
+                // dengan info cabang yang baru — bukan dibuat record baru.
+                if (!$existing && ($data['kode_cabang'] !== null || $data['id_cabang'] !== null)) {
+                    $existing = Investor::where('nama_investor', $data['nama_investor'])
+                        ->whereNull('kode_cabang')
+                        ->whereNull('id_cabang')
+                        ->latest()
+                        ->first();
+                }
+
                 $existingId = $existing?->id;
 
                 // Keunikan KTP/NPWP — terhadap data lama (DB) maupun baris lain dalam file.
