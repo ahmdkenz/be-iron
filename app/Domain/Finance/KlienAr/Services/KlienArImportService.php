@@ -47,7 +47,7 @@ class KlienArImportService
         if ($isXlsx && empty($rows)) {
             $batch->update([
                 'status'  => 'failed',
-                'message' => 'Header kolom "kode_klien" tidak ditemukan dalam file. Pastikan menggunakan template import yang disediakan dan tidak mengubah nama kolom pada baris header.',
+                'message' => 'Header kolom "nama_klien" tidak ditemukan dalam file. Pastikan menggunakan template import yang disediakan dan tidak mengubah nama kolom pada baris header.',
             ]);
             return;
         }
@@ -92,11 +92,11 @@ class KlienArImportService
 
                 $totalData++;
 
-                $namaKlien      = trim((string) ($row[1] ?? ''));
-                $tipeKlien      = strtoupper(trim((string) ($row[2] ?? '')));
-                $namaResto      = $this->importValue($row[3] ?? '');
-                $namaKaryawanAr = $this->importValue($row[4] ?? '');
-                $namaEntitas    = $this->importValue($row[8] ?? '');
+                $namaKlien      = trim((string) ($row[0] ?? ''));
+                $tipeKlien      = strtoupper(trim((string) ($row[1] ?? '')));
+                $namaResto      = $this->importValue($row[2] ?? '');
+                $namaKaryawanAr = $this->importValue($row[3] ?? '');
+                $namaEntitas    = $this->importValue($row[7] ?? '');
 
                 // Resolve Resto
                 $restoId = null;
@@ -132,19 +132,17 @@ class KlienArImportService
                 }
 
                 $data = [
-                    'kode_klien'     => $this->importValue($row[0] ?? ''),
                     'nama_klien'     => $namaKlien,
                     'tipe_klien'     => $tipeKlien,
                     'resto_id'       => $restoId,
                     'karyawan_ar_id' => $karyawanArId,
                     'perusahaan_id'  => $perusahaanId,
-                    'no_npwp'        => $this->importValue($row[5] ?? ''),
-                    'no_wa'          => $this->importValue($row[6] ?? ''),
-                    'status'         => isset($row[7]) && trim((string) $row[7]) !== '' ? (bool) (int) $row[7] : true,
+                    'no_npwp'        => $this->importValue($row[4] ?? ''),
+                    'no_wa'          => $this->importValue($row[5] ?? ''),
+                    'status'         => isset($row[6]) && trim((string) $row[6]) !== '' ? (bool) (int) $row[6] : true,
                 ];
 
                 $validator = Validator::make($data, [
-                    'kode_klien'     => ['required', 'string', 'max:30'],
                     'nama_klien'     => ['required', 'string', 'max:150'],
                     'tipe_klien'     => ['required', 'in:PT,RESTO'],
                     'resto_id'       => ['nullable', 'integer'],
@@ -160,14 +158,11 @@ class KlienArImportService
                     continue;
                 }
 
-                // Upsert: cari berdasarkan kode_klien, fallback ke nama_klien + tipe_klien
-                $existing = KlienAr::where('kode_klien', $data['kode_klien'])->latest()->first();
-                if (!$existing) {
-                    $existing = KlienAr::where('nama_klien', $data['nama_klien'])
-                        ->where('tipe_klien', $data['tipe_klien'])
-                        ->latest()
-                        ->first();
-                }
+                // Upsert: cari berdasarkan nama_klien + tipe_klien (kode digenerate otomatis saat insert)
+                $existing = KlienAr::where('nama_klien', $data['nama_klien'])
+                    ->where('tipe_klien', $data['tipe_klien'])
+                    ->latest()
+                    ->first();
 
                 try {
                     if ($existing) {
@@ -224,6 +219,7 @@ class KlienArImportService
         $sheet       = $spreadsheet->getActiveSheet();
         $rows        = [];
         $headerFound = false;
+        $isOldFormat = false;
 
         foreach ($sheet->getRowIterator() as $rowObj) {
             $cellIter = $rowObj->getCellIterator();
@@ -234,18 +230,25 @@ class KlienArImportService
                 $cells[] = $this->xlsxCellToString($cell);
             }
 
-            $cells     = array_slice($cells, 0, 9);
-            $firstCell = trim($cells[0] ?? '');
+            $firstCell = strtolower(trim($cells[0] ?? ''));
 
             if (!$headerFound) {
-                if (strtolower($firstCell) === 'kode_klien') {
+                if ($firstCell === 'nama_klien') {
                     $headerFound = true;
-                    $rows[]      = $cells;
+                    $isOldFormat = false;
+                    $rows[]      = array_slice($cells, 0, 8);
+                } elseif ($firstCell === 'kode_klien') {
+                    // Format lama: strip kolom kode_klien, shift sisa kolom ke kiri
+                    $headerFound = true;
+                    $isOldFormat = true;
+                    $rows[]      = array_slice($cells, 1, 8);
                 }
                 continue;
             }
 
-            $rows[] = $cells;
+            $rows[] = $isOldFormat
+                ? array_slice($cells, 1, 8)
+                : array_slice($cells, 0, 8);
         }
 
         return $rows;

@@ -325,19 +325,18 @@ class KlienArController extends Controller
         $sheet->setTitle('Data Client');
 
         $cols = [
-            'A' => ['kode_klien',       20],
-            'B' => ['nama_klien',       28],
-            'C' => ['tipe_klien',       14],
-            'D' => ['nama_resto',       28],
-            'E' => ['nama_karyawan_ar', 26],
-            'F' => ['no_npwp',          22],
-            'G' => ['no_wa',            18],
-            'H' => ['status',           10],
-            'I' => ['nama_entitas',     26],
+            'A' => ['nama_klien',       28],
+            'B' => ['tipe_klien',       14],
+            'C' => ['nama_resto',       28],
+            'D' => ['nama_karyawan_ar', 26],
+            'E' => ['no_npwp',          22],
+            'F' => ['no_wa',            18],
+            'G' => ['status',           10],
+            'H' => ['nama_entitas',     26],
         ];
 
         // Row 1 — Title
-        $sheet->mergeCells('A1:I1');
+        $sheet->mergeCells('A1:H1');
         $sheet->setCellValue('A1', 'TEMPLATE IMPORT DATA Client');
         $sheet->getStyle('A1')->applyFromArray([
             'font'      => ['bold' => true, 'size' => 14, 'color' => ['argb' => 'FFFFFFFF']],
@@ -347,8 +346,8 @@ class KlienArController extends Controller
         $sheet->getRowDimension(1)->setRowHeight(36);
 
         // Row 2 — Subtitle
-        $sheet->mergeCells('A2:I2');
-        $sheet->setCellValue('A2', 'Isi data Client di bawah ini. Hapus baris [CONTOH] sebelum import. Lihat sheet "Petunjuk Pengisian" untuk panduan lengkap.');
+        $sheet->mergeCells('A2:H2');
+        $sheet->setCellValue('A2', 'Isi data Client di bawah ini. Hapus baris [CONTOH] sebelum import. Kode Client digenerate otomatis. Lihat sheet "Petunjuk Pengisian" untuk panduan lengkap.');
         $sheet->getStyle('A2')->applyFromArray([
             'font'      => ['italic' => true, 'size' => 9, 'color' => ['argb' => 'FF37474F']],
             'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFE3F2FD']],
@@ -364,7 +363,7 @@ class KlienArController extends Controller
             $sheet->setCellValue("{$col}4", $name);
             $sheet->getColumnDimension($col)->setWidth($width);
         }
-        $sheet->getStyle('A4:I4')->applyFromArray([
+        $sheet->getStyle('A4:H4')->applyFromArray([
             'font'      => ['bold' => true, 'size' => 10, 'color' => ['argb' => 'FFFFFFFF']],
             'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF1976D2']],
             'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
@@ -374,20 +373,19 @@ class KlienArController extends Controller
 
         // Row 5 — Example row
         $example = [
-            'A' => '[CONTOH] AR-B2C-001',
-            'B' => 'Budi Santoso',
-            'C' => 'RESTO',
-            'D' => 'Warung Makan Enak',
-            'E' => 'Andi Karyawan AR',
-            'F' => '12.345.678.9-012.000',
-            'G' => '08123456789',
-            'H' => '1',
-            'I' => '',
+            'A' => '[CONTOH] Budi Santoso',
+            'B' => 'RESTO',
+            'C' => 'Warung Makan Enak',
+            'D' => 'Andi Karyawan AR',
+            'E' => '12.345.678.9-012.000',
+            'F' => '08123456789',
+            'G' => '1',
+            'H' => '',
         ];
         foreach ($example as $col => $val) {
             $sheet->getCell("{$col}5")->setValueExplicit($val, DataType::TYPE_STRING);
         }
-        $sheet->getStyle('A5:I5')->applyFromArray([
+        $sheet->getStyle('A5:H5')->applyFromArray([
             'font'      => ['italic' => true, 'size' => 9, 'color' => ['argb' => 'FFE65100']],
             'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFFFF9C4']],
             'alignment' => ['vertical' => Alignment::VERTICAL_CENTER],
@@ -398,17 +396,17 @@ class KlienArController extends Controller
         // Rows 6–55 — Empty template rows
         for ($row = 6; $row <= 55; $row++) {
             $bg = $row % 2 === 0 ? 'FFF5F5F5' : 'FFFFFFFF';
-            $sheet->getStyle("A{$row}:I{$row}")->applyFromArray([
+            $sheet->getStyle("A{$row}:H{$row}")->applyFromArray([
                 'fill'    => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => $bg]],
                 'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_HAIR, 'color' => ['argb' => 'FFE0E0E0']]],
             ]);
             // Format no_wa as TEXT to prevent scientific notation
-            $sheet->getStyle("G{$row}")->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
+            $sheet->getStyle("F{$row}")->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
             $sheet->getRowDimension($row)->setRowHeight(18);
         }
 
         $sheet->freezePane('A5');
-        $sheet->setAutoFilter('A4:I4');
+        $sheet->setAutoFilter('A4:H4');
     }
 
     private function buildInstructionSheet(Worksheet $sheet): void
@@ -448,7 +446,7 @@ class KlienArController extends Controller
             '2. Hapus baris [CONTOH] sebelum melakukan import data.',
             '3. Isi data mulai dari baris kosong di bawah baris [CONTOH].',
             '4. Kolom opsional dapat dikosongkan atau diisi tanda \'-\' — sistem akan memperlakukan keduanya sebagai tidak ada nilai.',
-            '5. Kolom kode_klien WAJIB diisi dengan format AR-B2C-xxx (B2C) atau AR-B2B-xxx (B2B). Contoh: AR-B2C-001.',
+            '5. Kode Client digenerate OTOMATIS oleh sistem saat import — tidak perlu diisi.',
             '6. Kolom tipe_klien harus diisi persis salah satu dari: RESTO (B2C) atau PT (B2B).',
             '7. Untuk tipe RESTO, kolom nama_resto WAJIB diisi persis sesuai nama resto di sistem.',
             '8. Kolom nama_karyawan_ar WAJIB diisi persis sesuai nama karyawan AR di sistem.',
@@ -495,7 +493,6 @@ class KlienArController extends Controller
         $row++;
 
         $colInfos = [
-            ['kode_resto',       'Kode unik Client (Resto)',                                       'Ya',        'Format: AR-B2C-xxx (B2C) / AR-B2B-xxx (B2B). Contoh: AR-B2C-001'],
             ['nama_klien',       'B2C: Nama investor pemilik resto. B2B: Nama kontak keuangan PT', 'Ya',        'Teks, maks 150 karakter. Contoh: Budi Santoso'],
             ['tipe_klien',       'Jenis/tipe Client',                                              'Ya',        'Isi persis salah satu: RESTO (B2C) atau PT (B2B)'],
             ['nama_resto',       'Nama resto sesuai data di sistem',                               'Jika B2C',  'Wajib untuk tipe RESTO. Kosongkan jika PT'],
@@ -534,9 +531,9 @@ class KlienArController extends Controller
         $row++;
 
         $notes = [
-            '• kode_resto WAJIB diisi — kode tidak di-generate otomatis, harus diisi manual sesuai format.',
-            '• Jika kode_resto SUDAH ADA di sistem, data akan DIPERBARUI (update).',
-            '• Jika kode_resto BELUM ADA di sistem, data baru DITAMBAHKAN dengan kode yang diberikan.',
+            '• Kode Client digenerate OTOMATIS oleh sistem — tidak perlu diisi manual.',
+            '• Jika data dengan nama_klien + tipe_klien yang sama SUDAH ADA di sistem, data akan DIPERBARUI (update) dan kode lama dipertahankan.',
+            '• Jika belum ada, data baru DITAMBAHKAN dengan kode CLXXX yang digenerate otomatis.',
             '• nama_resto yang tidak ditemukan di sistem akan menyebabkan baris tersebut GAGAL diproses.',
             '• nama_karyawan_ar yang tidak ditemukan di sistem akan menyebabkan baris tersebut GAGAL diproses.',
             '• nama_entitas yang tidak ditemukan di sistem akan menyebabkan baris tersebut GAGAL diproses.',

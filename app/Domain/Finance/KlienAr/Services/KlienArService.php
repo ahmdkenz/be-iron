@@ -13,16 +13,14 @@ class KlienArService
 {
     public function __construct(private readonly KlienArRepository $repository) {}
 
-    public function generateKodeKlien(?string $tipeKlien = 'RESTO'): string
+    public function generateKodeKlien(?string $tipeKlien = null): string
     {
-        $segment = $this->resolveKodeSegment($tipeKlien ?? 'RESTO');
-        $prefix  = "AR-{$segment}";
-        $count   = KlienAr::withTrashed()
-            ->where('kode_klien', 'like', $prefix . '-%')
+        $count = KlienAr::withTrashed()
+            ->where('kode_klien', 'like', 'CL%')
             ->count();
-        $seq     = str_pad($count + 1, 3, '0', STR_PAD_LEFT);
+        $seq = str_pad($count + 1, 3, '0', STR_PAD_LEFT);
 
-        return "{$prefix}-{$seq}";
+        return "CL{$seq}";
     }
 
     public function paginate(array $filters = []): LengthAwarePaginator
@@ -56,7 +54,7 @@ class KlienArService
             ?? Karyawan::find($dto->karyawan_ar_id)?->perusahaan_id;
 
         return $this->repository->create([
-            'kode_klien'    => $dto->kode_klien,
+            'kode_klien'    => $this->generateKodeKlien(),
             'nama_klien'    => $dto->nama_klien,
             'tipe_klien'    => $dto->tipe_klien,
             'no_npwp'       => $dto->no_npwp,
@@ -103,9 +101,5 @@ class KlienArService
         $this->repository->delete($klien);
     }
 
-    private function resolveKodeSegment(string $tipeKlien): string
-    {
-        return strtoupper($tipeKlien) === 'RESTO' ? 'B2C' : 'B2B';
-    }
 
 }
