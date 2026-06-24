@@ -516,10 +516,11 @@ class BankStatementService
         }
 
         return $query->limit(30)->get()->map(function ($inv) {
-            $subtotal        = (float) $inv->subtotal;
-            $totalPembayaran = (float) $inv->total_pembayaran;
-            $sisaEfektif     = $subtotal > 0
-                ? max(0, $subtotal - $totalPembayaran)
+            $subtotal         = (float) $inv->subtotal;
+            $totalPembayaran  = (float) $inv->total_pembayaran;
+            $totalPenyesuaian = (float) $inv->total_penyesuaian;
+            $sisaEfektif      = $subtotal > 0
+                ? max(0, $subtotal - $totalPembayaran - $totalPenyesuaian)
                 : (float) $inv->sisa_tagihan;
 
             return [
@@ -544,11 +545,12 @@ class BankStatementService
         abort_if($detail->kredit <= 0, 422, 'Hanya transaksi kredit yang dapat dicatat pembayarannya.');
 
         return DB::transaction(function () use ($detail, $invoice, $settleOriginalInvoiceIds) {
-            $subtotal    = (float) $invoice->subtotal;
-            $totalBayar  = (float) $invoice->total_pembayaran;
-            $sisaEfektif = $subtotal > 0
-                ? max(0, $subtotal - $totalBayar)
-                : max(0, (float) $invoice->total_tagihan - $totalBayar);
+            $subtotal         = (float) $invoice->subtotal;
+            $totalBayar       = (float) $invoice->total_pembayaran;
+            $totalPenyesuaian = (float) $invoice->total_penyesuaian;
+            $sisaEfektif      = $subtotal > 0
+                ? max(0, $subtotal - $totalBayar - $totalPenyesuaian)
+                : max(0, (float) $invoice->total_tagihan - $totalBayar - $totalPenyesuaian);
             $jumlahBayar = min((float) $detail->kredit, $sisaEfektif);
 
             $paymentData = [

@@ -334,7 +334,7 @@
   @php
     $regularInvoicesInPeriod = $regularInvoicesInPeriod ?? collect();
     $totalTagihanPeriode = $regularInvoicesInPeriod->sum('subtotal');
-    $totalSisaPeriode    = $regularInvoicesInPeriod->sum(fn($inv) => max(0, (float)$inv->subtotal - (float)$inv->total_pembayaran));
+    $totalSisaPeriode    = $regularInvoicesInPeriod->sum(fn($inv) => max(0, (float)$inv->subtotal - (float)$inv->total_pembayaran - (float)$inv->total_penyesuaian));
   @endphp
 
   <div class="ob-section-title" style="margin-top: 18px;">Invoice Bulan Berjalan</div>
@@ -423,7 +423,7 @@
     $isOb = $invoice->is_opening_balance;
     $totalBerjalan = isset($totalSisaPeriode) ? (float)$totalSisaPeriode : 0;
     $obGrandTotal  = $isOb ? ($obSubtotal + $totalBerjalan) : 0;
-    $obSisaBayar   = $isOb ? max(0, $obGrandTotal - (float)$invoice->total_pembayaran) : 0;
+    $obSisaBayar   = $isOb ? max(0, $obGrandTotal - (float)$invoice->total_pembayaran - (float)$invoice->total_penyesuaian) : 0;
     $terbilangAmt  = $isOb ? $obGrandTotal : (float)$invoice->subtotal;
   @endphp
   <table>
@@ -477,9 +477,16 @@
           </tr>
           @endif
 
+          @if((float)$invoice->total_penyesuaian > 0)
+          <tr>
+            <td class="totals-lbl" style="color:#166534;">Credit Note</td>
+            <td class="totals-val" style="color:#166534;">- Rp {{ number_format((float)$invoice->total_penyesuaian, 0, ',', '.') }}</td>
+          </tr>
+          @endif
+
           <tr class="totals-sisa">
             <td class="totals-lbl">SISA BAYAR</td>
-            <td class="totals-val">Rp {{ number_format($isOb ? $obSisaBayar : max(0, (float)$invoice->subtotal - (float)$invoice->total_pembayaran), 0, ',', '.') }}</td>
+            <td class="totals-val">Rp {{ number_format($isOb ? $obSisaBayar : max(0, (float)$invoice->subtotal - (float)$invoice->total_pembayaran - (float)$invoice->total_penyesuaian), 0, ',', '.') }}</td>
           </tr>
         </table>
       </td>
