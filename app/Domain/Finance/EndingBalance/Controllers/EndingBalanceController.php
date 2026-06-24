@@ -54,7 +54,7 @@ class EndingBalanceController extends Controller
     {
         $this->authorizeView();
 
-        $eb = EndingBalance::with(['klienAr.perusahaan', 'koreksi.submittedBy', 'koreksi.spv', 'koreksi.manager', 'koreksi.invoice', 'lockedBy', 'createdBy'])
+        $eb = EndingBalance::with(['klienAr.perusahaan', 'koreksi.submittedBy', 'koreksi.spv', 'koreksi.manager', 'koreksi.invoice', 'koreksi.items', 'lockedBy', 'createdBy'])
             ->findOrFail($id);
 
         return $this->successResponse($this->formatEb($eb, detailed: true));
@@ -285,6 +285,8 @@ class EndingBalanceController extends Controller
                 'id'                  => $k->id,
                 'invoice_id'          => $k->invoice_id,
                 'no_invoice'          => $k->invoice?->no_invoice,
+                'tipe'                => $k->tipe,
+                'no_dokumen'          => $k->no_dokumen,
                 'nilai_koreksi'       => (float) $k->nilai_koreksi,
                 'alasan_koreksi'      => $k->alasan_koreksi,
                 'dokumen_url'         => $k->dokumen_url,
@@ -297,6 +299,20 @@ class EndingBalanceController extends Controller
                 'manager'             => $k->manager?->username,
                 'manager_note'        => $k->manager_note,
                 'manager_actioned_at' => $k->manager_actioned_at?->toIso8601String(),
+                'items'               => $k->relationLoaded('items')
+                    ? $k->items->map(fn($i) => [
+                        'id'                => $i->id,
+                        'invoice_item_id'   => $i->invoice_item_id,
+                        'nama_barang'       => $i->nama_barang,
+                        'qty_lama'          => (float) $i->qty_lama,
+                        'harga_satuan_lama' => (float) $i->harga_satuan_lama,
+                        'subtotal_lama'     => (float) $i->subtotal_lama,
+                        'qty_baru'          => (float) $i->qty_baru,
+                        'harga_satuan_baru' => (float) $i->harga_satuan_baru,
+                        'subtotal_baru'     => (float) $i->subtotal_baru,
+                        'selisih'           => (float) $i->selisih,
+                    ])->values()->all()
+                    : [],
             ])->values()->all();
         }
 

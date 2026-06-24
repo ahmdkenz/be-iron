@@ -2,6 +2,7 @@
 
 namespace App\Support\Helpers;
 
+use App\Models\EndingBalanceKoreksi;
 use App\Models\Invoice;
 use Carbon\Carbon;
 use Endroid\QrCode\QrCode;
@@ -84,6 +85,42 @@ class SignatureBarcodeHelper
             "Grand Total: {$grandTotal}",
             "Sisa Bayar: {$sisaBayar}",
             "Status: Di Ajukan",
+        ];
+
+        return implode("\n", $lines);
+    }
+
+    public static function buildKoreksiPreparedPayload(EndingBalanceKoreksi $k, string $preparedByName): string
+    {
+        $tanggal      = $k->manager_actioned_at ?? $k->submitted_at;
+        $tglFormatted = $tanggal ? Carbon::parse($tanggal)->format('d-m-Y') : '-';
+        $nilai        = 'Rp ' . number_format(abs((float) $k->nilai_koreksi), 0, ',', '.');
+
+        $lines = [
+            "Disiapkan Oleh: {$preparedByName}",
+            "No Dokumen: {$k->no_dokumen}",
+            "No Invoice: " . ($k->invoice?->no_invoice ?? '-'),
+            "Nilai: {$nilai}",
+            "Tanggal: {$tglFormatted}",
+            "Status: {$k->status}",
+        ];
+
+        return implode("\n", $lines);
+    }
+
+    public static function buildKoreksiApprovedPayload(EndingBalanceKoreksi $k, string $approvedByName): string
+    {
+        $tanggal      = $k->manager_actioned_at ?? $k->submitted_at;
+        $tglFormatted = $tanggal ? Carbon::parse($tanggal)->format('d-m-Y') : '-';
+        $nilai        = 'Rp ' . number_format(abs((float) $k->nilai_koreksi), 0, ',', '.');
+
+        $lines = [
+            "Disetujui Oleh: {$approvedByName}",
+            "No Dokumen: {$k->no_dokumen}",
+            "No Invoice: " . ($k->invoice?->no_invoice ?? '-'),
+            "Nilai: {$nilai}",
+            "Tanggal: {$tglFormatted}",
+            "Status: {$k->status}",
         ];
 
         return implode("\n", $lines);

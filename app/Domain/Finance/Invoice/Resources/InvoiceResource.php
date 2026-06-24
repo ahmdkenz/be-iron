@@ -78,6 +78,7 @@ class InvoiceResource extends JsonResource
             'tagihan_periode_sebelumnya' => (float) $this->tagihan_periode_sebelumnya,
             'total_tagihan'              => (float) $this->total_tagihan,
             'total_pembayaran'           => (float) $this->total_pembayaran,
+            'total_penyesuaian'          => (float) $this->total_penyesuaian,
             'sisa_tagihan'               => (float) $this->sisa_tagihan,
             'status'                     => $this->status,
             'approval_status'            => $this->approval_status,
@@ -119,6 +120,21 @@ class InvoiceResource extends JsonResource
                     'actor_id'   => $log->actor_id,
                     'actor_name' => $log->relationLoaded('actor') ? $log->actor?->username : null,
                     'created_at' => $log->created_at?->toIso8601String(),
+                ])->values()
+            ),
+            'koreksi'                    => $this->whenLoaded('endingBalanceKoreksi', fn() =>
+                $this->endingBalanceKoreksi->map(fn($k) => [
+                    'id'                  => $k->id,
+                    'tipe'                => $k->tipe,
+                    'no_dokumen'          => $k->no_dokumen,
+                    'nilai_koreksi'       => (float) $k->nilai_koreksi,
+                    'alasan_koreksi'      => $k->alasan_koreksi,
+                    'status'              => $k->status,
+                    'submitted_by'        => $k->relationLoaded('submittedBy') ? $k->submittedBy?->username : null,
+                    'submitted_at'        => $k->submitted_at?->toIso8601String(),
+                    'spv'                 => $k->relationLoaded('spv') ? $k->spv?->username : null,
+                    'manager'             => $k->relationLoaded('manager') ? $k->manager?->username : null,
+                    'manager_actioned_at' => $k->manager_actioned_at?->toIso8601String(),
                 ])->values()
             ),
             'created_by'                 => $this->created_by,

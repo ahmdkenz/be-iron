@@ -9,7 +9,9 @@ use App\Models\EndingBalanceKoreksi;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
 use App\Support\Helpers\RoleHelper;
+use App\Support\Helpers\SignatureBarcodeHelper;
 use App\Support\Traits\ApiResponse;
+use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -74,18 +76,19 @@ class EndingBalanceKoreksiController extends Controller
     }
 
     /**
-     * Kembalikan data koreksi untuk dicetak (hanya CN dan DN).
+     * Cetak Credit Note / Debit Note sebagai PDF (buka di tab baru).
      */
-    public function printDocument(int $id): JsonResponse
+    public function printDocument(Request $request, int $id): mixed
     {
         $this->authorizeOperate();
 
         $koreksi = EndingBalanceKoreksi::with([
-            'endingBalance.klienAr',
-            'invoice',
-            'submittedBy',
-            'spv',
-            'manager',
+            'endingBalance.klienAr.perusahaan',
+            'invoice.perusahaan',
+            'invoice.karyawan.perusahaan',
+            'invoice.klienAr',
+            'submittedBy.karyawan',
+            'manager.karyawan',
         ])->findOrFail($id);
 
         abort_unless(
@@ -94,36 +97,25 @@ class EndingBalanceKoreksiController extends Controller
             'Hanya Credit Note dan Debit Note yang dapat dicetak.'
         );
 
-        $eb     = $koreksi->endingBalance;
-        $klien  = $eb->klienAr;
-        $inv    = $koreksi->invoice;
+        $invoice       = $koreksi->invoice;
+        $klien         = $koreksi->endingBalance?->klienAr;
+        $signatureData = $this->buildKoreksiSignatureData($koreksi);
+        $tipeLabel     = $koreksi->tipe === 'CREDIT_NOTE' ? 'CreditNote' : 'DebitNote';
+        $filename      = $tipeLabel . '-' . $koreksi->no_dokumen . '.pdf';
 
-        return $this->successResponse([
-            'no_dokumen'       => $koreksi->no_dokumen,
-            'tipe'             => $koreksi->tipe,
-            'tipe_label'       => $koreksi->tipe === 'CREDIT_NOTE' ? 'CREDIT NOTE' : 'DEBIT NOTE',
-            'tanggal'          => $koreksi->manager_actioned_at?->toDateString() ?? $koreksi->submitted_at?->toDateString(),
-            'klien'            => [
-                'nama'    => $klien?->nama_klien,
-                'kode'    => $klien?->kode_klien,
-                'no_wa'   => $klien?->no_wa,
-                'no_npwp' => $klien?->no_npwp,
-            ],
-            'invoice'          => [
-                'no_invoice'      => $inv?->no_invoice,
-                'tanggal_invoice' => $inv?->tanggal_invoice?->toDateString(),
-                'total_tagihan'   => (float) ($inv?->subtotal ?? $inv?->total_tagihan ?? 0),
-            ],
-            'nilai_koreksi'    => abs((float) $koreksi->nilai_koreksi),
-            'alasan_koreksi'   => $koreksi->alasan_koreksi,
-            'dokumen_url'      => $koreksi->dokumen_url,
-            'status'           => $koreksi->status,
-            'submitted_by'     => $koreksi->submittedBy?->name ?? $koreksi->submittedBy?->username,
-            'spv_name'         => $koreksi->spv?->name ?? $koreksi->spv?->username,
-            'spv_actioned_at'  => $koreksi->spv_actioned_at?->toDateString(),
-            'manager_name'     => $koreksi->manager?->name ?? $koreksi->manager?->username,
-            'manager_actioned_at' => $koreksi->manager_actioned_at?->toDateString(),
-        ]);
+        if ($request->has('html')) {
+            return view('finance.credit-note-print', compact('koreksi', 'invoice', 'klien', 'signatureData'))->render();
+        }
+
+        return Pdf::loadView('finance.credit-note-print', compact('koreksi', 'invoice', 'klien', 'signatureData'))
+            ->setPaper('a4', 'portrait')
+            ->setOptions([
+                'isRemoteEnabled'      => false,
+                'isHtml5ParserEnabled' => true,
+                'defaultFont'          => 'Arial',
+                'dpi'                  => 150,
+            ])
+            ->stream($filename);
     }
 
     /**
@@ -223,6 +215,29 @@ class EndingBalanceKoreksiController extends Controller
     }
 
     // ─── Private ──────────────────────────────────────────────────────────────
+
+    private function buildKoreksiSignatureData(EndingBalanceKoreksi $koreksi): array
+    {
+        $preparedName    = $koreksi->submittedBy?->name ?? $koreksi->submittedBy?->username ?? '___';
+        $preparedPayload = SignatureBarcodeHelper::buildKoreksiPreparedPayload($koreksi, $preparedName);
+        $preparedQr      = SignatureBarcodeHelper::generateDataUri($preparedPayload, 250);
+
+        $approvedQr   = null;
+        $approvedName = null;
+        if ($koreksi->manager && $koreksi->status === 'APPROVED') {
+            $approvedName    = $koreksi->manager->name ?? $koreksi->manager->username ?? '___';
+            $approvedPayload = SignatureBarcodeHelper::buildKoreksiApprovedPayload($koreksi, $approvedName);
+            $approvedQr      = SignatureBarcodeHelper::generateDataUri($approvedPayload, 250);
+        }
+
+        return [
+            'prepared_by_name' => $preparedName,
+            'prepared_qr_src'  => $preparedQr,
+            'approved_by_name' => $approvedName,
+            'approved_qr_src'  => $approvedQr,
+            'received_by_name' => $koreksi->endingBalance?->klienAr?->nama_klien ?? '___',
+        ];
+    }
 
     private function formatKoreksi(EndingBalanceKoreksi $k): array
     {

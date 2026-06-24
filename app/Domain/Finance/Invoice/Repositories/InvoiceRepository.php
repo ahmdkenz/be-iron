@@ -65,6 +65,10 @@ class InvoiceRepository
             'rejectedBy',
             'updatedBy',
             'approvalLogs.actor',
+            'endingBalanceKoreksi.submittedBy',
+            'endingBalanceKoreksi.spv',
+            'endingBalanceKoreksi.manager',
+            'endingBalanceKoreksi.items',
         ])->find($id);
     }
 
