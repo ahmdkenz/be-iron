@@ -89,6 +89,10 @@ class EndingBalanceController extends Controller
                 ->where('is_opening_balance', false)
                 ->orWhere(fn($q2) => $q2->where('is_opening_balance', true)->where('approval_status', 'APPROVED'))
             )
+            ->with(['endingBalanceKoreksi' => fn($q) => $q
+                ->whereIn('tipe', ['CREDIT_NOTE', 'DEBIT_NOTE'])
+                ->where('status', 'APPROVED')
+            ])
             ->orderBy('tanggal_invoice')
             ->get()
             ->map(fn($inv) => [
@@ -104,6 +108,12 @@ class EndingBalanceController extends Controller
                 'total_penyesuaian'          => (float) $inv->total_penyesuaian,
                 'sisa_tagihan'               => (float) $inv->sisa_tagihan,
                 'status'                     => $inv->status,
+                'total_cn'                   => (float) $inv->endingBalanceKoreksi
+                                                    ->where('tipe', 'CREDIT_NOTE')
+                                                    ->sum(fn($k) => abs((float) $k->nilai_koreksi)),
+                'total_dn'                   => (float) $inv->endingBalanceKoreksi
+                                                    ->where('tipe', 'DEBIT_NOTE')
+                                                    ->sum(fn($k) => abs((float) $k->nilai_koreksi)),
             ]);
 
         return $this->successResponse($invoices);
