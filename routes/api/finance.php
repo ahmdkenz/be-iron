@@ -146,6 +146,7 @@ Route::prefix('ending-balance')->group(function () {
     Route::patch('/koreksi/{id}/reject-spv',               [EndingBalanceKoreksiController::class, 'rejectSpv'])->middleware('role:SUPERVISOR|ADMIN');
     Route::patch('/koreksi/{id}/approve-manager',          [EndingBalanceKoreksiController::class, 'approveManager'])->middleware('role:MANAGER|ADMIN');
     Route::patch('/koreksi/{id}/reject-manager',           [EndingBalanceKoreksiController::class, 'rejectManager'])->middleware('role:MANAGER|ADMIN');
+    Route::get('/koreksi/{id}/print',                      [EndingBalanceKoreksiController::class, 'printDocument']);
 });
 
 // ─── Opening Balance ──────────────────────────────────────────────

@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Models\EndingBalance;
 use App\Models\EndingBalanceKoreksi;
 use App\Models\Invoice;
+use App\Models\InvoiceItem;
 use App\Support\Helpers\RoleHelper;
 use App\Support\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
@@ -25,63 +26,104 @@ class EndingBalanceKoreksiController extends Controller
     {
         $this->authorizeOperate();
 
-        $eb   = EndingBalance::findOrFail($ebId);
+        $eb = EndingBalance::findOrFail($ebId);
+
         $data = $request->validate([
-            'nilai_koreksi'  => ['required', 'numeric', 'not_in:0'],
+            'tipe'           => ['required', 'string', 'in:KOREKSI_SALDO,CREDIT_NOTE,DEBIT_NOTE,KOREKSI_QTY_HARGA'],
             'alasan_koreksi' => ['required', 'string', 'max:1000'],
             'dokumen_url'    => ['nullable', 'string', 'max:500'],
             'invoice_id'     => ['nullable', 'integer', 'exists:tb_invoice,id'],
+
+            // Untuk CREDIT_NOTE / DEBIT_NOTE / KOREKSI_SALDO
+            'nilai_koreksi'  => ['nullable', 'numeric', 'not_in:0'],
+
+            // Untuk KOREKSI_QTY_HARGA
+            'items'                        => ['nullable', 'array', 'min:1'],
+            'items.*.invoice_item_id'      => ['required_with:items', 'integer', 'exists:tb_invoice_item,id'],
+            'items.*.qty_baru'             => ['required_with:items', 'numeric', 'min:0'],
+            'items.*.harga_satuan_baru'    => ['required_with:items', 'numeric', 'min:0'],
         ]);
 
-        if (!empty($data['invoice_id'])) {
-            $this->validateInvoicePenyesuaian($eb, (int) $data['invoice_id'], (float) $data['nilai_koreksi']);
+        $tipe = $data['tipe'];
+
+        if ($tipe === 'KOREKSI_QTY_HARGA') {
+            abort_if(empty($data['items']), 422, 'Items wajib diisi untuk koreksi qty/harga.');
+            $this->validateKoreksiQtyHarga($eb, $data['invoice_id'], $data['items']);
+        } elseif (in_array($tipe, ['CREDIT_NOTE', 'DEBIT_NOTE'])) {
+            abort_if(empty($data['invoice_id']), 422, 'Invoice wajib dipilih untuk ' . $tipe . '.');
+            abort_if(empty($data['nilai_koreksi']), 422, 'Nilai koreksi wajib diisi.');
+
+            if ($tipe === 'CREDIT_NOTE') {
+                abort_if((float) $data['nilai_koreksi'] >= 0, 422, 'Credit Note harus bernilai negatif (pengurangan tagihan).');
+                $this->validateInvoiceBelongToEb($eb, (int) $data['invoice_id']);
+            } else {
+                abort_if((float) $data['nilai_koreksi'] <= 0, 422, 'Debit Note harus bernilai positif (penambahan tagihan).');
+                $this->validateInvoiceBelongToEb($eb, (int) $data['invoice_id']);
+            }
+        } else {
+            // KOREKSI_SALDO
+            abort_if(empty($data['nilai_koreksi']), 422, 'Nilai koreksi wajib diisi.');
         }
 
         $koreksi = $this->service->submit($eb, $data, auth()->id());
 
         return $this->createdResponse(
             $this->formatKoreksi($koreksi),
-            $koreksi->status === 'APPROVED'
-                ? 'Penyesuaian berhasil diterapkan ke invoice.'
-                : 'Koreksi berhasil diajukan dan menunggu persetujuan SPV.'
+            'Koreksi berhasil diajukan dan menunggu persetujuan SPV.'
         );
     }
 
     /**
-     * Validasi penyesuaian yang ditautkan ke invoice tertentu.
+     * Kembalikan data koreksi untuk dicetak (hanya CN dan DN).
      */
-    private function validateInvoicePenyesuaian(EndingBalance $eb, int $invoiceId, float $nilai): void
+    public function printDocument(int $id): JsonResponse
     {
-        $invoice = Invoice::findOrFail($invoiceId);
+        $this->authorizeOperate();
 
-        abort_if(
-            (int) $invoice->klien_ar_id !== (int) $eb->klien_ar_id,
+        $koreksi = EndingBalanceKoreksi::with([
+            'endingBalance.klienAr',
+            'invoice',
+            'submittedBy',
+            'spv',
+            'manager',
+        ])->findOrFail($id);
+
+        abort_unless(
+            in_array($koreksi->tipe, ['CREDIT_NOTE', 'DEBIT_NOTE']),
             422,
-            'Invoice yang dipilih bukan milik klien ending balance ini.'
+            'Hanya Credit Note dan Debit Note yang dapat dicetak.'
         );
 
-        $tgl = $invoice->tanggal_invoice?->toDateString();
-        abort_if(
-            !$tgl || $tgl < $eb->periode_awal->toDateString() || $tgl > $eb->periode_akhir->toDateString(),
-            422,
-            'Invoice yang dipilih berada di luar periode ending balance ini.'
-        );
+        $eb     = $koreksi->endingBalance;
+        $klien  = $eb->klienAr;
+        $inv    = $koreksi->invoice;
 
-        abort_if(
-            $nilai >= 0,
-            422,
-            'Penyesuaian per-invoice hanya untuk mengurangi saldo (pilih "Kurangi Saldo").'
-        );
-
-        $outstanding = (float) $invoice->subtotal == 0.0
-            ? max(0, (float) $invoice->sisa_tagihan)
-            : max(0, (float) $invoice->subtotal - (float) $invoice->total_pembayaran - (float) $invoice->total_penyesuaian);
-
-        abort_if(
-            abs($nilai) > $outstanding + 0.01,
-            422,
-            'Jumlah penyesuaian melebihi sisa tagihan invoice (Rp ' . number_format($outstanding, 0, ',', '.') . ').'
-        );
+        return $this->successResponse([
+            'no_dokumen'       => $koreksi->no_dokumen,
+            'tipe'             => $koreksi->tipe,
+            'tipe_label'       => $koreksi->tipe === 'CREDIT_NOTE' ? 'CREDIT NOTE' : 'DEBIT NOTE',
+            'tanggal'          => $koreksi->manager_actioned_at?->toDateString() ?? $koreksi->submitted_at?->toDateString(),
+            'klien'            => [
+                'nama'    => $klien?->nama_klien,
+                'kode'    => $klien?->kode_klien,
+                'no_wa'   => $klien?->no_wa,
+                'no_npwp' => $klien?->no_npwp,
+            ],
+            'invoice'          => [
+                'no_invoice'      => $inv?->no_invoice,
+                'tanggal_invoice' => $inv?->tanggal_invoice?->toDateString(),
+                'total_tagihan'   => (float) ($inv?->subtotal ?? $inv?->total_tagihan ?? 0),
+            ],
+            'nilai_koreksi'    => abs((float) $koreksi->nilai_koreksi),
+            'alasan_koreksi'   => $koreksi->alasan_koreksi,
+            'dokumen_url'      => $koreksi->dokumen_url,
+            'status'           => $koreksi->status,
+            'submitted_by'     => $koreksi->submittedBy?->name ?? $koreksi->submittedBy?->username,
+            'spv_name'         => $koreksi->spv?->name ?? $koreksi->spv?->username,
+            'spv_actioned_at'  => $koreksi->spv_actioned_at?->toDateString(),
+            'manager_name'     => $koreksi->manager?->name ?? $koreksi->manager?->username,
+            'manager_actioned_at' => $koreksi->manager_actioned_at?->toDateString(),
+        ]);
     }
 
     /**
@@ -159,8 +201,7 @@ class EndingBalanceKoreksiController extends Controller
     {
         $user  = auth()->user();
         $roles = $user->getRoleNames()->map(fn($r) => strtoupper($r));
-
-        $role = $roles->first(fn($r) => in_array($r, ['SUPERVISOR', 'MANAGER']));
+        $role  = $roles->first(fn($r) => in_array($r, ['SUPERVISOR', 'MANAGER']));
 
         $list = $this->service->pendingForUser($role ?? '');
 
@@ -193,6 +234,8 @@ class EndingBalanceKoreksiController extends Controller
             'klien_ar_id'         => $k->klien_ar_id,
             'invoice_id'          => $k->invoice_id,
             'no_invoice'          => $k->invoice?->no_invoice,
+            'tipe'                => $k->tipe,
+            'no_dokumen'          => $k->no_dokumen,
             'nama_klien'          => $k->klienAr?->nama_klien ?? $k->endingBalance?->klienAr?->nama_klien,
             'segment'             => match($tipeKlien) { 'PT' => 'B2B', 'RESTO' => 'B2C', default => 'B2B' },
             'nilai_koreksi'       => (float) $k->nilai_koreksi,
@@ -209,7 +252,62 @@ class EndingBalanceKoreksiController extends Controller
             'manager'             => $k->manager?->username,
             'manager_note'        => $k->manager_note,
             'manager_actioned_at' => $k->manager_actioned_at?->toIso8601String(),
+            'items'               => $k->relationLoaded('items')
+                ? $k->items->map(fn($i) => [
+                    'id'                => $i->id,
+                    'invoice_item_id'   => $i->invoice_item_id,
+                    'nama_barang'       => $i->nama_barang,
+                    'qty_lama'          => (float) $i->qty_lama,
+                    'harga_satuan_lama' => (float) $i->harga_satuan_lama,
+                    'subtotal_lama'     => (float) $i->subtotal_lama,
+                    'qty_baru'          => (float) $i->qty_baru,
+                    'harga_satuan_baru' => (float) $i->harga_satuan_baru,
+                    'subtotal_baru'     => (float) $i->subtotal_baru,
+                    'selisih'           => (float) $i->selisih,
+                ])->values()->all()
+                : [],
         ];
+    }
+
+    /**
+     * Validasi bahwa invoice milik klien EB dan dalam periode EB.
+     */
+    private function validateInvoiceBelongToEb(EndingBalance $eb, int $invoiceId): void
+    {
+        $invoice = Invoice::findOrFail($invoiceId);
+
+        abort_if(
+            (int) $invoice->klien_ar_id !== (int) $eb->klien_ar_id,
+            422,
+            'Invoice yang dipilih bukan milik klien ending balance ini.'
+        );
+
+        $tgl = $invoice->tanggal_invoice?->toDateString();
+        abort_if(
+            !$tgl || $tgl < $eb->periode_awal->toDateString() || $tgl > $eb->periode_akhir->toDateString(),
+            422,
+            'Invoice yang dipilih berada di luar periode ending balance ini.'
+        );
+    }
+
+    /**
+     * Validasi item koreksi qty/harga: invoice dan items harus milik EB yang sama.
+     */
+    private function validateKoreksiQtyHarga(EndingBalance $eb, ?int $invoiceId, array $items): void
+    {
+        abort_if(empty($invoiceId), 422, 'Invoice wajib dipilih untuk koreksi qty/harga.');
+
+        $this->validateInvoiceBelongToEb($eb, $invoiceId);
+
+        foreach ($items as $idx => $item) {
+            $invoiceItem = InvoiceItem::find($item['invoice_item_id']);
+            abort_if(!$invoiceItem, 422, "Item ke-" . ($idx + 1) . " tidak ditemukan.");
+            abort_if(
+                (int) $invoiceItem->invoice_id !== (int) $invoiceId,
+                422,
+                "Item '{$invoiceItem->nama_barang}' bukan bagian dari invoice yang dipilih."
+            );
+        }
     }
 
     private function authorizeOperate(): void

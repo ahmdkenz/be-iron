@@ -12,6 +12,8 @@ class EndingBalanceKoreksi extends Model
         'ending_balance_id',
         'klien_ar_id',
         'invoice_id',
+        'tipe',
+        'no_dokumen',
         'nilai_koreksi',
         'alasan_koreksi',
         'dokumen_url',
@@ -62,6 +64,26 @@ class EndingBalanceKoreksi extends Model
     public function manager()
     {
         return $this->belongsTo(User::class, 'manager_id');
+    }
+
+    public function items()
+    {
+        return $this->hasMany(EndingBalanceKoreksiItem::class, 'ending_balance_koreksi_id');
+    }
+
+    public function isCreditNote(): bool
+    {
+        return $this->tipe === 'CREDIT_NOTE';
+    }
+
+    public function isDebitNote(): bool
+    {
+        return $this->tipe === 'DEBIT_NOTE';
+    }
+
+    public function isKoreksiQtyHarga(): bool
+    {
+        return $this->tipe === 'KOREKSI_QTY_HARGA';
     }
 
     public function isPendingSpv(): bool
