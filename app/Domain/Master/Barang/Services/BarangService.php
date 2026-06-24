@@ -53,4 +53,22 @@ class BarangService
     {
         $this->repository->delete($barang);
     }
+
+    public function bulkDelete(array $ids): int
+    {
+        $deleted = 0;
+        foreach ($ids as $id) {
+            try {
+                $barang = $this->repository->findById((int) $id);
+                if (!$barang) {
+                    continue;
+                }
+                $this->delete($barang);
+                $deleted++;
+            } catch (\Throwable) {
+                // skip jika gagal (masih dipakai di invoice/dll)
+            }
+        }
+        return $deleted;
+    }
 }

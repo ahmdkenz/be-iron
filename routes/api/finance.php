@@ -32,6 +32,7 @@ Route::prefix('klien-ar')->group(function () {
     Route::get('/import-template', [KlienArController::class, 'importTemplate']);
     Route::post('/import', [KlienArController::class, 'import']);
     Route::get('/import/{id}/status', [KlienArController::class, 'importStatus']);
+    Route::delete('/bulk', [KlienArController::class, 'bulkDestroy']);
     Route::post('/', [KlienArController::class, 'store']);
     Route::get('/{klien_ar}', [KlienArController::class, 'show']);
     Route::put('/{klien_ar}', [KlienArController::class, 'update']);

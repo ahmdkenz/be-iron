@@ -49,4 +49,22 @@ class KaryawanService
     {
         $this->repository->delete($karyawan);
     }
+
+    public function bulkDelete(array $ids): int
+    {
+        $deleted = 0;
+        foreach ($ids as $id) {
+            try {
+                $karyawan = $this->repository->findById((int) $id);
+                if (!$karyawan) {
+                    continue;
+                }
+                $this->delete($karyawan);
+                $deleted++;
+            } catch (\Throwable) {
+                // skip jika gagal (masih terhubung ke user/resto/dll)
+            }
+        }
+        return $deleted;
+    }
 }

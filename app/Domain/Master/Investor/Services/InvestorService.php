@@ -63,4 +63,22 @@ class InvestorService
     {
         $this->repository->delete($investor);
     }
+
+    public function bulkDelete(array $ids): int
+    {
+        $deleted = 0;
+        foreach ($ids as $id) {
+            try {
+                $investor = $this->repository->findById((int) $id);
+                if (!$investor) {
+                    continue;
+                }
+                $this->delete($investor);
+                $deleted++;
+            } catch (\Throwable) {
+                // skip jika gagal (masih terhubung ke resto/dll)
+            }
+        }
+        return $deleted;
+    }
 }

@@ -60,4 +60,22 @@ class RoleService
 
         $this->repository->delete($role);
     }
+
+    public function bulkDelete(array $ids): int
+    {
+        $deleted = 0;
+        foreach ($ids as $id) {
+            try {
+                $role = $this->repository->findById((int) $id);
+                if (!$role) {
+                    continue;
+                }
+                $this->delete($role);
+                $deleted++;
+            } catch (\Throwable) {
+                // skip jika gagal (role sistem, masih punya user, dll)
+            }
+        }
+        return $deleted;
+    }
 }

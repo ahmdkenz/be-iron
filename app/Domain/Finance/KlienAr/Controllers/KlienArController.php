@@ -111,6 +111,18 @@ class KlienArController extends Controller
         return $this->successResponse(null, 'Client berhasil dihapus');
     }
 
+    public function bulkDestroy(Request $request): JsonResponse
+    {
+        $this->forbidReadOnlyMutation();
+
+        $request->validate([
+            'ids'   => ['required', 'array', 'min:1'],
+            'ids.*' => ['integer'],
+        ]);
+        $deleted = $this->service->bulkDelete($request->ids);
+        return $this->successResponse(['deleted' => $deleted], "{$deleted} client berhasil dihapus");
+    }
+
     public function export(Request $request): BinaryFileResponse|JsonResponse
     {
         if (!class_exists('ZipArchive')) {

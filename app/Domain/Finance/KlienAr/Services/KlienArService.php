@@ -101,5 +101,23 @@ class KlienArService
         $this->repository->delete($klien);
     }
 
+    public function bulkDelete(array $ids): int
+    {
+        $deleted = 0;
+        foreach ($ids as $id) {
+            try {
+                $klien = $this->repository->findById((int) $id);
+                if (!$klien) {
+                    continue;
+                }
+                $this->delete($klien);
+                $deleted++;
+            } catch (\Throwable) {
+                // skip jika gagal (memiliki invoice terkait, dll)
+            }
+        }
+        return $deleted;
+    }
+
 
 }

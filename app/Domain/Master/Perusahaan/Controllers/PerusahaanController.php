@@ -57,4 +57,19 @@ class PerusahaanController extends Controller
         $this->service->delete($perusahaan);
         return $this->successResponse(null, 'Perusahaan berhasil dihapus');
     }
+
+    public function bulkDestroy(Request $request): JsonResponse
+    {
+        $request->validate([
+            'ids'   => ['required', 'array', 'min:1'],
+            'ids.*' => ['integer'],
+        ]);
+
+        $deleted = $this->service->bulkDelete($request->ids);
+
+        return $this->successResponse(
+            ['deleted' => $deleted],
+            "{$deleted} entitas berhasil dihapus"
+        );
+    }
 }

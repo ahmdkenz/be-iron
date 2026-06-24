@@ -63,4 +63,22 @@ class PerusahaanService
     {
         $this->repository->delete($perusahaan);
     }
+
+    public function bulkDelete(array $ids): int
+    {
+        $deleted = 0;
+        foreach ($ids as $id) {
+            try {
+                $perusahaan = $this->repository->findById((int) $id);
+                if (!$perusahaan) {
+                    continue;
+                }
+                $this->delete($perusahaan);
+                $deleted++;
+            } catch (\Throwable) {
+                // skip jika gagal (masih terhubung ke karyawan/resto/dll)
+            }
+        }
+        return $deleted;
+    }
 }

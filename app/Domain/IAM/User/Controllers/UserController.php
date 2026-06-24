@@ -11,6 +11,7 @@ use App\Http\Controllers\Controller;
 use App\Support\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 
 class UserController extends Controller
 {
@@ -51,5 +52,20 @@ class UserController extends Controller
         $user = $this->service->findOrFail($id);
         $this->service->delete($user);
         return $this->successResponse(null, 'User berhasil dihapus');
+    }
+
+    public function bulkDestroy(Request $request): JsonResponse
+    {
+        $request->validate([
+            'ids'   => ['required', 'array', 'min:1'],
+            'ids.*' => ['integer'],
+        ]);
+
+        $deleted = $this->service->bulkDelete($request->ids);
+
+        return $this->successResponse(
+            ['deleted' => $deleted],
+            "{$deleted} user berhasil dihapus"
+        );
     }
 }

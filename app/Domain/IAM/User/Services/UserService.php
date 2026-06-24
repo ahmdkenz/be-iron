@@ -77,4 +77,22 @@ class UserService
 
         $this->repository->delete($user);
     }
+
+    public function bulkDelete(array $ids): int
+    {
+        $deleted = 0;
+        foreach ($ids as $id) {
+            try {
+                $user = $this->repository->findById((int) $id);
+                if (!$user) {
+                    continue;
+                }
+                $this->delete($user);
+                $deleted++;
+            } catch (\Throwable) {
+                // skip jika gagal (satu-satunya admin, constraint, dll)
+            }
+        }
+        return $deleted;
+    }
 }

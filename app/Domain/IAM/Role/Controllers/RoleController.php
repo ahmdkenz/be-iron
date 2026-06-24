@@ -55,4 +55,19 @@ class RoleController extends Controller
         $this->service->delete($role);
         return $this->successResponse(null, 'Role berhasil dihapus');
     }
+
+    public function bulkDestroy(Request $request): JsonResponse
+    {
+        $request->validate([
+            'ids'   => ['required', 'array', 'min:1'],
+            'ids.*' => ['integer'],
+        ]);
+
+        $deleted = $this->service->bulkDelete($request->ids);
+
+        return $this->successResponse(
+            ['deleted' => $deleted],
+            "{$deleted} role berhasil dihapus"
+        );
+    }
 }

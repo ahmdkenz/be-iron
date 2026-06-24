@@ -76,4 +76,22 @@ class RestoService
     {
         $this->repository->delete($resto);
     }
+
+    public function bulkDelete(array $ids): int
+    {
+        $deleted = 0;
+        foreach ($ids as $id) {
+            try {
+                $resto = $this->repository->findById((int) $id);
+                if (!$resto) {
+                    continue;
+                }
+                $this->delete($resto);
+                $deleted++;
+            } catch (\Throwable) {
+                // skip jika gagal (masih terhubung ke klien/invoice/dll)
+            }
+        }
+        return $deleted;
+    }
 }
