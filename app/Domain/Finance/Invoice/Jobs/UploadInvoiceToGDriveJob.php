@@ -35,6 +35,9 @@ class UploadInvoiceToGDriveJob implements ShouldQueue
             'createdBy.karyawan',
             'submittedBy.karyawan',
             'approvedBy.karyawan',
+            'endingBalanceKoreksi' => fn($q) => $q
+                ->whereIn('tipe', ['CREDIT_NOTE', 'DEBIT_NOTE'])
+                ->where('status', 'APPROVED'),
         ])->find($this->invoiceId);
 
         if (!$invoice) {

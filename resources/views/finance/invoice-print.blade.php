@@ -477,10 +477,23 @@
           </tr>
           @endif
 
-          @if((float)$invoice->total_penyesuaian > 0)
+          @php
+            $koreksiApproved = $invoice->relationLoaded('endingBalanceKoreksi')
+                ? $invoice->endingBalanceKoreksi
+                : collect();
+            $totalCn = $koreksiApproved->where('tipe', 'CREDIT_NOTE')->sum(fn($k) => abs((float)$k->nilai_koreksi));
+            $totalDn = $koreksiApproved->where('tipe', 'DEBIT_NOTE')->sum(fn($k) => abs((float)$k->nilai_koreksi));
+          @endphp
+          @if($totalCn > 0)
           <tr>
             <td class="totals-lbl" style="color:#166534;">Credit Note</td>
-            <td class="totals-val" style="color:#166534;">- Rp {{ number_format((float)$invoice->total_penyesuaian, 0, ',', '.') }}</td>
+            <td class="totals-val" style="color:#166534;">- Rp {{ number_format($totalCn, 0, ',', '.') }}</td>
+          </tr>
+          @endif
+          @if($totalDn > 0)
+          <tr>
+            <td class="totals-lbl" style="color:#1d4ed8;">Debit Note</td>
+            <td class="totals-val" style="color:#1d4ed8;">+ Rp {{ number_format($totalDn, 0, ',', '.') }}</td>
           </tr>
           @endif
 

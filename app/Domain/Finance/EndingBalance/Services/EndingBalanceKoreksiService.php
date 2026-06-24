@@ -272,21 +272,21 @@ class EndingBalanceKoreksiService
 
     /**
      * Generate nomor dokumen untuk Credit Note dan Debit Note.
-     * Format: CN-YYYYMM-XXXX / DN-YYYYMM-XXXX
+     * Format: CN-YYYYMM-XXXX / DN-YYYYMM-XXXX (sequential per bulan)
      */
     private function generateNoDokumen(string $tipe): string
     {
-        $prefix  = $tipe === 'CREDIT_NOTE' ? 'CN' : 'DN';
-        $bulan   = now()->format('Ym');
-        $pattern = $prefix . '-' . $bulan . '-%';
+        $prefix    = $tipe === 'CREDIT_NOTE' ? 'CN' : 'DN';
+        $yearMonth = now()->format('Ym');
 
-        $last = EndingBalanceKoreksi::where('no_dokumen', 'like', $pattern)
-            ->lockForUpdate()
-            ->orderByDesc('no_dokumen')
-            ->value('no_dokumen');
+        $last = EndingBalanceKoreksi::where('no_dokumen', 'LIKE', $prefix . '-' . $yearMonth . '-%')
+            ->max('no_dokumen');
 
-        $seq = $last ? ((int) substr($last, -4)) + 1 : 1;
+        $seq = 1;
+        if ($last) {
+            $seq = (int) substr($last, strrpos($last, '-') + 1) + 1;
+        }
 
-        return $prefix . '-' . $bulan . '-' . str_pad($seq, 4, '0', STR_PAD_LEFT);
+        return $prefix . '-' . $yearMonth . '-' . str_pad($seq, 4, '0', STR_PAD_LEFT);
     }
 }

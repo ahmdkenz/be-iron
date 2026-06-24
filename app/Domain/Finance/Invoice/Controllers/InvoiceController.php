@@ -700,6 +700,9 @@ class InvoiceController extends Controller
             'createdBy.karyawan',
             'submittedBy.karyawan',
             'approvedBy.karyawan',
+            'endingBalanceKoreksi' => fn($q) => $q
+                ->whereIn('tipe', ['CREDIT_NOTE', 'DEBIT_NOTE'])
+                ->where('status', 'APPROVED'),
         ]);
 
         $regularInvoicesInPeriod = collect();
@@ -753,6 +756,9 @@ class InvoiceController extends Controller
             'createdBy.karyawan',
             'submittedBy.karyawan',
             'approvedBy.karyawan',
+            'endingBalanceKoreksi' => fn($q) => $q
+                ->whereIn('tipe', ['CREDIT_NOTE', 'DEBIT_NOTE'])
+                ->where('status', 'APPROVED'),
         ]);
 
         $regularInvoicesInPeriod = collect();
