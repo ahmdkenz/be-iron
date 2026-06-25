@@ -68,6 +68,18 @@
     .nilai-amount-dn { color: #1d4ed8; }
     .nilai-caption { font-size: 13px; color: #777; margin-top: 6px; }
 
+    /* Item detail table */
+    .items-box { border: 1px solid #ccc; margin-bottom: 25px; }
+    .items-header { padding: 10px 14px; font-weight: bold; font-size: 15px; text-transform: uppercase; background: #f9fafb; border-bottom: 1px solid #ccc; color: #111; }
+    .items-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    .items-table th { padding: 8px 10px; font-weight: bold; font-size: 13px; border-bottom: 2px solid #e5e7eb; text-transform: uppercase; letter-spacing: 0.03em; text-align: left; background: #f9fafb; color: #555; }
+    .items-table th.text-right, .items-table td.text-right { text-align: right; }
+    .items-table td { padding: 8px 10px; border-bottom: 1px solid #f3f4f6; vertical-align: middle; }
+    .items-table tr:last-child td { border-bottom: none; }
+    .items-table tfoot td { border-top: 2px solid #e5e7eb; font-weight: bold; padding: 10px 10px; font-size: 15px; }
+    .selisih-neg { color: #b71c1c; }
+    .selisih-pos { color: #15803d; }
+
     /* Alasan box */
     .alasan-box { border: 1px solid #fef08a; border-left: 4px solid #facc15; padding: 14px; background: #fffdf0; margin-bottom: 25px; }
     .alasan-lbl { font-size: 14px; font-weight: bold; color: #ca8a04; text-transform: uppercase; margin-bottom: 5px; }
@@ -228,6 +240,51 @@
       </div>
     </div>
   </div>
+
+  <!-- Detail Item (jika ada) -->
+  @if($koreksi->items->isNotEmpty())
+  <div class="items-box">
+    <div class="items-header">Rincian Item {{ $isCn ? 'Pengurangan' : 'Penambahan' }}</div>
+    <table class="items-table">
+      <thead>
+        <tr>
+          <th style="width: 30%">Nama Barang</th>
+          <th class="text-right" style="width: 8%">Qty Lama</th>
+          <th class="text-right" style="width: 13%">Harga Lama</th>
+          <th class="text-right" style="width: 12%">Subtotal Lama</th>
+          <th class="text-right" style="width: 8%">Qty Baru</th>
+          <th class="text-right" style="width: 13%">Harga Baru</th>
+          <th class="text-right" style="width: 12%">Subtotal Baru</th>
+          <th class="text-right" style="width: 4%">Selisih</th>
+        </tr>
+      </thead>
+      <tbody>
+        @foreach($koreksi->items as $item)
+        <tr>
+          <td>{{ $item->nama_barang }}</td>
+          <td class="text-right">{{ rtrim(rtrim(number_format($item->qty_lama, 3, ',', '.'), '0'), ',') }}</td>
+          <td class="text-right">{{ number_format($item->harga_satuan_lama, 0, ',', '.') }}</td>
+          <td class="text-right">{{ number_format($item->subtotal_lama, 0, ',', '.') }}</td>
+          <td class="text-right">{{ rtrim(rtrim(number_format($item->qty_baru, 3, ',', '.'), '0'), ',') }}</td>
+          <td class="text-right">{{ number_format($item->harga_satuan_baru, 0, ',', '.') }}</td>
+          <td class="text-right">{{ number_format($item->subtotal_baru, 0, ',', '.') }}</td>
+          <td class="text-right {{ $item->selisih < 0 ? 'selisih-neg' : 'selisih-pos' }}">
+            {{ ($item->selisih >= 0 ? '+' : '') . number_format($item->selisih, 0, ',', '.') }}
+          </td>
+        </tr>
+        @endforeach
+      </tbody>
+      <tfoot>
+        <tr>
+          <td colspan="7" class="text-right">Total Selisih:</td>
+          <td class="text-right {{ (float)$koreksi->nilai_koreksi < 0 ? 'selisih-neg' : 'selisih-pos' }}">
+            {{ ((float)$koreksi->nilai_koreksi >= 0 ? '+' : '') . number_format($koreksi->nilai_koreksi, 0, ',', '.') }}
+          </td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+  @endif
 
   <!-- Signatures -->
   <table class="signatures">

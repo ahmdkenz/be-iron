@@ -105,6 +105,15 @@ class RoleHelper
         ]);
     }
 
+    public static function canLockEndingBalance(?User $user): bool
+    {
+        return self::hasAnyRole($user, [
+            RoleEnum::ADMIN,
+            RoleEnum::MANAGER,
+            RoleEnum::SUPERVISOR,
+        ]);
+    }
+
     public static function canApproveEndingBalanceSpv(?User $user): bool
     {
         return self::hasAnyRole($user, [RoleEnum::ADMIN, RoleEnum::SUPERVISOR]);

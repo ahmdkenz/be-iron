@@ -63,7 +63,7 @@ class EndingBalanceKoreksiService
                 'updated_by'        => $userId,
             ]);
 
-            if ($tipe === 'KOREKSI_QTY_HARGA') {
+            if (!empty($data['items']) && in_array($tipe, ['KOREKSI_QTY_HARGA', 'CREDIT_NOTE', 'DEBIT_NOTE'])) {
                 $this->createKoreksiItems($koreksi, $data['items']);
             }
 
@@ -192,7 +192,7 @@ class EndingBalanceKoreksiService
     {
         $tipe = $data['tipe'] ?? 'KOREKSI_SALDO';
 
-        if ($tipe === 'KOREKSI_QTY_HARGA') {
+        if (!empty($data['items']) && in_array($tipe, ['KOREKSI_QTY_HARGA', 'CREDIT_NOTE', 'DEBIT_NOTE'])) {
             $total = 0.0;
             foreach ($data['items'] as $item) {
                 $invoiceItem  = InvoiceItem::findOrFail($item['invoice_item_id']);

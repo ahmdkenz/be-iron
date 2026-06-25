@@ -62,7 +62,7 @@ class EndingBalanceController extends Controller
 
     public function lock(Request $request, int $id): JsonResponse
     {
-        $this->authorizeOperate();
+        $this->authorizeLock();
 
         $eb      = EndingBalance::findOrFail($id);
         $updated = $this->service->lock($eb, auth()->id());
@@ -70,6 +70,19 @@ class EndingBalanceController extends Controller
         return $this->successResponse(
             $this->formatEb($updated),
             'Ending balance berhasil dikunci.'
+        );
+    }
+
+    public function unlock(Request $request, int $id): JsonResponse
+    {
+        $this->authorizeLock();
+
+        $eb      = EndingBalance::findOrFail($id);
+        $updated = $this->service->unlock($eb, auth()->id());
+
+        return $this->successResponse(
+            $this->formatEb($updated),
+            'Ending balance berhasil dibuka kembali.'
         );
     }
 
@@ -342,6 +355,14 @@ class EndingBalanceController extends Controller
         abort_if(
             !RoleHelper::canOperateEndingBalance(auth()->user()),
             403, 'Tidak memiliki akses untuk mengelola ending balance.'
+        );
+    }
+
+    private function authorizeLock(): void
+    {
+        abort_if(
+            !RoleHelper::canLockEndingBalance(auth()->user()),
+            403, 'Tidak memiliki akses untuk mengunci/membuka ending balance.'
         );
     }
 }

@@ -111,6 +111,23 @@ class EndingBalanceService
     }
 
     /**
+     * Unlock (buka kembali) a LOCKED ending balance so its period can be re-imported.
+     */
+    public function unlock(EndingBalance $eb, int $userId): EndingBalance
+    {
+        abort_if(!$eb->isLocked(), 422, 'Ending balance ini belum dikunci.');
+
+        $eb->update([
+            'status'     => 'DRAFT',
+            'locked_by'  => null,
+            'locked_at'  => null,
+            'updated_by' => $userId,
+        ]);
+
+        return $eb->fresh(['klienAr', 'koreksi']);
+    }
+
+    /**
      * Recalculate components (saldo_awal, invoice_masuk, pembayaran) for a DRAFT EB.
      * Useful when EB was generated before invoices were entered or approved.
      */

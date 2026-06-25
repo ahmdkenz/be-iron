@@ -53,14 +53,18 @@ class EndingBalanceKoreksiController extends Controller
             $this->validateKoreksiQtyHarga($eb, $data['invoice_id'], $data['items']);
         } elseif (in_array($tipe, ['CREDIT_NOTE', 'DEBIT_NOTE'])) {
             abort_if(empty($data['invoice_id']), 422, 'Invoice wajib dipilih untuk ' . $tipe . '.');
-            abort_if(empty($data['nilai_koreksi']), 422, 'Nilai koreksi wajib diisi.');
+            $this->validateInvoiceBelongToEb($eb, (int) $data['invoice_id']);
 
-            if ($tipe === 'CREDIT_NOTE') {
-                abort_if((float) $data['nilai_koreksi'] >= 0, 422, 'Credit Note harus bernilai negatif (pengurangan tagihan).');
-                $this->validateInvoiceBelongToEb($eb, (int) $data['invoice_id']);
+            $hasItems = !empty($data['items']);
+            if ($hasItems) {
+                $this->validateKoreksiQtyHarga($eb, $data['invoice_id'], $data['items']);
             } else {
-                abort_if((float) $data['nilai_koreksi'] <= 0, 422, 'Debit Note harus bernilai positif (penambahan tagihan).');
-                $this->validateInvoiceBelongToEb($eb, (int) $data['invoice_id']);
+                abort_if(empty($data['nilai_koreksi']), 422, 'Nilai koreksi wajib diisi.');
+                if ($tipe === 'CREDIT_NOTE') {
+                    abort_if((float) $data['nilai_koreksi'] >= 0, 422, 'Credit Note harus bernilai negatif (pengurangan tagihan).');
+                } else {
+                    abort_if((float) $data['nilai_koreksi'] <= 0, 422, 'Debit Note harus bernilai positif (penambahan tagihan).');
+                }
             }
         } else {
             // KOREKSI_SALDO
@@ -89,6 +93,7 @@ class EndingBalanceKoreksiController extends Controller
             'invoice.klienAr',
             'submittedBy.karyawan',
             'manager.karyawan',
+            'items',
         ])->findOrFail($id);
 
         abort_unless(

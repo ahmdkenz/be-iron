@@ -136,6 +136,7 @@ Route::prefix('ending-balance')->group(function () {
     Route::get('/{id}/payments',      [EndingBalanceController::class, 'payments']);
     Route::get('/{id}',               [EndingBalanceController::class, 'show']);
     Route::patch('/{id}/lock',        [EndingBalanceController::class, 'lock']);
+    Route::patch('/{id}/unlock',      [EndingBalanceController::class, 'unlock']);
     Route::patch('/{id}/recalculate', [EndingBalanceController::class, 'recalculate']);
 
     // Koreksi
