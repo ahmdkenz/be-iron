@@ -4,8 +4,10 @@ namespace App\Domain\Finance\Invoice\Services;
 
 use App\Domain\Finance\Invoice\Jobs\UploadInvoiceToGDriveJob;
 use App\Models\Barang;
+use App\Models\EndingBalance;
 use App\Models\Invoice;
 use App\Models\InvoiceImportBatch;
+use App\Models\InvoiceItem;
 use App\Models\KlienAr;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -20,11 +22,13 @@ use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
  *
  * Dioptimasi untuk ribuan baris:
  *  - Preload master klien & barang ke memori (hindari query per-baris)
+ *  - Preload LOCKED EndingBalance per klien ke memori (hindari N+1 query cek EB-lock)
  *  - Commit bertahap per CHUNK invoice (bukan satu transaksi raksasa)
  *  - Update progress ke InvoiceImportBatch agar bisa dipantau frontend
  *
- * Logika bisnis (validasi, dedup, carryover, dispatch PDF) dipertahankan
- * sama dengan implementasi sinkron sebelumnya di InvoiceController.
+ * Re-import (upsert): jika invoice (klien + tanggal) sudah ada dan status != LUNAS
+ * dan periode-nya tidak di-LOCK di EndingBalance, item lama dihapus dan diganti baru,
+ * lalu payment + PDM + EB-DRAFT di-recalculate otomatis.
  */
 class InvoiceImportService
 {
@@ -63,28 +67,37 @@ class InvoiceImportService
         ]);
 
         // Preload master untuk menghindari query per-baris.
-        $klienMap  = $this->buildKlienMap();
-        $barangMap = $this->buildBarangMap();
+        $klienMap    = $this->buildKlienMap();
+        $barangMap   = $this->buildBarangMap();
+        $lockedEbMap = $this->buildLockedEbMap();
 
         if ($batch->type === 'b2b') {
-            $this->importB2B($batch, $rows1, $rows2, $klienMap, $barangMap);
+            $this->importB2B($batch, $rows1, $rows2, $klienMap, $barangMap, $lockedEbMap);
         } else {
-            $this->importB2C($batch, $rows1, $rows2, $klienMap, $barangMap);
+            $this->importB2C($batch, $rows1, $rows2, $klienMap, $barangMap, $lockedEbMap);
         }
     }
 
     // ──────────────────────────────────────────────────────────────
     //  Import B2C
     // ──────────────────────────────────────────────────────────────
-    private function importB2C(InvoiceImportBatch $batch, array $rows1, array $rows2, array $klienMap, array $barangMap): void
-    {
-        $insertedCount  = 0;
-        $skippedCount   = 0;
-        $totalData      = 0;
-        $errors         = [];
-        $invoiceMapping = [];
-        $skippedUruts   = [];
-        $processed      = 0;
+    private function importB2C(
+        InvoiceImportBatch $batch,
+        array $rows1,
+        array $rows2,
+        array $klienMap,
+        array $barangMap,
+        array $lockedEbMap
+    ): void {
+        $insertedCount   = 0;
+        $updatedCount    = 0;
+        $skippedCount    = 0;
+        $totalData       = 0;
+        $errors          = [];
+        $invoiceMapping  = [];  // noUrut => Invoice object (baru ATAU existing yg di-update)
+        $updateMapping   = [];  // noUrut => Invoice object (hanya existing yg di-update)
+        $skippedUruts    = [];
+        $processed       = 0;
 
         // ── Pass 1: Invoice headers ─────────────────────────────────
         $lineNumber    = 0;
@@ -146,9 +159,28 @@ class InvoiceImportService
                     ->whereDate('tanggal_invoice', $tanggal)
                     ->where('is_opening_balance', false)
                     ->first();
+
                 if ($existingInvoice) {
-                    $skippedUruts[$noUrut] = true;
-                    $skippedCount++;
+                    // Invoice LUNAS tidak boleh diubah via import
+                    if ($existingInvoice->status === 'LUNAS') {
+                        $skippedUruts[$noUrut] = true;
+                        $skippedCount++;
+                        continue;
+                    }
+                    // Periode sudah di-LOCK di Ending Balance → tidak boleh diubah
+                    if ($this->isEbLocked($lockedEbMap, $klien->id, $tanggal)) {
+                        $skippedUruts[$noUrut] = true;
+                        $skippedCount++;
+                        $errors[] = [
+                            'sheet'   => 'Invoice',
+                            'row'     => $lineNumber,
+                            'message' => "Invoice {$existingInvoice->no_invoice} tidak dapat diupdate — periode sudah dikunci di Ending Balance.",
+                        ];
+                        continue;
+                    }
+                    // DRAFT / TERKIRIM / SEBAGIAN → tandai untuk UPDATE (item diganti)
+                    $updateMapping[$noUrut]  = $existingInvoice;
+                    $invoiceMapping[$noUrut] = $existingInvoice;
                     continue;
                 }
 
@@ -193,6 +225,7 @@ class InvoiceImportService
 
         // ── Pass 2: Invoice items ───────────────────────────────────
         $invoicesWithItems = [];
+        $deletedItemsFor   = [];  // invoice_id => true (sudah delete item lama)
         $lineNumber        = 0;
         $headerSkipped     = false;
         $inChunk           = 0;
@@ -251,6 +284,13 @@ class InvoiceImportService
                 }
 
                 $invoice = $invoiceMapping[$noUrutInvoice];
+
+                // Untuk invoice yang di-update, hapus item lama sekali saja sebelum insert baru
+                if (isset($updateMapping[$noUrutInvoice]) && !isset($deletedItemsFor[$invoice->id])) {
+                    InvoiceItem::where('invoice_id', $invoice->id)->delete();
+                    $deletedItemsFor[$invoice->id] = true;
+                }
+
                 $invoice->items()->create([
                     'barang_id'    => $barangId,
                     'nama_barang'  => $namaBarang,
@@ -273,32 +313,57 @@ class InvoiceImportService
             (float) $invoice->items()->sum('subtotal') + (float) $invoice->tagihan_periode_sebelumnya
         );
 
-        // ── Pass 4 & 5: cascade carryover + dispatch PDF ────────────
-        $this->finalizeBatch($batch, $invoiceMapping, $errors);
+        // ── Pass 3.5: Post-process invoices yang di-update ──────────
+        $updatedCount = $this->postProcessUpdated($updateMapping, $invoicesWithItems, $errors);
+        $batch->update(['updated' => $updatedCount]);
 
-        $failed = max(0, $totalData - $insertedCount - $skippedCount);
+        // ── Pass 4 & 5: cascade carryover + dispatch PDF ────────────
+        // Carryover hanya dijalankan untuk invoice BARU; invoice yang di-update
+        // sudah ter-cascade melalui recalculate() di postProcessUpdated.
+        $newInvoiceMapping = array_diff_key($invoiceMapping, $updateMapping);
+        $this->finalizeBatch($batch, $newInvoiceMapping, $errors);
+
+        // GDrive upload untuk invoice yang di-update
+        foreach ($updateMapping as $updatedInvoice) {
+            try {
+                UploadInvoiceToGDriveJob::dispatch($updatedInvoice->id);
+            } catch (\Throwable $e) {
+                Log::error('ImportInvoice: dispatch upload PDF (update) gagal', ['invoice_id' => $updatedInvoice->id, 'error' => $e->getMessage()]);
+            }
+        }
+
+        $failed = max(0, $totalData - $insertedCount - $updatedCount - $skippedCount);
         $batch->update([
             'status'     => 'completed',
             'processed'  => $batch->total,
             'total_data' => $totalData,
             'inserted'   => $insertedCount,
+            'updated'    => $updatedCount,
             'skipped'    => $skippedCount,
             'failed'     => $failed,
             'errors'     => $errors,
-            'message'    => "Import selesai. {$insertedCount} ditambahkan, {$skippedCount} dilewati (sudah ada), {$failed} gagal.",
+            'message'    => "Import selesai. {$insertedCount} ditambahkan, {$updatedCount} diperbarui, {$skippedCount} dilewati, {$failed} gagal.",
         ]);
     }
 
     // ──────────────────────────────────────────────────────────────
     //  Import B2B
     // ──────────────────────────────────────────────────────────────
-    private function importB2B(InvoiceImportBatch $batch, array $rows1, array $rows2, array $klienMap, array $barangMap): void
-    {
+    private function importB2B(
+        InvoiceImportBatch $batch,
+        array $rows1,
+        array $rows2,
+        array $klienMap,
+        array $barangMap,
+        array $lockedEbMap
+    ): void {
         $insertedCount     = 0;
+        $updatedCount      = 0;
         $skippedCount      = 0;
         $totalData         = 0;
         $errors            = [];
         $invoiceMapping    = [];
+        $updateMapping     = [];
         $skippedUruts      = [];
         $invoicesWithItems = [];
         $processed         = 0;
@@ -358,9 +423,25 @@ class InvoiceImportService
                     ->whereDate('tanggal_invoice', $tanggal)
                     ->where('is_opening_balance', false)
                     ->first();
+
                 if ($existingInvoice) {
-                    $skippedUruts[$noUrut] = true;
-                    $skippedCount++;
+                    if ($existingInvoice->status === 'LUNAS') {
+                        $skippedUruts[$noUrut] = true;
+                        $skippedCount++;
+                        continue;
+                    }
+                    if ($this->isEbLocked($lockedEbMap, $klien->id, $tanggal)) {
+                        $skippedUruts[$noUrut] = true;
+                        $skippedCount++;
+                        $errors[] = [
+                            'sheet'   => 'Data Invoice',
+                            'row'     => $lineNumber,
+                            'message' => "Invoice {$existingInvoice->no_invoice} tidak dapat diupdate — periode sudah dikunci di Ending Balance.",
+                        ];
+                        continue;
+                    }
+                    $updateMapping[$noUrut]  = $existingInvoice;
+                    $invoiceMapping[$noUrut] = $existingInvoice;
                     continue;
                 }
 
@@ -404,9 +485,10 @@ class InvoiceImportService
         $this->flushProgress($batch, $processed, $insertedCount, $skippedCount, $errors);
 
         // ── Pass 2: Buat item dari Sheet 2 "Item Invoice" ───────────
-        $lineNumber    = 0;
-        $headerSkipped = false;
-        $inChunk       = 0;
+        $deletedItemsFor = [];
+        $lineNumber      = 0;
+        $headerSkipped   = false;
+        $inChunk         = 0;
 
         DB::beginTransaction();
         try {
@@ -458,6 +540,12 @@ class InvoiceImportService
                 $invoice  = $invoiceMapping[$noUrutInvoice];
                 $barangId = $kodeBarang ? ($barangMap[$kodeBarang] ?? null) : null;
 
+                // Untuk invoice yang di-update, hapus item lama sekali saja sebelum insert baru
+                if (isset($updateMapping[$noUrutInvoice]) && !isset($deletedItemsFor[$invoice->id])) {
+                    InvoiceItem::where('invoice_id', $invoice->id)->delete();
+                    $deletedItemsFor[$invoice->id] = true;
+                }
+
                 $invoice->items()->create([
                     'barang_id'        => $barangId,
                     'nama_barang'      => $namaBarang,
@@ -484,25 +572,86 @@ class InvoiceImportService
             (float) $invoice->items()->sum('subtotal') + (float) $invoice->tagihan_periode_sebelumnya
         );
 
-        // ── Pass 4 & 5: cascade carryover + dispatch PDF ────────────
-        $this->finalizeBatch($batch, $invoiceMapping, $errors);
+        // ── Pass 3.5: Post-process invoices yang di-update ──────────
+        $updatedCount = $this->postProcessUpdated($updateMapping, $invoicesWithItems, $errors);
+        $batch->update(['updated' => $updatedCount]);
 
-        $failed = max(0, $totalData - $insertedCount - $skippedCount);
+        // ── Pass 4 & 5: cascade carryover + dispatch PDF ────────────
+        $newInvoiceMapping = array_diff_key($invoiceMapping, $updateMapping);
+        $this->finalizeBatch($batch, $newInvoiceMapping, $errors);
+
+        // GDrive upload untuk invoice yang di-update
+        foreach ($updateMapping as $updatedInvoice) {
+            try {
+                UploadInvoiceToGDriveJob::dispatch($updatedInvoice->id);
+            } catch (\Throwable $e) {
+                Log::error('ImportInvoice: dispatch upload PDF (update) gagal', ['invoice_id' => $updatedInvoice->id, 'error' => $e->getMessage()]);
+            }
+        }
+
+        $failed = max(0, $totalData - $insertedCount - $updatedCount - $skippedCount);
         $batch->update([
             'status'     => 'completed',
             'processed'  => $batch->total,
             'total_data' => $totalData,
             'inserted'   => $insertedCount,
+            'updated'    => $updatedCount,
             'skipped'    => $skippedCount,
             'failed'     => $failed,
             'errors'     => $errors,
-            'message'    => "Import B2B selesai. {$insertedCount} invoice konsolidasi ditambahkan, {$skippedCount} dilewati (sudah ada), {$failed} gagal.",
+            'message'    => "Import B2B selesai. {$insertedCount} invoice konsolidasi ditambahkan, {$updatedCount} diperbarui, {$skippedCount} dilewati, {$failed} gagal.",
         ]);
     }
 
     // ──────────────────────────────────────────────────────────────
     //  Shared helpers
     // ──────────────────────────────────────────────────────────────
+
+    /**
+     * Jalankan recalculate + auto-PDM + EB-DRAFT recalculate untuk setiap invoice
+     * yang berhasil di-update (ada di $updateMapping DAN punya item baru di $invoicesWithItems).
+     */
+    private function postProcessUpdated(array $updateMapping, array $invoicesWithItems, array &$errors): int
+    {
+        $count = 0;
+
+        // Kumpulkan invoice ID yang benar-benar punya item baru
+        $toProcess = [];
+        foreach ($updateMapping as $noUrut => $existingInvoice) {
+            if (isset($invoicesWithItems[$noUrut])) {
+                $toProcess[$existingInvoice->id] = $existingInvoice;
+            }
+        }
+
+        foreach (array_chunk($toProcess, 20, true) as $chunk) {
+            foreach ($chunk as $invoiceId => $invoiceObj) {
+                $invoice = Invoice::find($invoiceId);
+                if (!$invoice) continue;
+
+                try {
+                    DB::transaction(fn() => $this->service->recalculate($invoice));
+                    $invoice->refresh();
+
+                    // Auto-PDM jika invoice menjadi overpaid setelah item diganti
+                    if ((float) $invoice->total_pembayaran > (float) $invoice->subtotal
+                        && (float) $invoice->subtotal > 0
+                    ) {
+                        $this->service->handleExcessPaymentAfterUpdate($invoice);
+                    }
+
+                    // Recalculate DRAFT EndingBalance yang terdampak
+                    $this->service->recalculateDraftEndingBalance($invoice);
+
+                    $count++;
+                } catch (\Throwable $e) {
+                    Log::error('ImportInvoice: postProcessUpdated gagal', ['invoice_id' => $invoiceId, 'error' => $e->getMessage()]);
+                    $errors[] = ['sheet' => 'Update', 'row' => 0, 'message' => "Gagal recalculate invoice #{$invoiceId}: " . $e->getMessage()];
+                }
+            }
+        }
+
+        return $count;
+    }
 
     /** Recompute subtotal & total_tagihan untuk invoice yang punya item (chunked). */
     private function recomputeSubtotals(array $invoicesWithItems, callable $totalTagihanFn): void
@@ -534,8 +683,7 @@ class InvoiceImportService
 
     /**
      * Propagasi carryover antar invoice dalam batch + dispatch upload PDF.
-     * Non-fatal: kegagalan dicatat ke $errors tetapi tidak menggagalkan batch
-     * (invoice sudah tersimpan pada pass sebelumnya).
+     * Non-fatal: kegagalan dicatat ke $errors tetapi tidak menggagalkan batch.
      */
     private function finalizeBatch(InvoiceImportBatch $batch, array $invoiceMapping, array &$errors): void
     {
@@ -553,8 +701,6 @@ class InvoiceImportService
             }
         }
 
-        // Heartbeat: fase ini tidak meng-update progress, jadi sentuh updated_at
-        // berkala agar batch tidak salah ditandai 'stale' oleh failStale().
         $i = 0;
         foreach ($firstByKlien as $firstInvoice) {
             if (++$i % 25 === 0) $batch->touch();
@@ -566,7 +712,6 @@ class InvoiceImportService
             }
         }
 
-        // Dispatch upload PDF SETELAH propagasi carryover selesai.
         $i = 0;
         foreach ($invoiceMapping as $invoice) {
             if (++$i % 200 === 0) $batch->touch();
@@ -577,7 +722,6 @@ class InvoiceImportService
             }
         }
 
-        // Re-upload OB invoices agar bagian "Invoice Bulan Berjalan" terupdate.
         $klienIds = collect(array_values($firstByKlien))->pluck('klien_ar_id')->unique()->toArray();
         if (!empty($klienIds)) {
             Invoice::whereIn('klien_ar_id', $klienIds)
@@ -595,6 +739,36 @@ class InvoiceImportService
             'skipped'   => $skipped,
             'failed'    => count($errors),
         ]);
+    }
+
+    /**
+     * Pre-load semua LOCKED EndingBalance ke memory:
+     * [klien_ar_id => [['awal' => 'Y-m-d', 'akhir' => 'Y-m-d'], ...]]
+     */
+    private function buildLockedEbMap(): array
+    {
+        $map = [];
+        EndingBalance::where('status', 'LOCKED')
+            ->select(['klien_ar_id', 'periode_awal', 'periode_akhir'])
+            ->get()
+            ->each(function ($eb) use (&$map) {
+                $map[$eb->klien_ar_id][] = [
+                    'awal'  => (string) $eb->periode_awal,
+                    'akhir' => (string) $eb->periode_akhir,
+                ];
+            });
+        return $map;
+    }
+
+    /** Cek apakah tanggal tertentu masuk dalam salah satu periode EB yang LOCKED untuk klien ini. */
+    private function isEbLocked(array $lockedEbMap, int $klienArId, string $tanggal): bool
+    {
+        foreach ($lockedEbMap[$klienArId] ?? [] as $range) {
+            if ($tanggal >= $range['awal'] && $tanggal <= $range['akhir']) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** @return array<string,KlienAr> nama_klien => KlienAr (occurrence pertama). */

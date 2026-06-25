@@ -98,9 +98,8 @@ class InvoiceService
         $singkatan = strtoupper(preg_replace('/[^A-Za-z0-9]/', '', $raw));
         $date      = Carbon::parse($tanggal);
         $now       = Carbon::now();
-        $xxx       = str_pad(rand(0, 999), 3, '0', STR_PAD_LEFT);
 
-        return 'OB-' . $singkatan . '-' . $date->format('dmY') . $now->format('His') . '-' . $xxx;
+        return 'OB-' . $singkatan . '-' . $date->format('dmY') . $now->format('Hisv');
     }
 
     public function generateConsolidatedInvoiceNo(KlienAr $klien, ?string $tanggal = null): string
@@ -110,9 +109,8 @@ class InvoiceService
         $singkatan   = strtoupper(preg_replace('/[^A-Za-z0-9]/', '', $raw));
         $invoiceDate = $tanggal ? Carbon::parse($tanggal) : Carbon::now();
         $now         = Carbon::now();
-        $xxx         = str_pad(rand(0, 999), 3, '0', STR_PAD_LEFT);
 
-        return 'SI-' . $singkatan . '-' . $invoiceDate->format('dmY') . $now->format('His') . '-' . $xxx;
+        return 'SI-' . $singkatan . '-' . $invoiceDate->format('dmY') . $now->format('Hisv');
     }
 
     public function create(InvoiceDTO $dto): Invoice
@@ -599,6 +597,77 @@ class InvoiceService
     public function propagateCarryover(Invoice $invoice): void
     {
         $this->cascadeCarryoverToNext($invoice);
+    }
+
+    /**
+     * Dipanggil setelah import-upsert mengubah subtotal invoice yang sudah punya pembayaran.
+     * Jika invoice menjadi overpaid (total_pembayaran > subtotal baru), coba otomatis:
+     * - Recalculate PDM yang sudah ada, atau
+     * - Buat PDM baru jika pembayaran berasal dari rekonsiliasi bank (ada bankStatementDetail).
+     * Pembayaran manual (catat bayar) dibiarkan — user tangani lewat UI.
+     */
+    public function handleExcessPaymentAfterUpdate(Invoice $invoice): void
+    {
+        $invoice->loadMissing('pembayarans.bankStatementDetail');
+
+        $pdmService = app(\App\Domain\Finance\PendapatanDiMuka\Services\PendapatanDiMukaService::class);
+
+        foreach ($invoice->pembayarans->whereNull('sumber_pembayaran_ar_id') as $pembayaran) {
+            $existingPdm = \App\Models\PendapatanDiMuka::where('sumber_pembayaran_ar_id', $pembayaran->id)
+                ->whereNotIn('status', ['DIBATALKAN'])
+                ->first();
+
+            if ($existingPdm) {
+                $pdmService->recalculate($existingPdm);
+                continue;
+            }
+
+            $detail = $pembayaran->bankStatementDetail;
+            if (!$detail) {
+                continue;
+            }
+
+            // Hitung kelebihan terbaru setelah invoice diupdate
+            $kelebihanFromInvoice = max(0, round((float) $invoice->total_pembayaran - (float) $invoice->total_tagihan, 2));
+            $kelebihanFromBank    = max(0, round((float) $detail->kredit - (float) $pembayaran->jumlah_pembayaran, 2));
+            $totalKelebihan       = max($kelebihanFromInvoice, $kelebihanFromBank);
+            $dialokasi            = (float) $pembayaran->alokasiKelebihan()->sum('jumlah_pembayaran');
+            $sisa                 = max(0, round($totalKelebihan - $dialokasi, 2));
+
+            if ($sisa > 0.01) {
+                try {
+                    $pdmService->store($detail, $sisa, null, now()->format('Y-m-d'));
+                } catch (\Throwable) {
+                    // Tidak blokir proses import jika PDM gagal dibuat
+                }
+            }
+        }
+    }
+
+    /**
+     * Recalculate semua EndingBalance berstatus DRAFT milik klien yang periode-nya
+     * mencakup tanggal_invoice yang baru saja berubah.
+     */
+    public function recalculateDraftEndingBalance(Invoice $invoice): void
+    {
+        $ebList = \App\Models\EndingBalance::where('klien_ar_id', $invoice->klien_ar_id)
+            ->where('status', 'DRAFT')
+            ->where('periode_awal', '<=', $invoice->tanggal_invoice)
+            ->where('periode_akhir', '>=', $invoice->tanggal_invoice)
+            ->get();
+
+        if ($ebList->isEmpty()) {
+            return;
+        }
+
+        $ebService = app(\App\Domain\Finance\EndingBalance\Services\EndingBalanceService::class);
+        foreach ($ebList as $eb) {
+            try {
+                $ebService->recalculate($eb, auth()->id());
+            } catch (\Throwable) {
+                // Tidak blokir proses import jika EB recalculate gagal
+            }
+        }
     }
 
     /**

@@ -673,6 +673,7 @@ class InvoiceController extends Controller
             'progress_total' => $batch->total,
             'total'          => $batch->total_data,
             'inserted'       => $batch->inserted,
+            'updated'        => $batch->updated,
             'skipped'        => $batch->skipped,
             'failed'         => $batch->failed,
             'errors'         => $batch->errors ?? [],

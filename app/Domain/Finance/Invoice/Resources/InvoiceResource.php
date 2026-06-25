@@ -7,6 +7,7 @@ use App\Support\Helpers\RoleHelper;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 use App\Domain\Finance\Invoice\Resources\OpeningBalanceDetailResource;
+use App\Models\EndingBalance;
 
 class InvoiceResource extends JsonResource
 {
@@ -141,6 +142,13 @@ class InvoiceResource extends JsonResource
             'created_by_name'            => $this->whenLoaded('createdBy', fn() => $this->createdBy?->username),
             'updated_by'                 => $this->updated_by,
             'updated_by_name'            => $this->whenLoaded('updatedBy', fn() => $this->updatedBy?->username),
+            'is_eb_locked'               => $this->tanggal_invoice && !$this->is_opening_balance
+                ? EndingBalance::where('klien_ar_id', $this->klien_ar_id)
+                    ->where('status', 'LOCKED')
+                    ->where('periode_awal', '<=', $this->tanggal_invoice)
+                    ->where('periode_akhir', '>=', $this->tanggal_invoice)
+                    ->exists()
+                : false,
             'can_approve'                => $this->canApprove($request->user()),
             'can_reject'                 => $this->canReject($request->user()),
             'can_edit'                   => $this->canEdit($request->user()),
