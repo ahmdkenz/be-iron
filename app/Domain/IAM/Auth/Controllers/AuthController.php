@@ -12,13 +12,15 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 
 class AuthController extends Controller
 {
     use ApiResponse;
 
-    private const MAX_ATTEMPTS    = 5;
-    private const LOCKOUT_MINUTES = 15;
+    private const MAX_ATTEMPTS      = 5;
+    private const LOCKOUT_MINUTES   = 15;
+    private const REFRESH_TOKEN_TTL = 60 * 24 * 30; // 30 hari dalam menit
 
     public function login(LoginRequest $request): JsonResponse
     {
@@ -63,31 +65,62 @@ class AuthController extends Controller
             'ip'       => $request->ip(),
         ]);
 
-        $token        = $user->createToken('auth-token')->plainTextToken;
-        $isProduction = app()->isProduction();
-        $cookie       = cookie(
-            'auth_token', $token, 1440, '/api',
-            null,
-            $isProduction,
-            true,
-            false,
-            'Strict'
-        );
+        $accessToken  = $user->createToken('auth-token')->plainTextToken;
+        $refreshToken = Str::random(64);
+        $user->update(['refresh_token' => hash('sha256', $refreshToken)]);
+
+        $isProduction   = app()->isProduction();
+        $accessCookie   = cookie('auth_token', $accessToken, 1440, '/api', null, $isProduction, true, false, 'Strict');
+        $refreshCookie  = cookie('refresh_token', $refreshToken, self::REFRESH_TOKEN_TTL, '/api/v1/auth/refresh', null, $isProduction, true, false, 'Strict');
 
         return $this->successResponse([
-            'user'  => new UserResource($user),
-            'token' => $token,
-        ], 'Login berhasil')->withCookie($cookie);
+            'user'          => new UserResource($user),
+            'token'         => $accessToken,
+            'refresh_token' => $refreshToken,
+        ], 'Login berhasil')->withCookie($accessCookie)->withCookie($refreshCookie);
+    }
+
+    public function refresh(Request $request): JsonResponse
+    {
+        $refreshToken = $request->input('refresh_token') ?? $request->cookie('refresh_token');
+
+        if (!$refreshToken) {
+            return $this->errorResponse('Refresh token tidak ditemukan.', 401);
+        }
+
+        $user = User::where('refresh_token', hash('sha256', $refreshToken))->first();
+
+        if (!$user || !$user->status) {
+            return $this->errorResponse('Refresh token tidak valid atau telah kedaluwarsa.', 401);
+        }
+
+        $user->tokens()->delete();
+
+        $newAccessToken  = $user->createToken('auth-token')->plainTextToken;
+        $newRefreshToken = Str::random(64);
+        $user->update(['refresh_token' => hash('sha256', $newRefreshToken)]);
+
+        $isProduction  = app()->isProduction();
+        $accessCookie  = cookie('auth_token', $newAccessToken, 1440, '/api', null, $isProduction, true, false, 'Strict');
+        $refreshCookie = cookie('refresh_token', $newRefreshToken, self::REFRESH_TOKEN_TTL, '/api/v1/auth/refresh', null, $isProduction, true, false, 'Strict');
+
+        return $this->successResponse([
+            'token'         => $newAccessToken,
+            'refresh_token' => $newRefreshToken,
+        ], 'Token diperbarui')->withCookie($accessCookie)->withCookie($refreshCookie);
     }
 
     public function logout(Request $request): JsonResponse
     {
-        $request->user()->currentAccessToken()->delete();
+        $user = $request->user();
+        $user->update(['refresh_token' => null]);
+        $user->currentAccessToken()->delete();
 
-        $isProduction = app()->isProduction();
-        $expired      = cookie('auth_token', '', -1, '/api', null, $isProduction, true, false, 'Strict');
+        $isProduction  = app()->isProduction();
+        $expiredAccess  = cookie('auth_token', '', -1, '/api', null, $isProduction, true, false, 'Strict');
+        $expiredRefresh = cookie('refresh_token', '', -1, '/api/v1/auth/refresh', null, $isProduction, true, false, 'Strict');
 
-        return $this->successResponse(null, 'Logout berhasil')->withCookie($expired);
+        return $this->successResponse(null, 'Logout berhasil')->withCookie($expiredAccess)->withCookie($expiredRefresh);
     }
 
     public function me(Request $request): JsonResponse
