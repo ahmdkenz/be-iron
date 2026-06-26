@@ -2,11 +2,20 @@
 
 namespace App\Domain\Master\Perusahaan\Requests;
 
+use App\Support\Enums\RoleEnum;
+use App\Support\Helpers\RoleHelper;
 use Illuminate\Foundation\Http\FormRequest;
 
 class UpdatePerusahaanRequest extends FormRequest
 {
-    public function authorize(): bool { return $this->user() !== null; }
+    public function authorize(): bool
+    {
+        return RoleHelper::hasAnyRole($this->user(), [
+            RoleEnum::ADMIN,
+            RoleEnum::MANAGER,
+            RoleEnum::SUPERVISOR,
+        ]);
+    }
 
     public function rules(): array
     {
