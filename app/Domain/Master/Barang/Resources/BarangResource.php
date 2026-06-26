@@ -14,13 +14,6 @@ class BarangResource extends JsonResource
             'kode_barang'    => $this->kode_barang,
             'nama_barang'    => $this->nama_barang,
             'spesifikasi'    => $this->spesifikasi,
-            'perusahaan_id'  => $this->perusahaan_id,
-            'perusahaan'     => $this->whenLoaded('perusahaan', fn() => $this->perusahaan ? [
-                'id'                        => $this->perusahaan->id,
-                'kode_perusahaan'           => $this->perusahaan->kode_perusahaan,
-                'nama_perusahaan'           => $this->perusahaan->nama_perusahaan,
-                'nama_singkatan_perusahaan' => $this->perusahaan->nama_singkatan_perusahaan,
-            ] : null),
             'brand_id'       => $this->brand_id,
             'brand'          => $this->whenLoaded('brand', fn() => $this->brand ? [
                 'id'         => $this->brand->id,

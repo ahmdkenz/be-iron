@@ -58,8 +58,4 @@ class Perusahaan extends Model
         return $this->hasMany(Resto::class, 'perusahaan_id');
     }
 
-    public function barangs()
-    {
-        return $this->hasMany(Barang::class, 'perusahaan_id');
-    }
 }

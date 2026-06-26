@@ -16,7 +16,6 @@ class Barang extends Model
         'kode_barang',
         'nama_barang',
         'spesifikasi',
-        'perusahaan_id',
         'brand_id',
         'keterangan',
         'status',
@@ -27,11 +26,6 @@ class Barang extends Model
     protected $casts = [
         'status' => 'boolean',
     ];
-
-    public function perusahaan()
-    {
-        return $this->belongsTo(Perusahaan::class, 'perusahaan_id');
-    }
 
     public function brand()
     {

@@ -26,26 +26,24 @@ class BarangService
     public function create(BarangDTO $dto): Barang
     {
         return $this->repository->create([
-            'kode_barang'   => $dto->kode_barang,
-            'nama_barang'   => $dto->nama_barang,
-            'perusahaan_id' => $dto->perusahaan_id,
-            'brand_id'      => $dto->brand_id,
-            'spesifikasi'   => $dto->spesifikasi,
-            'keterangan'    => $dto->keterangan,
-            'status'        => $dto->status,
+            'kode_barang' => $dto->kode_barang,
+            'nama_barang' => $dto->nama_barang,
+            'brand_id'    => $dto->brand_id,
+            'spesifikasi' => $dto->spesifikasi,
+            'keterangan'  => $dto->keterangan,
+            'status'      => $dto->status,
         ]);
     }
 
     public function update(Barang $barang, BarangDTO $dto): Barang
     {
         return $this->repository->update($barang, [
-            'kode_barang'   => $dto->kode_barang,
-            'nama_barang'   => $dto->nama_barang,
-            'perusahaan_id' => $dto->perusahaan_id,
-            'brand_id'      => $dto->brand_id,
-            'spesifikasi'   => $dto->spesifikasi,
-            'keterangan'    => $dto->keterangan,
-            'status'        => $dto->status,
+            'kode_barang' => $dto->kode_barang,
+            'nama_barang' => $dto->nama_barang,
+            'brand_id'    => $dto->brand_id,
+            'spesifikasi' => $dto->spesifikasi,
+            'keterangan'  => $dto->keterangan,
+            'status'      => $dto->status,
         ]);
     }
 

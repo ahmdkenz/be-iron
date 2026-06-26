@@ -9,7 +9,7 @@ class BarangRepository
 {
     private function baseQuery()
     {
-        return Barang::with(['perusahaan', 'brand', 'createdBy', 'updatedBy']);
+        return Barang::with(['brand', 'createdBy', 'updatedBy']);
     }
 
     public function paginate(array $filters = [], int $perPage = 15): LengthAwarePaginator
@@ -19,7 +19,6 @@ class BarangRepository
                 ->where('kode_barang', 'like', "%{$v}%")
                 ->orWhere('nama_barang', 'like', "%{$v}%")
             ))
-            ->when($filters['perusahaan_id'] ?? null, fn($q, $v) => $q->where('perusahaan_id', $v))
             ->when($filters['brand_id'] ?? null, fn($q, $v) => $q->where('brand_id', $v))
             ->when(isset($filters['status']), fn($q) => $q->where('status', $filters['status']))
             ->latest()
@@ -33,13 +32,13 @@ class BarangRepository
 
     public function create(array $data): Barang
     {
-        return Barang::create($data)->load(['perusahaan', 'brand', 'createdBy', 'updatedBy']);
+        return Barang::create($data)->load(['brand', 'createdBy', 'updatedBy']);
     }
 
     public function update(Barang $barang, array $data): Barang
     {
         $barang->update($data);
-        return $barang->fresh(['perusahaan', 'brand', 'createdBy', 'updatedBy']);
+        return $barang->fresh(['brand', 'createdBy', 'updatedBy']);
     }
 
     public function delete(Barang $barang): bool
