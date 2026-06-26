@@ -107,7 +107,7 @@ Route::get('/kinerja-ar/export-excel', [KinerjaArController::class, 'exportExcel
 // ─── Rekonsiliasi Bank Statement ──────────────────────────────────
 Route::prefix('rekonsiliasi-bank')->middleware('role:ADMIN|MANAGER|SUPERVISOR|AR')->group(function () {
     Route::get('/',                                  [BankStatementController::class, 'index']);
-    Route::post('/upload',                           [BankStatementController::class, 'upload']);
+    Route::post('/upload',                           [BankStatementController::class, 'upload'])->middleware('role:ADMIN|MANAGER|SUPERVISOR');
     Route::get('/template/{bankType}',               [BankStatementController::class, 'downloadTemplate']);
     Route::get('/{bankStatement}',                   [BankStatementController::class, 'show']);
     Route::delete('/{bankStatement}',                [BankStatementController::class, 'destroy']);

@@ -10,12 +10,11 @@ class UserResource extends JsonResource
     public function toArray(Request $request): array
     {
         return [
-            'id'                => $this->id,
-            'username'          => $this->username,
-            'email'             => $this->email,
-            'email_verified_at' => $this->email_verified_at?->setTimezone('Asia/Jakarta')->format('d-m-Y H:i'),
-            'no_hp'             => $this->no_hp,
-            'status'            => $this->status,
+            'id'               => $this->id,
+            'username'         => $this->username,
+            'email'            => $this->email,
+            'no_hp'            => $this->no_hp,
+            'status'           => $this->status,
             'karyawan_id'      => $this->karyawan_id,
             'karyawan'         => $this->whenLoaded('karyawan', fn() => [
                 'id'            => $this->karyawan->id,
