@@ -123,7 +123,7 @@ class InvoiceController extends Controller
                 'keterangan'      => $inv->keterangan,
                 'items'           => $inv->items->map(fn($item) => [
                     'barang_id'    => $item->barang_id,
-                    'kode_barang'  => $item->barang?->kode_barang ?? '',
+                    'kode_barang'  => $item->kode_barang ?? $item->barang?->kode_barang ?? '',
                     'nama_barang'  => $item->nama_barang,
                     'qty'          => (float) $item->qty,
                     'satuan'       => $item->satuan ?? 'pcs',
@@ -529,7 +529,7 @@ class InvoiceController extends Controller
 
             $rowData2 = [
                 'A' => [$nomorInvoice,                                              DataType::TYPE_STRING],
-                'B' => [$d->barang?->kode_barang                             ?? '-', DataType::TYPE_STRING],
+                'B' => [$d->kode_barang ?? $d->barang?->kode_barang          ?? '-', DataType::TYPE_STRING],
                 'C' => [$d->nama_barang,                                            DataType::TYPE_STRING],
                 'D' => [$d->satuan                                           ?? '-', DataType::TYPE_STRING],
                 'E' => [(float) $d->qty,                                            DataType::TYPE_NUMERIC],
@@ -1463,7 +1463,7 @@ class InvoiceController extends Controller
 
             $rowData = [
                 'A' => [$d->no_invoice_resto          ?? '-',                         DataType::TYPE_STRING],
-                'B' => [$d->barang?->kode_barang      ?? '-',                         DataType::TYPE_STRING],
+                'B' => [$d->kode_barang ?? $d->barang?->kode_barang ?? '-',            DataType::TYPE_STRING],
                 'C' => [$d->nama_barang,                                             DataType::TYPE_STRING],
                 'D' => [$d->satuan                    ?? '-',                         DataType::TYPE_STRING],
                 'E' => [(float) $d->qty,                                            DataType::TYPE_NUMERIC],

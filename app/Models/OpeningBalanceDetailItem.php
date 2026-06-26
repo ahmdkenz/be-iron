@@ -11,6 +11,7 @@ class OpeningBalanceDetailItem extends Model
     protected $fillable = [
         'ob_detail_id',
         'barang_id',
+        'kode_barang',
         'nama_barang',
         'qty',
         'satuan',

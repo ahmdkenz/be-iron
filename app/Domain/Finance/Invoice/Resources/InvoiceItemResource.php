@@ -13,6 +13,7 @@ class InvoiceItemResource extends JsonResource
             'id'           => $this->id,
             'invoice_id'   => $this->invoice_id,
             'barang_id'    => $this->barang_id,
+            'kode_barang'  => $this->kode_barang ?? $this->barang?->kode_barang,
             'barang'       => $this->whenLoaded('barang', fn() => $this->barang ? [
                 'id'          => $this->barang->id,
                 'kode_barang' => $this->barang->kode_barang,

@@ -21,6 +21,7 @@ class StoreInvoiceRequest extends FormRequest
             'status'                 => ['nullable', 'in:DRAFT,TERKIRIM'],
             'items'                  => ['required', 'array', 'min:1'],
             'items.*.barang_id'      => ['nullable', 'integer', 'exists:tb_barang,id'],
+            'items.*.kode_barang'    => ['nullable', 'string', 'max:50'],
             'items.*.nama_barang'    => ['required', 'string', 'max:150'],
             'items.*.qty'            => ['required', 'numeric', 'min:0.001'],
             'items.*.satuan'         => ['nullable', 'string', 'max:20'],

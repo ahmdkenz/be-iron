@@ -26,7 +26,11 @@ Route::post('/resto/import',                  [RestoController::class, 'import']
 Route::get('/resto/import/{id}/status',       [RestoController::class, 'importStatus']);
 Route::delete('/resto/bulk',                  [RestoController::class, 'bulkDestroy']);
 
-Route::delete('/barang/bulk', [BarangController::class, 'bulkDestroy']);
+Route::get('/barang/external-catalog',      [BarangController::class, 'externalCatalog']);
+Route::get('/barang/import-template',       [BarangController::class, 'importTemplate']);
+Route::post('/barang/import',               [BarangController::class, 'import']);
+Route::get('/barang/import/{id}/status',    [BarangController::class, 'importStatus']);
+Route::delete('/barang/bulk',               [BarangController::class, 'bulkDestroy']);
 
 Route::apiResource('karyawan', KaryawanController::class);
 Route::apiResource('perusahaan', PerusahaanController::class);

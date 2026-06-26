@@ -278,8 +278,6 @@ class InvoiceImportService
                 if ($kodeBarang) {
                     if (isset($barangMap[$kodeBarang])) {
                         $barangId = $barangMap[$kodeBarang];
-                    } else {
-                        $errors[] = ['sheet' => 'Item Invoice', 'row' => $lineNumber, 'message' => "Kode barang '{$kodeBarang}' tidak ditemukan di master barang (item tetap disimpan tanpa referensi barang)"];
                     }
                 }
 
@@ -293,6 +291,7 @@ class InvoiceImportService
 
                 $invoice->items()->create([
                     'barang_id'    => $barangId,
+                    'kode_barang'  => $kodeBarang ?: null,
                     'nama_barang'  => $namaBarang,
                     'qty'          => $qty,
                     'satuan'       => $satuan,
@@ -538,7 +537,12 @@ class InvoiceImportService
                 }
 
                 $invoice  = $invoiceMapping[$noUrutInvoice];
-                $barangId = $kodeBarang ? ($barangMap[$kodeBarang] ?? null) : null;
+                $barangId = null;
+                if ($kodeBarang) {
+                    if (isset($barangMap[$kodeBarang])) {
+                        $barangId = $barangMap[$kodeBarang];
+                    }
+                }
 
                 // Untuk invoice yang di-update, hapus item lama sekali saja sebelum insert baru
                 if (isset($updateMapping[$noUrutInvoice]) && !isset($deletedItemsFor[$invoice->id])) {
@@ -548,6 +552,7 @@ class InvoiceImportService
 
                 $invoice->items()->create([
                     'barang_id'        => $barangId,
+                    'kode_barang'      => $kodeBarang ?: null,
                     'nama_barang'      => $namaBarang,
                     'qty'              => $qty,
                     'satuan'           => $satuan  ?: null,

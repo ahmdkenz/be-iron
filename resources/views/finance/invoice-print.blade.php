@@ -397,7 +397,7 @@
       @forelse($invoice->items as $i => $item)
       <tr>
         <td class="col-no text-center" style="color:#777;">{{ $i + 1 }}</td>
-        <td class="col-kode" style="color:#555; font-size:14px;">{{ $item->barang?->kode_barang ?? '-' }}</td>
+        <td class="col-kode" style="color:#555; font-size:14px;">{{ $item->kode_barang ?? $item->barang?->kode_barang ?? '-' }}</td>
         <td class="col-desc">
           <span class="font-bold" style="color:#111;">{{ $item->nama_barang }}</span>
           @if($item->keterangan)<span class="item-desc">{{ $item->keterangan }}</span>@endif
@@ -678,7 +678,7 @@
         @forelse($regInv->items as $i => $item)
         <tr>
           <td class="col-no text-center" style="color:#777;">{{ $i + 1 }}</td>
-          <td class="col-kode" style="color:#555; font-size:14px;">{{ $item->barang?->kode_barang ?? '-' }}</td>
+          <td class="col-kode" style="color:#555; font-size:14px;">{{ $item->kode_barang ?? $item->barang?->kode_barang ?? '-' }}</td>
           <td class="col-desc">
             <span class="font-bold" style="color:#111;">{{ $item->nama_barang }}</span>
             @if($item->keterangan)<span class="item-desc">{{ $item->keterangan }}</span>@endif

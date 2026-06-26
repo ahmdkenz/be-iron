@@ -150,6 +150,7 @@ class InvoiceService
                 $itemSubtotal = ($item['qty'] ?? 0) * ($item['harga_satuan'] ?? 0);
                 $invoice->items()->create([
                     'barang_id'    => $item['barang_id'] ?? null,
+                    'kode_barang'  => $item['kode_barang'] ?? null,
                     'nama_barang'  => $item['nama_barang'],
                     'qty'          => $item['qty'],
                     'satuan'       => $item['satuan'] ?? null,
@@ -271,6 +272,7 @@ class InvoiceService
             foreach ($items as $item) {
                 $obDetail->items()->create([
                     'barang_id'    => $item['barang_id'] ?? null,
+                    'kode_barang'  => $item['kode_barang'] ?? null,
                     'nama_barang'  => $item['nama_barang'],
                     'qty'          => $item['qty'],
                     'satuan'       => $item['satuan'] ?? null,
@@ -397,6 +399,7 @@ class InvoiceService
             $itemSubtotal = ($item['qty'] ?? 0) * ($item['harga_satuan'] ?? 0);
             $invoice->items()->create([
                 'barang_id'    => $item['barang_id'] ?? null,
+                'kode_barang'  => $item['kode_barang'] ?? null,
                 'nama_barang'  => $item['nama_barang'],
                 'qty'          => $item['qty'],
                 'satuan'       => $item['satuan'] ?? null,
