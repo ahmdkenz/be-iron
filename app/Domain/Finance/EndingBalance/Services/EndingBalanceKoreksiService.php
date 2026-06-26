@@ -176,8 +176,8 @@ class EndingBalanceKoreksiService
     public function approved(): \Illuminate\Database\Eloquent\Collection
     {
         return EndingBalanceKoreksi::with(['endingBalance.klienAr', 'submittedBy', 'spv', 'manager', 'invoice', 'items'])
-            ->where('status', 'APPROVED')
-            ->orderByDesc('manager_actioned_at')
+            ->whereIn('status', ['PENDING_MANAGER', 'APPROVED'])
+            ->orderByDesc(DB::raw('COALESCE(manager_actioned_at, spv_actioned_at)'))
             ->get();
     }
 
