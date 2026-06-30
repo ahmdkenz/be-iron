@@ -29,9 +29,6 @@ Route::prefix('klien-ar')->group(function () {
     Route::get('/all', [KlienArController::class, 'all']);
     Route::get('/preview-kode', [KlienArController::class, 'previewKode']);
     Route::get('/export', [KlienArController::class, 'export']);
-    Route::get('/import-template', [KlienArController::class, 'importTemplate']);
-    Route::post('/import', [KlienArController::class, 'import']);
-    Route::get('/import/{id}/status', [KlienArController::class, 'importStatus']);
     Route::delete('/bulk', [KlienArController::class, 'bulkDestroy']);
     Route::post('/', [KlienArController::class, 'store']);
     Route::get('/{klien_ar}', [KlienArController::class, 'show']);

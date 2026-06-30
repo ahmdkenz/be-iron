@@ -12,8 +12,8 @@ class StoreInvestorRequest extends FormRequest
     {
         return [
             'nama_investor'   => ['required', 'string', 'max:150'],
-            'ktp'             => ['nullable', 'string', 'max:20', 'unique:tb_investor,ktp'],
-            'npwp'            => ['nullable', 'string', 'max:20', 'unique:tb_investor,npwp'],
+            'ktp'             => ['nullable', 'string', 'max:20'],
+            'npwp'            => ['nullable', 'string', 'max:20'],
             'no_hp'           => ['nullable', 'string', 'max:20'],
             'pengelola'       => ['nullable', 'string', 'max:150'],
             'no_hp_pengelola' => ['nullable', 'string', 'max:20'],

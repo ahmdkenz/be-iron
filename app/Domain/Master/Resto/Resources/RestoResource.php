@@ -43,6 +43,23 @@ class RestoResource extends JsonResource
                 'nik'          => $this->pic->nik,
                 'nama_karyawan' => $this->pic->nama_karyawan,
             ] : null),
+            'pic_ar'           => $this->whenLoaded('klienArs', function () {
+                // Tahap 1: RESTO-type KlienAr terhubung langsung via resto_id
+                $klienAr = $this->klienArs->where('tipe_klien', 'RESTO')->first();
+
+                // Tahap 2: PT-type KlienAr terhubung via perusahaan_id (resto_id = null)
+                if (!$klienAr
+                    && $this->relationLoaded('perusahaan')
+                    && $this->perusahaan?->relationLoaded('klienArs')
+                ) {
+                    $klienAr = $this->perusahaan->klienArs->where('tipe_klien', 'PT')->first();
+                }
+
+                return $klienAr?->karyawanAr ? [
+                    'id'            => $klienAr->karyawanAr->id,
+                    'nama_karyawan' => $klienAr->karyawanAr->nama_karyawan,
+                ] : null;
+            }),
             'area'           => $this->area,
             'kota'           => $this->kota,
             'alamat'         => $this->alamat,

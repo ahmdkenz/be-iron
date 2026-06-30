@@ -5,6 +5,7 @@ namespace App\Models;
 use App\Support\Traits\BlameableTrait;
 use App\Support\Traits\SoftDeletesTrait;
 use Illuminate\Database\Eloquent\Model;
+use App\Models\KlienAr;
 
 class Perusahaan extends Model
 {
@@ -56,6 +57,11 @@ class Perusahaan extends Model
     public function restos()
     {
         return $this->hasMany(Resto::class, 'perusahaan_id');
+    }
+
+    public function klienArs()
+    {
+        return $this->hasMany(KlienAr::class, 'perusahaan_id');
     }
 
 }

@@ -111,6 +111,16 @@ class KlienArImportService
                     continue;
                 }
 
+                // Auto-lookup nama investor dari resto jika nama_klien kosong (B2C)
+                if ($tipeKlien === 'RESTO' && $restoId && $namaKlien === '') {
+                    $restoObj  = Resto::with('investor')->find($restoId);
+                    $namaKlien = $restoObj?->investor?->nama_investor ?? '';
+                    if ($namaKlien === '') {
+                        $errors[] = ['row' => $lineNumber, 'message' => "Kolom nama_klien kosong dan resto '{$namaResto}' tidak memiliki investor — nama_klien tidak dapat ditentukan otomatis."];
+                        continue;
+                    }
+                }
+
                 // Resolve Karyawan AR
                 $karyawanArId = null;
                 if ($namaKaryawanAr) {
@@ -158,11 +168,18 @@ class KlienArImportService
                     continue;
                 }
 
-                // Upsert: cari berdasarkan nama_klien + tipe_klien (kode digenerate otomatis saat insert)
-                $existing = KlienAr::where('nama_klien', $data['nama_klien'])
-                    ->where('tipe_klien', $data['tipe_klien'])
-                    ->latest()
-                    ->first();
+                // Upsert: B2B dedup by perusahaan_id (1 PT = 1 Client), B2C by nama_klien+tipe_klien
+                if ($tipeKlien === 'PT' && !empty($data['perusahaan_id'])) {
+                    $existing = KlienAr::where('perusahaan_id', $data['perusahaan_id'])
+                        ->where('tipe_klien', 'PT')
+                        ->latest()
+                        ->first();
+                } else {
+                    $existing = KlienAr::where('nama_klien', $data['nama_klien'])
+                        ->where('tipe_klien', $data['tipe_klien'])
+                        ->latest()
+                        ->first();
+                }
 
                 try {
                     if ($existing) {

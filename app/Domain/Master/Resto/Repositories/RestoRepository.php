@@ -10,7 +10,7 @@ class RestoRepository
 {
     private function baseQuery()
     {
-        return Resto::with(['investor', 'perusahaan', 'brand', 'pic', 'createdBy', 'updatedBy']);
+        return Resto::with(['investor', 'perusahaan', 'perusahaan.klienArs.karyawanAr', 'brand', 'pic', 'klienArs.karyawanAr', 'createdBy', 'updatedBy']);
     }
 
     public function paginate(array $filters = [], int $perPage = 15): LengthAwarePaginator
@@ -39,13 +39,13 @@ class RestoRepository
     public function create(array $data): Resto
     {
         $resto = Resto::create($data);
-        return $resto->load(['investor', 'perusahaan', 'brand', 'pic', 'createdBy', 'updatedBy']);
+        return $resto->load(['investor', 'perusahaan', 'perusahaan.klienArs.karyawanAr', 'brand', 'pic', 'klienArs.karyawanAr', 'createdBy', 'updatedBy']);
     }
 
     public function update(Resto $resto, array $data): Resto
     {
         $resto->update($data);
-        return $resto->fresh(['investor', 'perusahaan', 'brand', 'pic', 'createdBy', 'updatedBy']);
+        return $resto->fresh(['investor', 'perusahaan', 'perusahaan.klienArs.karyawanAr', 'brand', 'pic', 'klienArs.karyawanAr', 'createdBy', 'updatedBy']);
     }
 
     public function delete(Resto $resto): bool

@@ -6,6 +6,7 @@ use App\Domain\Master\Investor\Controllers\InvestorController;
 use App\Domain\Master\Karyawan\Controllers\KaryawanController;
 use App\Domain\Master\Perusahaan\Controllers\PerusahaanController;
 use App\Domain\Master\Resto\Controllers\RestoController;
+use App\Domain\Master\Unified\Controllers\UnifiedMasterController;
 use Illuminate\Support\Facades\Route;
 
 // Must declare named sub-routes BEFORE apiResource binding
@@ -15,22 +16,18 @@ Route::delete('/karyawan/bulk', [KaryawanController::class, 'bulkDestroy']);
 Route::delete('/perusahaan/bulk', [PerusahaanController::class, 'bulkDestroy']);
 
 Route::get('/investor/export',                [InvestorController::class, 'export']);
-Route::get('/investor/import-template',        [InvestorController::class, 'importTemplate']);
-Route::post('/investor/import',               [InvestorController::class, 'import']);
-Route::get('/investor/import/{id}/status',    [InvestorController::class, 'importStatus']);
 Route::delete('/investor/bulk',               [InvestorController::class, 'bulkDestroy']);
 
 Route::get('/resto/export',                   [RestoController::class, 'export']);
-Route::get('/resto/import-template',          [RestoController::class, 'importTemplate']);
-Route::post('/resto/import',                  [RestoController::class, 'import']);
-Route::get('/resto/import/{id}/status',       [RestoController::class, 'importStatus']);
 Route::delete('/resto/bulk',                  [RestoController::class, 'bulkDestroy']);
 
 Route::get('/barang/external-catalog',      [BarangController::class, 'externalCatalog']);
-Route::get('/barang/import-template',       [BarangController::class, 'importTemplate']);
-Route::post('/barang/import',               [BarangController::class, 'import']);
-Route::get('/barang/import/{id}/status',    [BarangController::class, 'importStatus']);
 Route::delete('/barang/bulk',               [BarangController::class, 'bulkDestroy']);
+
+Route::get('/master-data/import-template',    [UnifiedMasterController::class, 'importTemplate']);
+Route::post('/master-data/import',            [UnifiedMasterController::class, 'import']);
+Route::get('/master-data/import/latest',      [UnifiedMasterController::class, 'latestImport']);
+Route::get('/master-data/import/{id}/status', [UnifiedMasterController::class, 'importStatus']);
 
 Route::apiResource('karyawan', KaryawanController::class);
 Route::apiResource('perusahaan', PerusahaanController::class);

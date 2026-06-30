@@ -58,6 +58,11 @@ class Resto extends Model
         return $this->belongsTo(Karyawan::class, 'karyawan_id');
     }
 
+    public function klienArs()
+    {
+        return $this->hasMany(KlienAr::class, 'resto_id');
+    }
+
     public function createdBy()
     {
         return $this->belongsTo(User::class, 'created_by');
