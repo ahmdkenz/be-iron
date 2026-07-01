@@ -88,6 +88,7 @@ class EndingBalanceKoreksiController extends Controller
 
         $koreksi = EndingBalanceKoreksi::with([
             'endingBalance.klienAr.perusahaan',
+            'endingBalance.klienAr.resto.investor',
             'invoice.perusahaan',
             'invoice.karyawan.perusahaan',
             'invoice.klienAr',

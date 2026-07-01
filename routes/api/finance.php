@@ -45,9 +45,6 @@ Route::prefix('invoices')->group(function () {
     Route::get('/export',               [InvoiceController::class, 'export']);
     Route::get('/export-excel',         [InvoiceController::class, 'exportExcel']);
     Route::get('/export-b2b-delivery',  [InvoiceController::class, 'exportB2BDelivery']);
-    Route::get('/import-template', [InvoiceController::class, 'importTemplate']);
-    Route::post('/import',         [InvoiceController::class, 'import']);
-    Route::get('/import/{id}/status', [InvoiceController::class, 'importStatus']);
     Route::get('/{id}/print', [InvoiceController::class, 'print']);
     Route::get('/carryover', [InvoiceController::class, 'carryover']);
     Route::get('/outstanding', [InvoiceController::class, 'outstanding']);

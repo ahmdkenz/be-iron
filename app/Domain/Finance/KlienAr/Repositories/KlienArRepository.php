@@ -44,7 +44,7 @@ class KlienArRepository
 
     public function getAllForExport(array $filters = []): \Illuminate\Database\Eloquent\Collection
     {
-        return KlienAr::with(['karyawanAr.perusahaan', 'resto.investor'])
+        return KlienAr::with(['perusahaan', 'karyawanAr.perusahaan', 'resto.investor'])
             ->when($filters['search'] ?? null, fn($q, $v) => $q->where(fn($q) => $q
                 ->where('nama_klien', 'like', "%{$v}%")
                 ->orWhere('kode_klien', 'like', "%{$v}%")

@@ -17,8 +17,6 @@ class InvoiceResource extends JsonResource
             'id'                         => $this->id,
             'no_invoice'                 => $this->no_invoice,
             'tanggal_invoice'            => $this->tanggal_invoice?->format('d-m-Y'),
-            'periode_awal'               => $this->periode_awal?->format('d-m-Y'),
-            'periode_akhir'              => $this->periode_akhir?->format('d-m-Y'),
             'klien_ar_id'                => $this->klien_ar_id,
             'resto_id'                   => $this->resto_id,
             'resto'                      => $this->whenLoaded('resto', fn() => $this->resto ? [
@@ -35,9 +33,11 @@ class InvoiceResource extends JsonResource
                 'perusahaan'   => $this->klienAr->relationLoaded('perusahaan') && $this->klienAr->perusahaan ? [
                     'id'              => $this->klienAr->perusahaan->id,
                     'nama_perusahaan' => $this->klienAr->perusahaan->nama_perusahaan,
+                    'no_npwp'         => $this->klienAr->perusahaan->no_npwp,
                 ] : null,
                 'no_npwp'      => $this->klienAr->no_npwp,
                 'no_wa'        => $this->klienAr->no_wa,
+                'client_npwp'  => $this->resolveKlienNpwp($this->klienAr),
                 'karyawan_ar'  => $this->klienAr->relationLoaded('karyawanAr') ? [
                     'id'           => $this->klienAr->karyawanAr?->id,
                     'nik'          => $this->klienAr->karyawanAr?->nik,
@@ -50,6 +50,7 @@ class InvoiceResource extends JsonResource
                     'investor'   => $this->klienAr->resto->relationLoaded('investor') && $this->klienAr->resto->investor ? [
                         'id'              => $this->klienAr->resto->investor->id,
                         'nama_investor'   => $this->klienAr->resto->investor->nama_investor,
+                        'npwp'            => $this->klienAr->resto->investor->npwp,
                         'no_hp'           => $this->klienAr->resto->investor->no_hp,
                         'pengelola'       => $this->klienAr->resto->investor->pengelola,
                         'no_hp_pengelola' => $this->klienAr->resto->investor->no_hp_pengelola,
@@ -73,7 +74,6 @@ class InvoiceResource extends JsonResource
                     'nama_perusahaan' => $this->karyawan->perusahaan->nama_perusahaan,
                 ] : null,
             ]),
-            'tanggal_kirim_barang'       => $this->tanggal_kirim_barang?->format('d-m-Y'),
             'no_surat_jalan'             => $this->no_surat_jalan,
             'subtotal'                   => (float) $this->subtotal,
             'tagihan_periode_sebelumnya' => (float) $this->tagihan_periode_sebelumnya,
@@ -161,6 +161,22 @@ class InvoiceResource extends JsonResource
             'created_at'                 => $this->created_at?->toIso8601String(),
             'updated_at'                 => $this->updated_at?->toIso8601String(),
         ];
+    }
+
+    private function resolveKlienNpwp(\App\Models\KlienAr $klien): ?string
+    {
+        if ($klien->tipe_klien === 'RESTO') {
+            $fromInvestor = $klien->relationLoaded('resto') && $klien->resto
+                && $klien->resto->relationLoaded('investor') && $klien->resto->investor
+                ? $klien->resto->investor->npwp : null;
+            return $fromInvestor ?: ($klien->no_npwp ?: null);
+        }
+        if ($klien->tipe_klien === 'PT') {
+            $fromPerusahaan = $klien->relationLoaded('perusahaan') && $klien->perusahaan
+                ? $klien->perusahaan->no_npwp : null;
+            return $fromPerusahaan ?: ($klien->no_npwp ?: null);
+        }
+        return $klien->no_npwp ?: null;
     }
 
     private function canApprove(?User $user): bool

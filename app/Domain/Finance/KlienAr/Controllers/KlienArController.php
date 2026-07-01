@@ -191,6 +191,12 @@ class KlienArController extends Controller
             $isB2C   = $klien->tipe_klien === 'RESTO';
             $segment = $isB2C ? 'B2C' : 'B2B';
 
+            if ($isB2C) {
+                $effectiveNpwp = $klien->resto?->investor?->npwp ?? $klien->no_npwp ?? '-';
+            } else {
+                $effectiveNpwp = $klien->perusahaan?->no_npwp ?? $klien->no_npwp ?? '-';
+            }
+
             $rowData = [
                 'A' => [$klien->kode_klien,                                    DataType::TYPE_STRING],
                 'B' => [$klien->nama_klien,                                    DataType::TYPE_STRING],
@@ -198,7 +204,7 @@ class KlienArController extends Controller
                 'D' => [$segment,                                              DataType::TYPE_STRING],
                 'E' => [$klien->resto?->nama_resto ?? '-',                     DataType::TYPE_STRING],
                 'F' => [$klien->resto?->investor?->nama_investor ?? '-',       DataType::TYPE_STRING],
-                'G' => [$klien->no_npwp ?? '-',                               DataType::TYPE_STRING],
+                'G' => [$effectiveNpwp,                                        DataType::TYPE_STRING],
                 'H' => [$klien->no_wa ?? '-',                                 DataType::TYPE_STRING],
                 'I' => [$klien->karyawanAr?->nama_karyawan ?? '-',            DataType::TYPE_STRING],
                 'J' => [$klien->status ? 'Aktif' : 'Tidak Aktif',            DataType::TYPE_STRING],

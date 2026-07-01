@@ -33,6 +33,7 @@ class UnifiedMasterController extends Controller
 
         $this->buildMasterDataSheet($spreadsheet->getActiveSheet());
         $this->buildMasterBarangSheet($spreadsheet->createSheet());
+        $this->buildMasterInvoiceSheet($spreadsheet->createSheet());
         $this->buildInstructionSheet($spreadsheet->createSheet());
 
         $spreadsheet->setActiveSheetIndex(0);
@@ -106,6 +107,10 @@ class UnifiedMasterController extends Controller
             'barang_inserted'   => $batch->barang_inserted,
             'barang_updated'    => $batch->barang_updated,
             'barang_failed'     => $batch->barang_failed,
+            'invoice_inserted'  => $batch->invoice_inserted,
+            'invoice_updated'   => $batch->invoice_updated,
+            'invoice_skipped'   => $batch->invoice_skipped,
+            'invoice_failed'    => $batch->invoice_failed,
         ]);
     }
 
@@ -142,6 +147,12 @@ class UnifiedMasterController extends Controller
             'barang_inserted'   => $batch->barang_inserted,
             'barang_updated'    => $batch->barang_updated,
             'barang_failed'     => $batch->barang_failed,
+            'invoice_total'     => $batch->invoice_total,
+            'invoice_processed' => $batch->invoice_processed,
+            'invoice_inserted'  => $batch->invoice_inserted,
+            'invoice_updated'   => $batch->invoice_updated,
+            'invoice_skipped'   => $batch->invoice_skipped,
+            'invoice_failed'    => $batch->invoice_failed,
             'errors'            => $batch->errors ?? [],
             'message'           => $batch->message,
         ]);
@@ -179,13 +190,11 @@ class UnifiedMasterController extends Controller
             'U'  => ['tgl_aktif',       14],
             'V'  => ['keterangan',      26],
             'W'  => ['pic_ar',          24],
-            'X'  => ['no_npwp',         20],
-            'Y'  => ['no_wa',           16],
-            'Z'  => ['tipe_klien',      14],
-            'AA' => ['status',          10],
+            'X'  => ['tipe_klien',      14],
+            'Y'  => ['status',          10],
         ];
 
-        $lastCol = 'AA';
+        $lastCol = 'Y';
 
         // Row 1 — Title
         $sheet->mergeCells("A1:{$lastCol}1");
@@ -199,7 +208,7 @@ class UnifiedMasterController extends Controller
 
         // Row 2 — Subtitle
         $sheet->mergeCells("A2:{$lastCol}2");
-        $sheet->setCellValue('A2', 'Satu baris = 1 outlet (Investor + Resto + Client AR). Kolom tipe_klien wajib (PT/RESTO) untuk Client AR. Kolom nama_entitas wajib jika tipe_klien=PT. Hanya role ADMIN/MANAGER/SUPERVISOR. Lihat sheet "Petunjuk Pengisian".');
+        $sheet->setCellValue('A2', 'Satu baris = 1 outlet (Investor + Resto + Client AR). Kolom tipe_klien wajib (PT/RESTO) untuk Client AR. Kolom nama_entitas wajib jika tipe_klien=PT. NPWP & kontak Client otomatis dari Investor (RESTO) atau Perusahaan (PT). Hanya role ADMIN/MANAGER/SUPERVISOR. Lihat sheet "Petunjuk Pengisian".');
         $sheet->getStyle('A2')->applyFromArray([
             'font'      => ['italic' => true, 'size' => 9, 'color' => ['argb' => 'FF37474F']],
             'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFE3F2FD']],
@@ -248,10 +257,8 @@ class UnifiedMasterController extends Controller
             'U'  => '01-01-2026',
             'V'  => 'Keterangan opsional',
             'W'  => 'Nama Karyawan AR',
-            'X'  => '12.345.678.9-012.000',
-            'Y'  => '08123456789',
-            'Z'  => 'RESTO',
-            'AA' => '1',
+            'X'  => 'RESTO',
+            'Y'  => '1',
         ];
         foreach ($example as $col => $val) {
             $sheet->getCell("{$col}5")->setValueExplicit($val, DataType::TYPE_STRING);
@@ -272,7 +279,7 @@ class UnifiedMasterController extends Controller
                 'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_HAIR, 'color' => ['argb' => 'FFE0E0E0']]],
             ]);
             // Format as text: kolom-kolom nomor yang mungkin diawali 0
-            foreach (['B', 'C', 'D', 'F', 'O', 'T', 'U', 'X', 'Y'] as $col) {
+            foreach (['B', 'C', 'D', 'F', 'O', 'T', 'U'] as $col) {
                 $sheet->getStyle("{$col}{$row}")->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
             }
             $sheet->getRowDimension($row)->setRowHeight(18);
@@ -367,6 +374,167 @@ class UnifiedMasterController extends Controller
         $sheet->setAutoFilter("A4:{$lastCol}4");
     }
 
+    private function buildMasterInvoiceSheet(Worksheet $sheet): void
+    {
+        $sheet->setTitle('MASTER INVOICE');
+
+        $cols = [
+            'A' => ['nama_klien',          28],
+            'B' => ['tanggal_invoice',     16],
+            'C' => ['tanggal_jatuh_tempo', 18],
+            'D' => ['no_surat_jalan',      18],
+            'E' => ['keterangan_invoice',  26],
+            'F' => ['no_invoice_resto',    20],
+            'G' => ['kode_resto',          14],
+            'H' => ['nama_resto',          26],
+            'I' => ['kode_barang',         16],
+            'J' => ['nama_barang',         30],
+            'K' => ['qty',                 10],
+            'L' => ['satuan',              10],
+            'M' => ['harga_satuan',        16],
+            'N' => ['tipe_invoice',        14],
+        ];
+
+        $lastCol = 'N';
+
+        // Row 1 — Title
+        $sheet->mergeCells("A1:{$lastCol}1");
+        $sheet->setCellValue('A1', 'TEMPLATE IMPORT MASTER INVOICE (B2B & B2C)');
+        $sheet->getStyle('A1')->applyFromArray([
+            'font'      => ['bold' => true, 'size' => 14, 'color' => ['argb' => 'FFFFFFFF']],
+            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF6A1B9A']],
+            'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
+        ]);
+        $sheet->getRowDimension(1)->setRowHeight(36);
+
+        // Row 2 — Subtitle
+        $sheet->mergeCells("A2:{$lastCol}2");
+        $sheet->setCellValue('A2', '1 baris = 1 item invoice. Baris dengan tipe_invoice + nama_klien + tanggal_invoice yang sama digabung menjadi 1 invoice. 1 klien hanya boleh punya 1 invoice per hari. B2B: isi no_invoice_resto/kode_resto/nama_resto. B2C: kosongkan 3 kolom tersebut. Lihat sheet "Petunjuk Pengisian".');
+        $sheet->getStyle('A2')->applyFromArray([
+            'font'      => ['italic' => true, 'size' => 9, 'color' => ['argb' => 'FF37474F']],
+            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFF3E5F5']],
+            'alignment' => ['horizontal' => Alignment::HORIZONTAL_LEFT, 'vertical' => Alignment::VERTICAL_CENTER, 'wrapText' => true],
+        ]);
+        $sheet->getRowDimension(2)->setRowHeight(30);
+
+        // Row 3 — Spacer
+        $sheet->getRowDimension(3)->setRowHeight(8);
+
+        // Row 4 — Headers
+        foreach ($cols as $col => [$name, $width]) {
+            $sheet->setCellValue("{$col}4", $name);
+            $sheet->getColumnDimension($col)->setWidth($width);
+        }
+        $sheet->getStyle("A4:{$lastCol}4")->applyFromArray([
+            'font'      => ['bold' => true, 'size' => 10, 'color' => ['argb' => 'FFFFFFFF']],
+            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF7B1FA2']],
+            'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
+            'borders'   => ['allBorders' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FF4A148C']]],
+        ]);
+        $sheet->getRowDimension(4)->setRowHeight(24);
+
+        // Row 5 — Example B2C (item 1)
+        $exampleB2c = [
+            'A' => 'Nama Klien B2C',
+            'B' => '01-06-2026',
+            'C' => '30-06-2026',
+            'D' => 'SJ-001',
+            'E' => 'Keterangan invoice',
+            'F' => '',
+            'G' => '',
+            'H' => '',
+            'I' => 'BRG-001',
+            'J' => 'Nama Barang A',
+            'K' => '10',
+            'L' => 'pcs',
+            'M' => '50000',
+            'N' => '[CONTOH] B2C',
+        ];
+        foreach ($exampleB2c as $col => $val) {
+            $sheet->getCell("{$col}5")->setValueExplicit($val, DataType::TYPE_STRING);
+        }
+        $sheet->getStyle("A5:{$lastCol}5")->applyFromArray([
+            'font'      => ['italic' => true, 'size' => 9, 'color' => ['argb' => 'FFE65100']],
+            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFFFF9C4']],
+            'alignment' => ['vertical' => Alignment::VERTICAL_CENTER],
+            'borders'   => ['allBorders' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FFFFECB3']]],
+        ]);
+        $sheet->getRowDimension(5)->setRowHeight(20);
+
+        // Row 6 — Example B2C (item 2, same klien+tanggal = same invoice)
+        $exampleB2c2 = [
+            'A' => 'Nama Klien B2C',
+            'B' => '01-06-2026',
+            'C' => '30-06-2026',
+            'D' => 'SJ-001',
+            'E' => 'Keterangan invoice',
+            'F' => '',
+            'G' => '',
+            'H' => '',
+            'I' => 'BRG-002',
+            'J' => 'Nama Barang B',
+            'K' => '5',
+            'L' => 'kg',
+            'M' => '20000',
+            'N' => '[CONTOH] B2C',
+        ];
+        foreach ($exampleB2c2 as $col => $val) {
+            $sheet->getCell("{$col}6")->setValueExplicit($val, DataType::TYPE_STRING);
+        }
+        $sheet->getStyle("A6:{$lastCol}6")->applyFromArray([
+            'font'      => ['italic' => true, 'size' => 9, 'color' => ['argb' => 'FFE65100']],
+            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFFFF9C4']],
+            'alignment' => ['vertical' => Alignment::VERTICAL_CENTER],
+            'borders'   => ['allBorders' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FFFFECB3']]],
+        ]);
+        $sheet->getRowDimension(6)->setRowHeight(20);
+
+        // Row 7 — Example B2B
+        $exampleB2b = [
+            'A' => 'Nama Klien B2B',
+            'B' => '01-06-2026',
+            'C' => '30-06-2026',
+            'D' => '',
+            'E' => '',
+            'F' => 'SI-RESTO-001',
+            'G' => 'KD-RESTO-01',
+            'H' => 'Nama Resto Asal',
+            'I' => 'BRG-001',
+            'J' => 'Nama Barang A',
+            'K' => '20',
+            'L' => 'pcs',
+            'M' => '50000',
+            'N' => '[CONTOH] B2B',
+        ];
+        foreach ($exampleB2b as $col => $val) {
+            $sheet->getCell("{$col}7")->setValueExplicit($val, DataType::TYPE_STRING);
+        }
+        $sheet->getStyle("A7:{$lastCol}7")->applyFromArray([
+            'font'      => ['italic' => true, 'size' => 9, 'color' => ['argb' => 'FF1A237E']],
+            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFE8EAF6']],
+            'alignment' => ['vertical' => Alignment::VERTICAL_CENTER],
+            'borders'   => ['allBorders' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FFC5CAE9']]],
+        ]);
+        $sheet->getRowDimension(7)->setRowHeight(20);
+
+        // Rows 8–67 — Data rows
+        for ($row = 8; $row <= 67; $row++) {
+            $bg = $row % 2 === 0 ? 'FFF5F5F5' : 'FFFFFFFF';
+            $sheet->getStyle("A{$row}:{$lastCol}{$row}")->applyFromArray([
+                'fill'    => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => $bg]],
+                'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_HAIR, 'color' => ['argb' => 'FFE0E0E0']]],
+            ]);
+            // Format kolom tanggal dan harga sebagai text agar tidak auto-convert
+            foreach (['B', 'C', 'K', 'M'] as $col) {
+                $sheet->getStyle("{$col}{$row}")->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
+            }
+            $sheet->getRowDimension($row)->setRowHeight(18);
+        }
+
+        $sheet->freezePane('A5');
+        $sheet->setAutoFilter("A4:{$lastCol}4");
+    }
+
     private function buildInstructionSheet(Worksheet $sheet): void
     {
         $sheet->setTitle('Petunjuk Pengisian');
@@ -400,18 +568,21 @@ class UnifiedMasterController extends Controller
         $row++;
 
         $steps = [
-            '1. File ini berisi 2 sheet: "MASTER DATA" (Investor+Resto+Client) dan "MASTER BARANG" (Barang/Produk).',
-            '2. Sheet MASTER DATA: isi satu baris per outlet. Satu baris = 1 Investor + 1 Resto + 1 Client AR.',
-            '3. Kolom nama_investor wajib jika ingin membuat/memperbarui Investor.',
-            '4. Kolom nama_cabang wajib jika ingin membuat/memperbarui Resto.',
-            '5. Kolom tipe_klien (PT/RESTO) wajib jika ingin membuat/memperbarui Client AR.',
-            '6. Kolom pic_ar (PIC AR) wajib jika tipe_klien diisi. Untuk tipe PT: jika nama_pic kosong, sistem memakai pic_ar sebagai PIC Data Resto secara otomatis. Nama Client AR diatur otomatis: tipe RESTO = nama_investor, tipe PT = nama_entitas.',
-            '7. Kolom nama_entitas WAJIB jika tipe_klien=PT — harus cocok dengan entitas yang sudah ada di sistem.',
-            '8. Sheet MASTER BARANG: isi data barang/produk. kode_barang wajib untuk data baru. Urutan kolom: kode_barang, nama_barang, spesifikasi, nama_brand, keterangan, status.',
-            '9. Hapus baris [CONTOH] sebelum upload atau biarkan (sistem akan otomatis mengabaikannya).',
-            '10. Kolom status: 1 = Aktif (default), 0 = Nonaktif.',
-            '11. Upload hanya bisa dilakukan oleh role ADMIN, MANAGER, atau SUPERVISOR.',
-            '12. Upload file ini di halaman "Import Master Data" lalu pantau progress di sana.',
+            '1. File ini berisi 4 sheet: "MASTER DATA" (Investor+Resto+Client AR), "MASTER BARANG" (Barang/Produk), "MASTER INVOICE" (Invoice B2B & B2C), dan "Petunjuk Pengisian".',
+            '2. Urutan import: MASTER DATA → MASTER BARANG → MASTER INVOICE. Invoice dapat langsung memakai data master yang baru diimport.',
+            '3. Sheet MASTER DATA: isi satu baris per outlet. Satu baris = 1 Investor + 1 Resto + 1 Client AR.',
+            '4. Kolom tipe_klien (PT/RESTO) wajib jika ingin membuat/memperbarui Client AR. Kolom pic_ar wajib jika tipe_klien diisi.',
+            '5. Kolom nama_entitas WAJIB jika tipe_klien=PT. Nama Client AR otomatis: RESTO = nama_investor, PT = nama_entitas.',
+            '6. Sheet MASTER BARANG: kode_barang wajib untuk barang baru. Kolom: kode_barang, nama_barang, spesifikasi, nama_brand, keterangan, status.',
+            '7. Sheet MASTER INVOICE: 1 baris = 1 item. Baris dengan tipe_invoice + nama_klien + tanggal_invoice sama digabung jadi 1 invoice. 1 klien = 1 invoice per hari. tipe_invoice: "B2C" atau "B2B".',
+            '8. Invoice B2C: isi kolom header + item (kode_barang/nama_barang, qty, satuan, harga_satuan). Kolom no_invoice_resto/kode_resto/nama_resto dikosongkan.',
+            '9. Invoice B2B (konsolidasi): sama seperti B2C, tambah isi no_invoice_resto, kode_resto, nama_resto di setiap item.',
+            '10. Aturan update invoice: jika sudah ada → item lama dihapus, item baru masuk, keuangan dikalkulasi ulang. Invoice LUNAS atau periode EB Terkunci → dilewati.',
+            '11. Setelah invoice berhasil disimpan, PDF otomatis diupload ke Google Drive (proses antrian). Link share muncul setelah antrian selesai.',
+            '12. Hapus baris [CONTOH] sebelum upload atau biarkan (sistem otomatis mengabaikan).',
+            '13. Kolom status: 1 = Aktif (default), 0 = Nonaktif.',
+            '14. Upload hanya bisa dilakukan oleh role ADMIN, MANAGER, atau SUPERVISOR.',
+            '15. Upload file di halaman "Import Master Data" lalu pantau progress secara real-time.',
         ];
 
         foreach ($steps as $step) {
@@ -472,9 +643,7 @@ class UnifiedMasterController extends Controller
             ['no_telp',         'Nomor telepon Resto',                                             'Opsional',               '02112345678'],
             ['tgl_aktif',       'Tanggal aktif Resto (format: DD-MM-YYYY)',                        'Opsional',               '01-01-2026'],
             ['keterangan',      'Keterangan tambahan Resto',                                       'Opsional',               'Gerai pusat'],
-            ['pic_ar',          'Nama karyawan AR — wajib jika tipe_klien diisi',                 'Ya (untuk Klien)',       'Siti Rahayu'],
-            ['no_npwp',         'Nomor NPWP Client AR',                                            'Opsional',               '12.345.678.9-012.000'],
-            ['no_wa',           'Nomor WhatsApp Client AR',                                        'Opsional',               '08123456789'],
+            ['pic_ar',          'Nama karyawan AR — wajib jika tipe_klien diisi. NPWP Client otomatis dari Investor (RESTO) atau Perusahaan (PT). Kontak Client dari no_hp Investor (RESTO) atau no_telp Perusahaan (PT).', 'Ya (untuk Klien)', 'Siti Rahayu'],
             ['tipe_klien',      'Tipe Client AR: PT atau RESTO — kosongkan jika tidak membuat Klien', 'Ya (untuk Klien)',   'RESTO'],
             ['status',          '1 = Aktif (default), 0 = Nonaktif',                              'Opsional',               '1'],
         ];
@@ -527,6 +696,61 @@ class UnifiedMasterController extends Controller
         ];
 
         foreach ($barangCols as $i => [$col, $desc, $req, $ex]) {
+            $bg = $i % 2 === 0 ? 'FFFFFFFF' : 'FFF5F5F5';
+            $sheet->setCellValue("A{$row}", $col);
+            $sheet->setCellValue("B{$row}", $desc);
+            $sheet->setCellValue("C{$row}", $req);
+            $sheet->setCellValue("D{$row}", $ex);
+            $sheet->getStyle("A{$row}:D{$row}")->applyFromArray([
+                'font'      => ['size' => 9],
+                'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => $bg]],
+                'alignment' => ['wrapText' => true, 'vertical' => Alignment::VERTICAL_CENTER],
+            ]);
+            $sheet->getRowDimension($row)->setRowHeight(18);
+            $row++;
+        }
+
+        $row += 2;
+
+        // ─── Deskripsi Kolom Sheet MASTER INVOICE
+        $sheet->mergeCells("A{$row}:D{$row}");
+        $sheet->setCellValue("A{$row}", '  DESKRIPSI KOLOM — Sheet MASTER INVOICE');
+        $sheet->getStyle("A{$row}")->applyFromArray([
+            'font'      => ['bold' => true, 'size' => 10, 'color' => ['argb' => 'FFFFFFFF']],
+            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF7B1FA2']],
+            'alignment' => ['vertical' => Alignment::VERTICAL_CENTER],
+        ]);
+        $sheet->getRowDimension($row)->setRowHeight(22);
+        $row++;
+
+        foreach (['A' => 'Kolom', 'B' => 'Keterangan', 'C' => 'Wajib', 'D' => 'Contoh'] as $col => $label) {
+            $sheet->setCellValue("{$col}{$row}", $label);
+        }
+        $sheet->getStyle("A{$row}:D{$row}")->applyFromArray([
+            'font' => ['bold' => true, 'size' => 9, 'color' => ['argb' => 'FFFFFFFF']],
+            'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFAB47BC']],
+        ]);
+        $sheet->getRowDimension($row)->setRowHeight(20);
+        $row++;
+
+        $invoiceCols = [
+            ['tipe_invoice',       'Tipe invoice: B2C (retail) atau B2B (konsolidasi).',                                    'Ya',       'B2C'],
+            ['nama_klien',         'Nama klien AR yang sudah ada di sistem.',                                               'Ya',       'PT Maju Bersama'],
+            ['tanggal_invoice',    'Tanggal invoice (format: DD-MM-YYYY). 1 klien hanya boleh punya 1 invoice per hari.',  'Ya',       '01-06-2026'],
+            ['tanggal_jatuh_tempo','Tanggal jatuh tempo pembayaran (format: DD-MM-YYYY).',                                  'Opsional', '30-06-2026'],
+            ['no_surat_jalan',     'Nomor surat jalan.',                                                                    'Opsional', 'SJ-001'],
+            ['keterangan_invoice', 'Keterangan invoice.',                                                                   'Opsional', 'Keterangan'],
+            ['kode_barang',        'Kode barang (lookup). Jika tidak ada, sistem tetap menyimpan nama_barang.',             'Opsional', 'BRG-001'],
+            ['nama_barang',        'Nama barang/item yang ditagihkan.',                                                     'Ya',       'Produk A'],
+            ['qty',                'Jumlah/kuantitas item. Harus > 0.',                                                     'Ya',       '10'],
+            ['satuan',             'Satuan item (pcs, kg, lusin, dll).',                                                    'Opsional', 'pcs'],
+            ['harga_satuan',       'Harga per satuan item.',                                                                'Ya',       '50000'],
+            ['no_invoice_resto',   '[B2B] Nomor invoice dari resto asal.',                                                  'B2B',      'SI-RESTO-0001'],
+            ['kode_resto',         '[B2B] Kode resto asal.',                                                               'B2B',      'KD-001'],
+            ['nama_resto',         '[B2B] Nama resto asal.',                                                               'B2B',      'Warung Makan Enak'],
+        ];
+
+        foreach ($invoiceCols as $i => [$col, $desc, $req, $ex]) {
             $bg = $i % 2 === 0 ? 'FFFFFFFF' : 'FFF5F5F5';
             $sheet->setCellValue("A{$row}", $col);
             $sheet->setCellValue("B{$row}", $desc);

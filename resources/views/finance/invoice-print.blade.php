@@ -227,9 +227,16 @@
               <td class="dl-val"><strong>{{ $invoice->klienAr->perusahaan->nama_perusahaan }}</strong></td>
             </tr>
             @endif
+            @php
+              if ($invoice->klienAr->tipe_klien === 'RESTO') {
+                  $clientNpwp = $invoice->klienAr->resto?->investor?->npwp ?: ($invoice->klienAr->no_npwp ?: null);
+              } else {
+                  $clientNpwp = $invoice->klienAr->perusahaan?->no_npwp ?: ($invoice->klienAr->no_npwp ?: null);
+              }
+            @endphp
             <tr>
               <td class="dl-lbl">No. NPWP</td><td class="dl-colon">:</td>
-              <td class="dl-val">{{ $invoice->klienAr->no_npwp ?: '-' }}</td>
+              <td class="dl-val">{{ $clientNpwp ?: '-' }}</td>
             </tr>
             <tr>
               <td class="dl-lbl">Tipe Klien</td><td class="dl-colon">:</td>
@@ -627,9 +634,16 @@
                 <td class="dl-lbl">Kepada</td><td class="dl-colon">:</td>
                 <td class="dl-val"><strong style="color:#b71c1c;">{{ $regInv->klienAr->nama_klien }}</strong> @if($regInv->klienAr->alias)<span style="color:#666;">({{ $regInv->klienAr->alias }})</span>@endif</td>
               </tr>
+              @php
+                if ($regInv->klienAr->tipe_klien === 'RESTO') {
+                    $regClientNpwp = $regInv->klienAr->resto?->investor?->npwp ?: ($regInv->klienAr->no_npwp ?: null);
+                } else {
+                    $regClientNpwp = $regInv->klienAr->perusahaan?->no_npwp ?: ($regInv->klienAr->no_npwp ?: null);
+                }
+              @endphp
               <tr>
                 <td class="dl-lbl">No. NPWP</td><td class="dl-colon">:</td>
-                <td class="dl-val">{{ $regInv->klienAr->no_npwp ?: '-' }}</td>
+                <td class="dl-val">{{ $regClientNpwp ?: '-' }}</td>
               </tr>
               <tr>
                 <td class="dl-lbl">Tipe Klien</td><td class="dl-colon">:</td>

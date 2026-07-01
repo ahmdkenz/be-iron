@@ -199,9 +199,20 @@
               <td class="dl-lbl">Kode Klien</td><td class="dl-colon">:</td>
               <td class="dl-val">{{ $klien?->kode_klien ?? '-' }}</td>
             </tr>
+            @php
+              if ($klien) {
+                  if ($klien->tipe_klien === 'RESTO') {
+                      $cnClientNpwp = $klien->resto?->investor?->npwp ?: ($klien->no_npwp ?: null);
+                  } else {
+                      $cnClientNpwp = $klien->perusahaan?->no_npwp ?: ($klien->no_npwp ?: null);
+                  }
+              } else {
+                  $cnClientNpwp = null;
+              }
+            @endphp
             <tr>
               <td class="dl-lbl">No. NPWP</td><td class="dl-colon">:</td>
-              <td class="dl-val">{{ $klien?->no_npwp ?: '-' }}</td>
+              <td class="dl-val">{{ $cnClientNpwp ?: '-' }}</td>
             </tr>
             <tr>
               <td class="dl-lbl">Ref. Invoice</td><td class="dl-colon">:</td>

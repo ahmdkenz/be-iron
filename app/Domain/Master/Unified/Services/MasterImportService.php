@@ -2,6 +2,8 @@
 
 namespace App\Domain\Master\Unified\Services;
 
+use App\Domain\Finance\Invoice\Services\InvoiceGroupProcessor;
+use App\Domain\Finance\Invoice\Services\ProcessGroupResult;
 use App\Domain\Finance\KlienAr\DTO\KlienArDTO;
 use App\Domain\Finance\KlienAr\Services\KlienArService;
 use App\Domain\Master\Investor\DTO\InvestorDTO;
@@ -17,6 +19,7 @@ use App\Models\KlienAr;
 use App\Models\Perusahaan;
 use App\Models\Resto;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 use PhpOffice\PhpSpreadsheet\IOFactory;
@@ -34,9 +37,10 @@ class MasterImportService
     private const CHUNK = 100;
 
     public function __construct(
-        private readonly InvestorService $investorService,
-        private readonly RestoService    $restoService,
-        private readonly KlienArService  $klienArService,
+        private readonly InvestorService      $investorService,
+        private readonly RestoService         $restoService,
+        private readonly KlienArService       $klienArService,
+        private readonly InvoiceGroupProcessor $invoiceGroupProcessor,
     ) {}
 
     public function process(ImportMasterBatch $batch): void
@@ -55,6 +59,7 @@ class MasterImportService
 
         $this->processMasterDataSheet($spreadsheet, $batch, $errors);
         $this->processMasterBarangSheet($spreadsheet, $batch, $errors);
+        $this->processMasterInvoiceSheet($spreadsheet, $batch, $errors);
 
         $batch->update([
             'status'  => 'completed',
@@ -88,6 +93,11 @@ class MasterImportService
             $errors[] = ['sheet' => 'MASTER DATA', 'row' => 0, 'message' => 'Template lama masih memiliki kolom nama_klien. Download template terbaru.'];
             return;
         }
+
+        // Header-based column lookup — toleran terhadap perubahan urutan kolom dan template lama/baru
+        $headerIdxMap = array_flip($headerRow);
+        $col = static fn(array $row, string $name): mixed =>
+            $row[$headerIdxMap[$name] ?? -1] ?? '';
 
         $batch->update(['master_total' => count($rows)]);
 
@@ -130,9 +140,9 @@ class MasterImportService
                 if ($firstCell === '' && count(array_filter(array_map('strval', $row))) === 0) continue;
 
                 $namaInvestor  = trim($firstCell);
-                $namaCabang    = trim((string) ($row[9] ?? ''));
-                $tipeKlien     = strtoupper(trim((string) ($row[25] ?? '')));
-                $status        = $this->parseStatus(trim((string) ($row[26] ?? '')));
+                $namaCabang    = trim((string) $col($row, 'nama_cabang'));
+                $tipeKlien     = strtoupper(trim((string) $col($row, 'tipe_klien')));
+                $status        = $this->parseStatus(trim((string) $col($row, 'status')));
                 $investorFailed = false;
 
                 // ── 1. Investor ─────────────────────────────────────────────
@@ -140,13 +150,13 @@ class MasterImportService
                 if ($namaInvestor !== '') {
                     $invData = [
                         'nama_investor'   => $namaInvestor,
-                        'ktp'             => $this->importValue($row[1] ?? ''),
-                        'npwp'            => $this->importValue($row[2] ?? ''),
-                        'no_hp'           => $this->importValue($row[3] ?? ''),
-                        'pengelola'       => $this->importValue($row[4] ?? ''),
-                        'no_hp_pengelola' => $this->importValue($row[5] ?? ''),
-                        'kode_cabang'     => $this->importValue($row[6] ?? ''),
-                        'id_cabang'       => $this->importValue($row[7] ?? ''),
+                        'ktp'             => $this->importValue($col($row, 'ktp')),
+                        'npwp'            => $this->importValue($col($row, 'npwp')),
+                        'no_hp'           => $this->importValue($col($row, 'no_hp')),
+                        'pengelola'       => $this->importValue($col($row, 'pengelola')),
+                        'no_hp_pengelola' => $this->importValue($col($row, 'no_hp_pengelola')),
+                        'kode_cabang'     => $this->importValue($col($row, 'kode_cabang')),
+                        'id_cabang'       => $this->importValue($col($row, 'id_cabang')),
                         'status'          => $status,
                     ];
 
@@ -192,15 +202,15 @@ class MasterImportService
                 // ── 2. Resto ────────────────────────────────────────────────
                 $resto = null;
                 if ($namaCabang !== '') {
-                    $namaPerusahaan = $this->importValue($row[10] ?? '') ?? '';
-                    $namaBrand      = $this->importValue($row[11] ?? '') ?? '';
-                    $kodeResto      = $this->importValue($row[8] ?? '') ?? '';
-                    $namaPicResto   = $this->importValue($row[12] ?? '') ?? '';
+                    $namaPerusahaan = $this->importValue($col($row, 'nama_entitas')) ?? '';
+                    $namaBrand      = $this->importValue($col($row, 'nama_brand')) ?? '';
+                    $kodeResto      = $this->importValue($col($row, 'kode_resto')) ?? '';
+                    $namaPicResto   = $this->importValue($col($row, 'nama_pic')) ?? '';
 
                     // Fallback: untuk tipe PT, gunakan pic_ar jika nama_pic kosong
                     $picRestoFallback = false;
                     if ($namaPicResto === '' && $tipeKlien === 'PT') {
-                        $namaPicArFallback = $this->importValue($row[22] ?? '') ?? '';
+                        $namaPicArFallback = $this->importValue($col($row, 'pic_ar')) ?? '';
                         if ($namaPicArFallback !== '') {
                             $namaPicResto     = $namaPicArFallback;
                             $picRestoFallback = true;
@@ -244,15 +254,15 @@ class MasterImportService
                             'perusahaan_id'    => $perusahaanId,
                             'brand_id'         => $brandId,
                             'karyawan_id'      => $karyawanId,
-                            'supervisor'       => $this->importValue($row[13] ?? ''),
-                            'no_hp_supervisor' => $this->importValue($row[14] ?? ''),
-                            'stokis'           => $this->importValue($row[15] ?? ''),
-                            'area'             => $this->importValue($row[16] ?? ''),
-                            'kota'             => $this->importValue($row[17] ?? ''),
-                            'alamat'           => $this->importValue($row[18] ?? ''),
-                            'no_telp'          => $this->importValue($row[19] ?? ''),
-                            'tgl_aktif'        => $this->importDate($row[20] ?? ''),
-                            'keterangan'       => $this->importValue($row[21] ?? ''),
+                            'supervisor'       => $this->importValue($col($row, 'supervisor')),
+                            'no_hp_supervisor' => $this->importValue($col($row, 'no_hp_supervisor')),
+                            'stokis'           => $this->importValue($col($row, 'stokis')),
+                            'area'             => $this->importValue($col($row, 'area')),
+                            'kota'             => $this->importValue($col($row, 'kota')),
+                            'alamat'           => $this->importValue($col($row, 'alamat')),
+                            'no_telp'          => $this->importValue($col($row, 'no_telp')),
+                            'tgl_aktif'        => $this->importDate($col($row, 'tgl_aktif')),
+                            'keterangan'       => $this->importValue($col($row, 'keterangan')),
                             'status'           => $status,
                         ];
 
@@ -298,10 +308,11 @@ class MasterImportService
 
                 // ── 3. KlienAr ──────────────────────────────────────────────
                 if ($namaCabang !== '' && in_array($tipeKlien, ['PT', 'RESTO'])) {
-                    $namaPicAr      = $this->importValue($row[22] ?? '');
-                    $namaEntitasKli = $this->importValue($row[10] ?? '') ?? '';
-                    $noNpwp         = $this->importValue($row[23] ?? '');
-                    $noWa           = $this->importValue($row[24] ?? '');
+                    $namaPicAr      = $this->importValue($col($row, 'pic_ar'));
+                    $namaEntitasKli = $this->importValue($col($row, 'nama_entitas')) ?? '';
+                    // no_npwp & no_wa hanya ada di template lama — fallback jika kolom tidak ada = null
+                    $noNpwp         = $this->importValue($col($row, 'no_npwp'));
+                    $noWa           = $this->importValue($col($row, 'no_wa'));
                     $rowErrors      = [];
                     $namaKlien      = $namaCabang;
 
@@ -588,6 +599,230 @@ class MasterImportService
     }
 
     // ──────────────────────────────────────────────────────────────
+    //  Sheet 3: MASTER INVOICE (Invoice B2B + B2C)
+    // ──────────────────────────────────────────────────────────────
+
+    private function processMasterInvoiceSheet(\PhpOffice\PhpSpreadsheet\Spreadsheet $spreadsheet, ImportMasterBatch $batch, array &$errors): void
+    {
+        // Support nama sheet lama (MASTER INVOICE) dan nama baru
+        $sheetIndex = $this->findSheetIndex($spreadsheet, 'MASTER INVOICE')
+            ?? $this->findSheetIndex($spreadsheet, 'Master Invoice');
+
+        if ($sheetIndex === null) {
+            return; // Sheet tidak ada → tidak dianggap error (file lama tetap aman)
+        }
+
+        $sheet = $spreadsheet->getSheet($sheetIndex);
+        $rows  = $this->parseSheet($sheet, 'nama_klien', 14);
+
+        if (empty($rows)) {
+            $errors[] = ['sheet' => 'MASTER INVOICE', 'row' => 0, 'message' => 'Header "nama_klien" tidak ditemukan di sheet MASTER INVOICE.'];
+            return;
+        }
+
+        // Preload klien dan barang map
+        $klienMap  = $this->buildKlienMapForInvoice();
+        $barangMap = $this->buildBarangMapForInvoice();
+
+        // Preload EB locked
+        $lockedEbMap = $this->invoiceGroupProcessor->buildLockedEbMap();
+
+        // ── Group rows by (tipe_invoice + nama_klien + tanggal_invoice) ──
+        $groups      = [];   // key => ['header' => row, 'items' => [], 'firstLine' => int]
+        $lineNumber  = 0;
+        $headerSkipped = false;
+
+        foreach ($rows as $row) {
+            $lineNumber++;
+            $firstCell = trim((string) ($row[0] ?? ''));
+            $tipeCell  = trim((string) ($row[13] ?? ''));
+            if (!$headerSkipped) { $headerSkipped = true; continue; }
+            if (str_starts_with($firstCell, '#')) continue;
+            if (str_starts_with($tipeCell, '[CONTOH]')) continue;
+            if ($firstCell === '' && count(array_filter(array_map('strval', $row))) === 0) continue;
+
+            $tipeInvoice = strtoupper(trim((string) ($row[13] ?? '')));
+            $namaKlien   = $this->importValue($row[0] ?? '');
+            $tanggal     = $this->importDate($row[1] ?? '');
+
+            if (!$tipeInvoice || !$namaKlien || !$tanggal) {
+                $errors[] = ['sheet' => 'MASTER INVOICE', 'row' => $lineNumber, 'message' => 'tipe_invoice, nama_klien, dan tanggal_invoice wajib diisi.'];
+                continue;
+            }
+
+            $key = $tipeInvoice . '||' . strtolower($namaKlien) . '||' . $tanggal;
+
+            if (!isset($groups[$key])) {
+                $groups[$key] = [
+                    'tipe_invoice' => $tipeInvoice,
+                    'header'       => $row,
+                    'first_line'   => $lineNumber,
+                    'items'        => [],
+                ];
+            }
+
+            // Tambah item dari baris ini
+            $groups[$key]['items'][] = [
+                'row'              => $lineNumber,
+                'no_invoice_resto' => $this->importValue($row[5] ?? ''),
+                'kode_resto'       => $this->importValue($row[6] ?? ''),
+                'nama_resto'       => $this->importValue($row[7] ?? ''),
+                'kode_barang'      => $this->importValue($row[8] ?? ''),
+                'nama_barang'      => $this->importValue($row[9] ?? ''),
+                'qty'              => $this->importNum($row[10] ?? ''),
+                'satuan'           => $this->importValue($row[11] ?? ''),
+                'harga_satuan'     => $this->importNum($row[12] ?? ''),
+            ];
+        }
+
+        $totalGrup = count($groups);
+        $batch->update(['invoice_total' => $totalGrup]);
+
+        $invIns  = 0;
+        $invUpd  = 0;
+        $invSkip = 0;
+        $invFail = 0;
+        $processed   = 0;
+        $newInvoices = [];
+
+        foreach ($groups as $key => $group) {
+            $processed++;
+            $tipeInvoice = $group['tipe_invoice'];
+            $headerRow   = $group['header'];
+            $firstLine   = $group['first_line'];
+
+            // Validasi tipe
+            if (!in_array($tipeInvoice, ['B2B', 'B2C'])) {
+                $errors[] = ['sheet' => 'MASTER INVOICE', 'row' => $firstLine, 'message' => "tipe_invoice '{$tipeInvoice}' tidak valid. Harus 'B2B' atau 'B2C'."];
+                $invFail++;
+                continue;
+            }
+
+            // Validasi field header wajib
+            $namaKlien   = $this->importValue($headerRow[0] ?? '');
+            $tanggal     = $this->importDate($headerRow[1] ?? '');
+
+            if (!$namaKlien || !$tanggal) {
+                $errors[] = ['sheet' => 'MASTER INVOICE', 'row' => $firstLine, 'message' => 'nama_klien dan tanggal_invoice wajib diisi.'];
+                $invFail++;
+                continue;
+            }
+
+            // Resolve klien
+            $klien = $klienMap[strtolower($namaKlien)] ?? null;
+            if (!$klien) {
+                $errors[] = ['sheet' => 'MASTER INVOICE', 'row' => $firstLine, 'message' => "Klien '{$namaKlien}' tidak ditemukan di sistem."];
+                $invFail++;
+                continue;
+            }
+
+            // Validasi item
+            $items     = [];
+            $itemError = null;
+            foreach ($group['items'] as $itemRaw) {
+                if (!$itemRaw['nama_barang']) {
+                    $itemError = "Baris {$itemRaw['row']}: nama_barang wajib diisi.";
+                    break;
+                }
+                if ($itemRaw['qty'] <= 0) {
+                    $itemError = "Baris {$itemRaw['row']}: qty harus lebih dari 0.";
+                    break;
+                }
+
+                $barangId = null;
+                if ($itemRaw['kode_barang']) {
+                    $barangId = $barangMap[strtoupper($itemRaw['kode_barang'])] ?? null;
+                }
+
+                $items[] = [
+                    'barang_id'        => $barangId,
+                    'kode_barang'      => $itemRaw['kode_barang'],
+                    'nama_barang'      => $itemRaw['nama_barang'],
+                    'qty'              => $itemRaw['qty'],
+                    'satuan'           => $itemRaw['satuan'],
+                    'harga_satuan'     => $itemRaw['harga_satuan'],
+                    'no_invoice_resto' => $itemRaw['no_invoice_resto'],
+                    'kode_resto'       => $itemRaw['kode_resto'],
+                    'nama_resto'       => $itemRaw['nama_resto'],
+                ];
+            }
+
+            if ($itemError) {
+                $errors[] = ['sheet' => 'MASTER INVOICE', 'row' => $firstLine, 'message' => $itemError];
+                $invFail++;
+                continue;
+            }
+
+            if (empty($items)) {
+                $errors[] = ['sheet' => 'MASTER INVOICE', 'row' => $firstLine, 'message' => "Invoice '{$namaKlien}' ({$tanggal}) tidak memiliki item."];
+                $invFail++;
+                continue;
+            }
+
+            $headerData = [
+                'klien_ar_id'        => $klien->id,
+                'tanggal_invoice'    => $tanggal,
+                'tanggal_jatuh_tempo'=> $this->importDate($headerRow[2] ?? ''),
+                'no_surat_jalan'     => $this->importValue($headerRow[3] ?? ''),
+                'keterangan'         => $this->importValue($headerRow[4] ?? ''),
+            ];
+
+            try {
+                $result = $this->invoiceGroupProcessor->processGroup(
+                    $tipeInvoice,
+                    $headerData,
+                    $items,
+                    $lockedEbMap,
+                );
+
+                match (true) {
+                    $result->isInserted() => (function () use (&$invIns, &$newInvoices, $result) {
+                        $invIns++;
+                        $newInvoices[] = $result->invoice;
+                    })(),
+                    $result->isUpdated()  => $invUpd++,
+                    $result->isSkipped()  => (function () use (&$invSkip, &$errors, $firstLine, $result) {
+                        $invSkip++;
+                        $errors[] = ['sheet' => 'MASTER INVOICE', 'row' => $firstLine, 'message' => 'Dilewati: ' . $result->error];
+                    })(),
+                    default               => (function () use (&$invFail, &$errors, $firstLine, $result) {
+                        $invFail++;
+                        $errors[] = ['sheet' => 'MASTER INVOICE', 'row' => $firstLine, 'message' => $result->error];
+                    })(),
+                };
+            } catch (\Throwable $e) {
+                $invFail++;
+                $errors[] = ['sheet' => 'MASTER INVOICE', 'row' => $firstLine, 'message' => 'Error tak terduga: ' . $e->getMessage()];
+                Log::error('MasterImportService: processMasterInvoiceSheet error', ['key' => $key, 'error' => $e->getMessage()]);
+            }
+
+            // Update progress setiap CHUNK grup
+            if ($processed % self::CHUNK === 0) {
+                $batch->update([
+                    'invoice_processed' => $processed,
+                    'invoice_inserted'  => $invIns,
+                    'invoice_updated'   => $invUpd,
+                    'invoice_skipped'   => $invSkip,
+                    'invoice_failed'    => $invFail,
+                ]);
+            }
+        }
+
+        // Propagasi carryover untuk invoice baru setelah semua grup selesai
+        if (!empty($newInvoices)) {
+            $this->invoiceGroupProcessor->propagateCarryoverForNew($newInvoices);
+        }
+
+        $batch->update([
+            'invoice_processed' => $totalGrup,
+            'invoice_inserted'  => $invIns,
+            'invoice_updated'   => $invUpd,
+            'invoice_skipped'   => $invSkip,
+            'invoice_failed'    => $invFail,
+        ]);
+    }
+
+    // ──────────────────────────────────────────────────────────────
     //  Helpers
     // ──────────────────────────────────────────────────────────────
 
@@ -676,7 +911,48 @@ class MasterImportService
                 $batch->barang_inserted, $batch->barang_updated, $batch->barang_failed,
             );
         }
+        if ($batch->invoice_total > 0) {
+            $parts[] = sprintf(
+                'MASTER INVOICE: Invoice +%d ~%d ⊘%d ✗%d',
+                $batch->invoice_inserted, $batch->invoice_updated,
+                $batch->invoice_skipped,  $batch->invoice_failed,
+            );
+        }
         return implode(' | ', $parts) ?: 'Import selesai.';
+    }
+
+    /** @return array<string, KlienAr> lower(nama_klien) => KlienAr */
+    private function buildKlienMapForInvoice(): array
+    {
+        $map = [];
+        foreach (KlienAr::all(['id', 'nama_klien', 'resto_id', 'perusahaan_id', 'karyawan_ar_id']) as $klien) {
+            if ($klien->nama_klien !== null) {
+                $key = strtolower($klien->nama_klien);
+                if (!isset($map[$key])) {
+                    $map[$key] = $klien;
+                }
+            }
+        }
+        return $map;
+    }
+
+    /** @return array<string, int> upper(kode_barang) => id */
+    private function buildBarangMapForInvoice(): array
+    {
+        $map = [];
+        foreach (Barang::all(['id', 'kode_barang']) as $barang) {
+            if ($barang->kode_barang !== null && !isset($map[strtoupper($barang->kode_barang)])) {
+                $map[strtoupper($barang->kode_barang)] = $barang->id;
+            }
+        }
+        return $map;
+    }
+
+    private function importNum(mixed $val): float
+    {
+        $s = trim((string) $val);
+        $s = str_replace(['.', ','], ['', '.'], $s);
+        return is_numeric($s) ? (float) $s : 0.0;
     }
 
     private function xlsxCellToString(\PhpOffice\PhpSpreadsheet\Cell\Cell $cell): string
