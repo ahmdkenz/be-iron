@@ -104,6 +104,7 @@ class UnifiedMasterController extends Controller
             'klien_inserted'    => $batch->klien_inserted,
             'klien_updated'     => $batch->klien_updated,
             'klien_failed'      => $batch->klien_failed,
+            'klien_skipped'     => $batch->klien_skipped,
             'barang_inserted'   => $batch->barang_inserted,
             'barang_updated'    => $batch->barang_updated,
             'barang_failed'     => $batch->barang_failed,
@@ -142,6 +143,7 @@ class UnifiedMasterController extends Controller
             'klien_inserted'    => $batch->klien_inserted,
             'klien_updated'     => $batch->klien_updated,
             'klien_failed'      => $batch->klien_failed,
+            'klien_skipped'     => $batch->klien_skipped,
             'barang_total'      => $batch->barang_total,
             'barang_processed'  => $batch->barang_processed,
             'barang_inserted'   => $batch->barang_inserted,
@@ -297,12 +299,11 @@ class UnifiedMasterController extends Controller
             'A' => ['kode_barang', 18],
             'B' => ['nama_barang', 32],
             'C' => ['spesifikasi', 30],
-            'D' => ['nama_brand',  22],
-            'E' => ['keterangan',  28],
-            'F' => ['status',      12],
+            'D' => ['keterangan',  28],
+            'E' => ['status',      12],
         ];
 
-        $lastCol = 'F';
+        $lastCol = 'E';
 
         // Row 1 — Title
         $sheet->mergeCells("A1:{$lastCol}1");
@@ -345,9 +346,8 @@ class UnifiedMasterController extends Controller
             'A' => '[CONTOH] KD-001',
             'B' => 'Nama Barang Contoh',
             'C' => 'Spesifikasi produk',
-            'D' => 'Nama Brand',
-            'E' => 'Keterangan opsional',
-            'F' => '1',
+            'D' => 'Keterangan opsional',
+            'E' => '1',
         ];
         foreach ($example as $col => $val) {
             $sheet->getCell("{$col}5")->setValueExplicit($val, DataType::TYPE_STRING);
@@ -409,7 +409,7 @@ class UnifiedMasterController extends Controller
 
         // Row 2 — Subtitle
         $sheet->mergeCells("A2:{$lastCol}2");
-        $sheet->setCellValue('A2', '1 baris = 1 item invoice. Baris dengan tipe_invoice + nama_klien + tanggal_invoice yang sama digabung menjadi 1 invoice. 1 klien hanya boleh punya 1 invoice per hari. B2B: isi no_invoice_resto/kode_resto/nama_resto. B2C: kosongkan 3 kolom tersebut. Lihat sheet "Petunjuk Pengisian".');
+        $sheet->setCellValue('A2', '1 baris = 1 item invoice. Baris dengan tipe_invoice + nama_klien + tanggal_invoice yang sama digabung menjadi 1 invoice. 1 klien hanya boleh punya 1 invoice per hari. B2B: isi no_invoice_resto/kode_resto/nama_resto. B2C: no_invoice_resto opsional (nomor asli/referensi asal), kode_resto/nama_resto opsional. Lihat sheet "Petunjuk Pengisian".');
         $sheet->getStyle('A2')->applyFromArray([
             'font'      => ['italic' => true, 'size' => 9, 'color' => ['argb' => 'FF37474F']],
             'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFF3E5F5']],
@@ -573,10 +573,10 @@ class UnifiedMasterController extends Controller
             '3. Sheet MASTER DATA: isi satu baris per outlet. Satu baris = 1 Investor + 1 Resto + 1 Client AR.',
             '4. Kolom tipe_klien (PT/RESTO) wajib jika ingin membuat/memperbarui Client AR. Kolom pic_ar wajib jika tipe_klien diisi.',
             '5. Kolom nama_entitas WAJIB jika tipe_klien=PT. Nama Client AR otomatis: RESTO = nama_investor, PT = nama_entitas.',
-            '6. Sheet MASTER BARANG: kode_barang wajib untuk barang baru. Kolom: kode_barang, nama_barang, spesifikasi, nama_brand, keterangan, status.',
+            '6. Sheet MASTER BARANG: kode_barang wajib untuk barang baru. Kolom: kode_barang, nama_barang, spesifikasi, keterangan, status.',
             '7. Sheet MASTER INVOICE: 1 baris = 1 item. Baris dengan tipe_invoice + nama_klien + tanggal_invoice sama digabung jadi 1 invoice. 1 klien = 1 invoice per hari. tipe_invoice: "B2C" atau "B2B".',
-            '8. Invoice B2C: isi kolom header + item (kode_barang/nama_barang, qty, satuan, harga_satuan). Kolom no_invoice_resto/kode_resto/nama_resto dikosongkan.',
-            '9. Invoice B2B (konsolidasi): sama seperti B2C, tambah isi no_invoice_resto, kode_resto, nama_resto di setiap item.',
+            '8. Invoice B2C: isi kolom header + item (kode_barang/nama_barang, qty, satuan, harga_satuan). Kolom no_invoice_resto opsional (isi nomor asli/referensi asal jika ada); kode_resto/nama_resto opsional.',
+            '9. Invoice B2B (konsolidasi): sama seperti B2C, wajib isi no_invoice_resto, kode_resto, nama_resto di setiap item.',
             '10. Aturan update invoice: jika sudah ada → item lama dihapus, item baru masuk, keuangan dikalkulasi ulang. Invoice LUNAS atau periode EB Terkunci → dilewati.',
             '11. Setelah invoice berhasil disimpan, PDF otomatis diupload ke Google Drive (proses antrian). Link share muncul setelah antrian selesai.',
             '12. Hapus baris [CONTOH] sebelum upload atau biarkan (sistem otomatis mengabaikan).',
@@ -690,7 +690,6 @@ class UnifiedMasterController extends Controller
             ['kode_barang', 'Kode barang (uppercase) — wajib untuk barang baru; tidak diupdate', 'Ya (barang baru)', 'BRG-001'],
             ['nama_barang', 'Nama barang (upsert key, case-insensitive)',                         'Ya',              'Produk A'],
             ['spesifikasi', 'Deskripsi spesifikasi produk',                                       'Opsional',        '500ml, warna biru'],
-            ['nama_brand',  'Nama brand untuk barang (lookup)',                                   'Opsional',        'Brand X'],
             ['keterangan',  'Keterangan tambahan',                                                'Opsional',        'Stok prioritas'],
             ['status',      '1 = Aktif (default), 0 = Nonaktif',                                 'Opsional',        '1'],
         ];
@@ -745,9 +744,9 @@ class UnifiedMasterController extends Controller
             ['qty',                'Jumlah/kuantitas item. Harus > 0.',                                                     'Ya',       '10'],
             ['satuan',             'Satuan item (pcs, kg, lusin, dll).',                                                    'Opsional', 'pcs'],
             ['harga_satuan',       'Harga per satuan item.',                                                                'Ya',       '50000'],
-            ['no_invoice_resto',   '[B2B] Nomor invoice dari resto asal.',                                                  'B2B',      'SI-RESTO-0001'],
-            ['kode_resto',         '[B2B] Kode resto asal.',                                                               'B2B',      'KD-001'],
-            ['nama_resto',         '[B2B] Nama resto asal.',                                                               'B2B',      'Warung Makan Enak'],
+            ['no_invoice_resto',   'Nomor invoice/referensi asal dari resto. Wajib untuk B2B; opsional untuk B2C (nomor asli untuk pencocokan data).', 'B2B, Opsional (B2C)', 'SI-RESTO-0001'],
+            ['kode_resto',         'Kode resto asal. Wajib untuk B2B; opsional untuk B2C.',                                'B2B, Opsional (B2C)', 'KD-001'],
+            ['nama_resto',         'Nama resto asal. Wajib untuk B2B; opsional untuk B2C.',                                'B2B, Opsional (B2C)', 'Warung Makan Enak'],
         ];
 
         foreach ($invoiceCols as $i => [$col, $desc, $req, $ex]) {

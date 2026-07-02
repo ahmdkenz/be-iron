@@ -1,0 +1,542 @@
+<?php
+
+namespace Tests\Feature;
+
+use App\Domain\Finance\Invoice\Services\InvoiceGroupProcessor;
+use App\Domain\Finance\KlienAr\Services\KlienArService;
+use App\Domain\Master\Investor\Services\InvestorService;
+use App\Domain\Master\Resto\Services\RestoService;
+use App\Domain\Master\Unified\Services\MasterImportService;
+use App\Models\Barang;
+use App\Models\Investor;
+use App\Models\KlienAr;
+use App\Models\Resto;
+use Tests\TestCase;
+
+/**
+ * Unit tests untuk helper perbandingan data di MasterImportService.
+ * Menggunakan reflection agar private method bisa diakses tanpa mengubah visibility.
+ */
+class MasterImportServiceTest extends TestCase
+{
+    private MasterImportService $service;
+    private \ReflectionClass $ref;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $this->service = new MasterImportService(
+            $this->createMock(InvestorService::class),
+            $this->createMock(RestoService::class),
+            $this->createMock(KlienArService::class),
+            $this->createMock(InvoiceGroupProcessor::class),
+        );
+
+        $this->ref = new \ReflectionClass($this->service);
+    }
+
+    private function invoke(string $method, mixed ...$args): mixed
+    {
+        $m = $this->ref->getMethod($method);
+        $m->setAccessible(true);
+        return $m->invoke($this->service, ...$args);
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    //  investorHasChanged
+    // ──────────────────────────────────────────────────────────────
+
+    public function test_investor_identical_data_returns_false(): void
+    {
+        $investor = new Investor();
+        $investor->forceFill([
+            'nama_investor'   => 'Budi',
+            'ktp'             => '1234567890',
+            'npwp'            => '987654321',
+            'no_hp'           => '08123456789',
+            'pengelola'       => 'Andi',
+            'no_hp_pengelola' => '08111111111',
+            'kode_cabang'     => 'KD01',
+            'id_cabang'       => 'CB01',
+            'status'          => true,
+        ]);
+
+        $import = [
+            'nama_investor'   => 'Budi',
+            'ktp'             => '1234567890',
+            'npwp'            => '987654321',
+            'no_hp'           => '08123456789',
+            'pengelola'       => 'Andi',
+            'no_hp_pengelola' => '08111111111',
+            'kode_cabang'     => 'KD01',
+            'id_cabang'       => 'CB01',
+            'status'          => true,
+        ];
+
+        $this->assertFalse($this->invoke('investorHasChanged', $investor, $import));
+    }
+
+    public function test_investor_different_field_returns_true(): void
+    {
+        $investor = new Investor();
+        $investor->forceFill([
+            'nama_investor'   => 'Budi',
+            'ktp'             => '1234567890',
+            'npwp'            => null,
+            'no_hp'           => null,
+            'pengelola'       => null,
+            'no_hp_pengelola' => null,
+            'kode_cabang'     => null,
+            'id_cabang'       => null,
+            'status'          => true,
+        ]);
+
+        $import = [
+            'nama_investor'   => 'Budi',
+            'ktp'             => '9999999999', // berubah
+            'npwp'            => null,
+            'no_hp'           => null,
+            'pengelola'       => null,
+            'no_hp_pengelola' => null,
+            'kode_cabang'     => null,
+            'id_cabang'       => null,
+            'status'          => true,
+        ];
+
+        $this->assertTrue($this->invoke('investorHasChanged', $investor, $import));
+    }
+
+    public function test_investor_null_vs_dash_treated_equal(): void
+    {
+        $investor = new Investor();
+        $investor->forceFill([
+            'nama_investor'   => 'Budi',
+            'ktp'             => null,
+            'npwp'            => null,
+            'no_hp'           => null,
+            'pengelola'       => null,
+            'no_hp_pengelola' => null,
+            'kode_cabang'     => null,
+            'id_cabang'       => null,
+            'status'          => true,
+        ]);
+
+        // Import mengirim '-' yang harus disamakan dengan null
+        $import = [
+            'nama_investor'   => 'Budi',
+            'ktp'             => null,
+            'npwp'            => null,
+            'no_hp'           => null,
+            'pengelola'       => null,
+            'no_hp_pengelola' => null,
+            'kode_cabang'     => null,
+            'id_cabang'       => null,
+            'status'          => true,
+        ];
+
+        $this->assertFalse($this->invoke('investorHasChanged', $investor, $import));
+    }
+
+    public function test_investor_status_change_returns_true(): void
+    {
+        $investor = new Investor();
+        $investor->forceFill([
+            'nama_investor'   => 'Budi',
+            'ktp'             => null,
+            'npwp'            => null,
+            'no_hp'           => null,
+            'pengelola'       => null,
+            'no_hp_pengelola' => null,
+            'kode_cabang'     => null,
+            'id_cabang'       => null,
+            'status'          => true,
+        ]);
+
+        $import = [
+            'nama_investor'   => 'Budi',
+            'ktp'             => null,
+            'npwp'            => null,
+            'no_hp'           => null,
+            'pengelola'       => null,
+            'no_hp_pengelola' => null,
+            'kode_cabang'     => null,
+            'id_cabang'       => null,
+            'status'          => false, // berubah
+        ];
+
+        $this->assertTrue($this->invoke('investorHasChanged', $investor, $import));
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    //  restoHasChanged
+    // ──────────────────────────────────────────────────────────────
+
+    public function test_resto_identical_data_returns_false(): void
+    {
+        $resto = new Resto();
+        $resto->forceFill([
+            'nama_resto'       => 'Cabang A',
+            'perusahaan_id'    => 1,
+            'brand_id'         => 2,
+            'investor_id'      => 3,
+            'karyawan_id'      => 4,
+            'supervisor'       => 'Siti',
+            'no_hp_supervisor' => '081234',
+            'stokis'           => 'Gudang 1',
+            'area'             => 'Jakarta',
+            'kota'             => 'Jakarta Selatan',
+            'alamat'           => 'Jl. Mawar No. 1',
+            'no_telp'          => '02112345',
+            'tgl_aktif'        => null,
+            'keterangan'       => 'oke',
+            'status'           => true,
+        ]);
+
+        $import = [
+            'nama_resto'       => 'Cabang A',
+            'perusahaan_id'    => 1,
+            'brand_id'         => 2,
+            'investor_id'      => 3,
+            'karyawan_id'      => 4,
+            'supervisor'       => 'Siti',
+            'no_hp_supervisor' => '081234',
+            'stokis'           => 'Gudang 1',
+            'area'             => 'Jakarta',
+            'kota'             => 'Jakarta Selatan',
+            'alamat'           => 'Jl. Mawar No. 1',
+            'no_telp'          => '02112345',
+            'tgl_aktif'        => null,
+            'keterangan'       => 'oke',
+            'status'           => true,
+        ];
+
+        $this->assertFalse($this->invoke('restoHasChanged', $resto, $import));
+    }
+
+    public function test_resto_changed_string_field_returns_true(): void
+    {
+        $resto = new Resto();
+        $resto->forceFill([
+            'nama_resto'       => 'Cabang A',
+            'perusahaan_id'    => 1,
+            'brand_id'         => 2,
+            'investor_id'      => 3,
+            'karyawan_id'      => 4,
+            'supervisor'       => 'Siti',
+            'no_hp_supervisor' => null,
+            'stokis'           => null,
+            'area'             => null,
+            'kota'             => null,
+            'alamat'           => null,
+            'no_telp'          => null,
+            'tgl_aktif'        => null,
+            'keterangan'       => null,
+            'status'           => true,
+        ]);
+
+        $import = [
+            'nama_resto'       => 'Cabang A',
+            'perusahaan_id'    => 1,
+            'brand_id'         => 2,
+            'investor_id'      => 3,
+            'karyawan_id'      => 4,
+            'supervisor'       => 'Rudi', // berubah
+            'no_hp_supervisor' => null,
+            'stokis'           => null,
+            'area'             => null,
+            'kota'             => null,
+            'alamat'           => null,
+            'no_telp'          => null,
+            'tgl_aktif'        => null,
+            'keterangan'       => null,
+            'status'           => true,
+        ];
+
+        $this->assertTrue($this->invoke('restoHasChanged', $resto, $import));
+    }
+
+    public function test_resto_changed_id_field_returns_true(): void
+    {
+        $resto = new Resto();
+        $resto->forceFill([
+            'nama_resto'       => 'Cabang B',
+            'perusahaan_id'    => 1,
+            'brand_id'         => 2,
+            'investor_id'      => 3,
+            'karyawan_id'      => 4,
+            'supervisor'       => null,
+            'no_hp_supervisor' => null,
+            'stokis'           => null,
+            'area'             => null,
+            'kota'             => null,
+            'alamat'           => null,
+            'no_telp'          => null,
+            'tgl_aktif'        => null,
+            'keterangan'       => null,
+            'status'           => true,
+        ]);
+
+        $import = [
+            'nama_resto'       => 'Cabang B',
+            'perusahaan_id'    => 1,
+            'brand_id'         => 99, // berubah
+            'investor_id'      => 3,
+            'karyawan_id'      => 4,
+            'supervisor'       => null,
+            'no_hp_supervisor' => null,
+            'stokis'           => null,
+            'area'             => null,
+            'kota'             => null,
+            'alamat'           => null,
+            'no_telp'          => null,
+            'tgl_aktif'        => null,
+            'keterangan'       => null,
+            'status'           => true,
+        ];
+
+        $this->assertTrue($this->invoke('restoHasChanged', $resto, $import));
+    }
+
+    public function test_resto_tgl_aktif_identical_returns_false(): void
+    {
+        $resto = new Resto();
+        $resto->forceFill([
+            'nama_resto'       => 'Cabang C',
+            'perusahaan_id'    => null,
+            'brand_id'         => null,
+            'investor_id'      => null,
+            'karyawan_id'      => null,
+            'supervisor'       => null,
+            'no_hp_supervisor' => null,
+            'stokis'           => null,
+            'area'             => null,
+            'kota'             => null,
+            'alamat'           => null,
+            'no_telp'          => null,
+            'tgl_aktif'        => '2024-01-15',
+            'keterangan'       => null,
+            'status'           => true,
+        ]);
+
+        $import = [
+            'nama_resto'       => 'Cabang C',
+            'perusahaan_id'    => null,
+            'brand_id'         => null,
+            'investor_id'      => null,
+            'karyawan_id'      => null,
+            'supervisor'       => null,
+            'no_hp_supervisor' => null,
+            'stokis'           => null,
+            'area'             => null,
+            'kota'             => null,
+            'alamat'           => null,
+            'no_telp'          => null,
+            'tgl_aktif'        => '2024-01-15',
+            'keterangan'       => null,
+            'status'           => true,
+        ];
+
+        $this->assertFalse($this->invoke('restoHasChanged', $resto, $import));
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    //  barangHasChanged
+    // ──────────────────────────────────────────────────────────────
+
+    public function test_barang_identical_data_returns_false(): void
+    {
+        $barang = new Barang();
+        $barang->forceFill([
+            'nama_barang' => 'Ayam Goreng',
+            'spesifikasi' => '1 kg',
+            'keterangan'  => 'Segar',
+            'status'      => true,
+        ]);
+
+        $import = [
+            'nama_barang' => 'Ayam Goreng',
+            'spesifikasi' => '1 kg',
+            'keterangan'  => 'Segar',
+            'status'      => true,
+        ];
+
+        $this->assertFalse($this->invoke('barangHasChanged', $barang, $import));
+    }
+
+    public function test_barang_changed_nama_returns_true(): void
+    {
+        $barang = new Barang();
+        $barang->forceFill([
+            'nama_barang' => 'Ayam Goreng',
+            'spesifikasi' => null,
+            'keterangan'  => null,
+            'status'      => true,
+        ]);
+
+        $import = [
+            'nama_barang' => 'Ayam Bakar', // berubah
+            'spesifikasi' => null,
+            'keterangan'  => null,
+            'status'      => true,
+        ];
+
+        $this->assertTrue($this->invoke('barangHasChanged', $barang, $import));
+    }
+
+    public function test_barang_changed_spesifikasi_returns_true(): void
+    {
+        $barang = new Barang();
+        $barang->forceFill([
+            'nama_barang' => 'Produk X',
+            'spesifikasi' => '1 kg',
+            'keterangan'  => null,
+            'status'      => true,
+        ]);
+
+        $import = [
+            'nama_barang' => 'Produk X',
+            'spesifikasi' => '2 kg', // berubah
+            'keterangan'  => null,
+            'status'      => true,
+        ];
+
+        $this->assertTrue($this->invoke('barangHasChanged', $barang, $import));
+    }
+
+    public function test_barang_status_change_returns_true(): void
+    {
+        $barang = new Barang();
+        $barang->forceFill([
+            'nama_barang' => 'Produk Z',
+            'spesifikasi' => null,
+            'keterangan'  => null,
+            'status'      => true,
+        ]);
+
+        $import = [
+            'nama_barang' => 'Produk Z',
+            'spesifikasi' => null,
+            'keterangan'  => null,
+            'status'      => false, // berubah
+        ];
+
+        $this->assertTrue($this->invoke('barangHasChanged', $barang, $import));
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    //  klienArHasChanged
+    // ──────────────────────────────────────────────────────────────
+
+    public function test_klien_ar_identical_data_returns_false(): void
+    {
+        $klien = new KlienAr();
+        $klien->forceFill([
+            'nama_klien'     => 'PT Sejahtera',
+            'tipe_klien'     => 'PT',
+            'no_npwp'        => '123456789',
+            'no_wa'          => '08123456789',
+            'perusahaan_id'  => 1,
+            'karyawan_ar_id' => 2,
+            'resto_id'       => null,
+            'status'         => true,
+        ]);
+
+        $import = [
+            'nama_klien'     => 'PT Sejahtera',
+            'tipe_klien'     => 'PT',
+            'no_npwp'        => '123456789',
+            'no_wa'          => '08123456789',
+            'perusahaan_id'  => 1,
+            'karyawan_ar_id' => 2,
+            'resto_id'       => null,
+            'status'         => true,
+        ];
+
+        $this->assertFalse($this->invoke('klienArHasChanged', $klien, $import));
+    }
+
+    public function test_klien_ar_changed_string_field_returns_true(): void
+    {
+        $klien = new KlienAr();
+        $klien->forceFill([
+            'nama_klien'     => 'PT Sejahtera',
+            'tipe_klien'     => 'PT',
+            'no_npwp'        => '123456789',
+            'no_wa'          => null,
+            'perusahaan_id'  => 1,
+            'karyawan_ar_id' => 2,
+            'resto_id'       => null,
+            'status'         => true,
+        ]);
+
+        $import = [
+            'nama_klien'     => 'PT Sejahtera',
+            'tipe_klien'     => 'PT',
+            'no_npwp'        => '999999999', // berubah
+            'no_wa'          => null,
+            'perusahaan_id'  => 1,
+            'karyawan_ar_id' => 2,
+            'resto_id'       => null,
+            'status'         => true,
+        ];
+
+        $this->assertTrue($this->invoke('klienArHasChanged', $klien, $import));
+    }
+
+    public function test_klien_ar_changed_id_field_returns_true(): void
+    {
+        $klien = new KlienAr();
+        $klien->forceFill([
+            'nama_klien'     => 'Cabang A',
+            'tipe_klien'     => 'RESTO',
+            'no_npwp'        => null,
+            'no_wa'          => null,
+            'perusahaan_id'  => null,
+            'karyawan_ar_id' => 2,
+            'resto_id'       => 10,
+            'status'         => true,
+        ]);
+
+        $import = [
+            'nama_klien'     => 'Cabang A',
+            'tipe_klien'     => 'RESTO',
+            'no_npwp'        => null,
+            'no_wa'          => null,
+            'perusahaan_id'  => null,
+            'karyawan_ar_id' => 99, // berubah
+            'resto_id'       => 10,
+            'status'         => true,
+        ];
+
+        $this->assertTrue($this->invoke('klienArHasChanged', $klien, $import));
+    }
+
+    public function test_klien_ar_status_change_returns_true(): void
+    {
+        $klien = new KlienAr();
+        $klien->forceFill([
+            'nama_klien'     => 'PT Makmur',
+            'tipe_klien'     => 'PT',
+            'no_npwp'        => null,
+            'no_wa'          => null,
+            'perusahaan_id'  => 5,
+            'karyawan_ar_id' => 2,
+            'resto_id'       => null,
+            'status'         => true,
+        ]);
+
+        $import = [
+            'nama_klien'     => 'PT Makmur',
+            'tipe_klien'     => 'PT',
+            'no_npwp'        => null,
+            'no_wa'          => null,
+            'perusahaan_id'  => 5,
+            'karyawan_ar_id' => 2,
+            'resto_id'       => null,
+            'status'         => false, // berubah
+        ];
+
+        $this->assertTrue($this->invoke('klienArHasChanged', $klien, $import));
+    }
+}

@@ -27,6 +27,9 @@ class StoreInvoiceRequest extends FormRequest
             'items.*.satuan'         => ['nullable', 'string', 'max:20'],
             'items.*.harga_satuan'   => ['required', 'numeric', 'min:0'],
             'items.*.keterangan'     => ['nullable', 'string', 'max:255'],
+            'items.*.no_invoice_resto' => ['nullable', 'string', 'max:100'],
+            'items.*.kode_resto'       => ['nullable', 'string', 'max:100'],
+            'items.*.nama_resto'       => ['nullable', 'string', 'max:150'],
         ];
     }
 }

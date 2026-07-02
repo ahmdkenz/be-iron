@@ -109,7 +109,7 @@ class MasterImportService
 
         $invIns  = $invUpd  = $invFail  = 0;
         $resIns  = $resUpd  = $resFail  = 0;
-        $kliIns  = $kliUpd  = $kliFail  = 0;
+        $kliIns  = $kliUpd  = $kliFail  = $kliSkip = 0;
         $processed     = 0;
         $lineNumber    = 0;
         $headerSkipped = false;
@@ -124,7 +124,7 @@ class MasterImportService
                         'master_processed'  => min($processed, $batch->master_total),
                         'investor_inserted' => $invIns,  'investor_updated' => $invUpd,  'investor_failed' => $invFail,
                         'resto_inserted'    => $resIns,  'resto_updated'    => $resUpd,  'resto_failed'    => $resFail,
-                        'klien_inserted'    => $kliIns,  'klien_updated'    => $kliUpd,  'klien_failed'    => $kliFail,
+                        'klien_inserted'    => $kliIns,  'klien_updated'    => $kliUpd,  'klien_failed'    => $kliFail,  'klien_skipped' => $kliSkip,
                     ]);
                     DB::beginTransaction();
                     $inChunk = 0;
@@ -184,9 +184,13 @@ class MasterImportService
 
                         try {
                             if ($existing) {
-                                $existing->updated_by = $actingUserId;
-                                $investor = $this->investorService->update($existing, InvestorDTO::fromRequest($invData));
-                                $invUpd++;
+                                if ($this->investorHasChanged($existing, $invData)) {
+                                    $existing->updated_by = $actingUserId;
+                                    $investor = $this->investorService->update($existing, InvestorDTO::fromRequest($invData));
+                                    $invUpd++;
+                                } else {
+                                    $investor = $existing;
+                                }
                             } else {
                                 $investor = $this->investorService->create(InvestorDTO::fromRequest($invData));
                                 $invIns++;
@@ -291,9 +295,13 @@ class MasterImportService
                         } else {
                             try {
                                 if ($existingResto) {
-                                    $existingResto->updated_by = $actingUserId;
-                                    $resto = $this->restoService->update($existingResto, RestoDTO::fromRequest($resData));
-                                    $resUpd++;
+                                    if ($this->restoHasChanged($existingResto, $resData)) {
+                                        $existingResto->updated_by = $actingUserId;
+                                        $resto = $this->restoService->update($existingResto, RestoDTO::fromRequest($resData));
+                                        $resUpd++;
+                                    } else {
+                                        $resto = $existingResto;
+                                    }
                                 } else {
                                     $resto = $this->restoService->create(RestoDTO::fromRequest($resData));
                                     $resIns++;
@@ -415,9 +423,13 @@ class MasterImportService
 
                             try {
                                 if ($existingKlien) {
-                                    $existingKlien->updated_by = $actingUserId;
-                                    $this->klienArService->update($existingKlien, KlienArDTO::fromRequest($kliData));
-                                    $kliUpd++;
+                                    if ($this->klienArHasChanged($existingKlien, $kliData)) {
+                                        $existingKlien->updated_by = $actingUserId;
+                                        $this->klienArService->update($existingKlien, KlienArDTO::fromRequest($kliData));
+                                        $kliUpd++;
+                                    } else {
+                                        $kliSkip++;
+                                    }
                                 } else {
                                     $this->klienArService->create(KlienArDTO::fromRequest($kliData));
                                     $kliIns++;
@@ -440,7 +452,7 @@ class MasterImportService
             'master_processed'  => $batch->master_total,
             'investor_inserted' => $invIns,  'investor_updated' => $invUpd,  'investor_failed' => $invFail,
             'resto_inserted'    => $resIns,  'resto_updated'    => $resUpd,  'resto_failed'    => $resFail,
-            'klien_inserted'    => $kliIns,  'klien_updated'    => $kliUpd,  'klien_failed'    => $kliFail,
+            'klien_inserted'    => $kliIns,  'klien_updated'    => $kliUpd,  'klien_failed'    => $kliFail,  'klien_skipped' => $kliSkip,
         ]);
     }
 
@@ -464,10 +476,15 @@ class MasterImportService
             return;
         }
 
+        // Header-based column lookup — toleran terhadap template lama yang masih memiliki kolom nama_brand
+        $headerRow    = array_map(fn($c) => strtolower(trim((string) $c)), $rows[0] ?? []);
+        $headerIdxMap = array_flip($headerRow);
+        $col = static fn(array $row, string $name): mixed =>
+            $row[$headerIdxMap[$name] ?? -1] ?? '';
+
         $batch->update(['barang_total' => count($rows)]);
 
         $actingUserId = $batch->user_id;
-        $brandMap = $this->buildLowerMap(Brand::all(['id', 'nama_brand']), 'nama_brand');
         $kodeMap  = Barang::all(['id', 'kode_barang'])
             ->mapWithKeys(fn($b) => [strtoupper($b->kode_barang) => $b->id])
             ->all();
@@ -503,16 +520,15 @@ class MasterImportService
                 if (str_starts_with($firstCell, '[CONTOH]')) continue;
                 if ($firstCell === '' && count(array_filter(array_map('strval', $row))) === 0) continue;
 
-                $rawKode   = strtoupper(trim((string) ($row[0] ?? '')));
-                $rawNama   = trim((string) ($row[1] ?? ''));
-                $rawStatus = trim((string) ($row[5] ?? ''));
+                $rawKode   = strtoupper(trim((string) $col($row, 'kode_barang')));
+                $rawNama   = trim((string) $col($row, 'nama_barang'));
+                $rawStatus = trim((string) $col($row, 'status'));
 
                 $data = [
                     'kode_barang' => $rawKode === '' ? null : $rawKode,
                     'nama_barang' => $rawNama,
-                    'spesifikasi' => $this->importValue($row[2] ?? ''),
-                    'nama_brand'  => $this->importValue($row[3] ?? ''),
-                    'keterangan'  => $this->importValue($row[4] ?? ''),
+                    'spesifikasi' => $this->importValue($col($row, 'spesifikasi')),
+                    'keterangan'  => $this->importValue($col($row, 'keterangan')),
                     'status'      => $this->parseStatus($rawStatus),
                 ];
 
@@ -544,34 +560,24 @@ class MasterImportService
                     }
                 }
 
-                $brandId = null;
-                if ($data['nama_brand'] !== null) {
-                    $brandId = $brandMap[strtolower($data['nama_brand'])] ?? null;
-                    if ($brandId === null) {
-                        $errors[] = ['sheet' => 'MASTER BARANG', 'row' => $lineNumber, 'message' => "Brand '{$data['nama_brand']}' tidak ditemukan di sistem."];
-                        $brgFail++;
-                        continue;
-                    }
-                }
-
                 try {
                     if ($existing) {
-                        $existing->update([
-                            'nama_barang' => $data['nama_barang'],
-                            'spesifikasi' => $data['spesifikasi'],
-                            'brand_id'    => $brandId,
-                            'keterangan'  => $data['keterangan'],
-                            'status'      => $data['status'] ?? true,
-                            'updated_by'  => $actingUserId,
-                        ]);
-                        $brgUpd++;
+                        if ($this->barangHasChanged($existing, $data)) {
+                            $existing->update([
+                                'nama_barang' => $data['nama_barang'],
+                                'spesifikasi' => $data['spesifikasi'],
+                                'keterangan'  => $data['keterangan'],
+                                'status'      => $data['status'] ?? true,
+                                'updated_by'  => $actingUserId,
+                            ]);
+                            $brgUpd++;
+                        }
                     } else {
                         $kodeUpper = strtoupper($data['kode_barang']);
                         $barang    = Barang::create([
                             'kode_barang' => $kodeUpper,
                             'nama_barang' => $data['nama_barang'],
                             'spesifikasi' => $data['spesifikasi'],
-                            'brand_id'    => $brandId,
                             'keterangan'  => $data['keterangan'],
                             'status'      => $data['status'] ?? true,
                         ]);
@@ -899,10 +905,10 @@ class MasterImportService
         $parts = [];
         if ($batch->master_total > 0) {
             $parts[] = sprintf(
-                'MASTER DATA: Investor +%d ~%d ✗%d | Resto +%d ~%d ✗%d | Client +%d ~%d ✗%d',
+                'MASTER DATA: Investor +%d ~%d ✗%d | Resto +%d ~%d ✗%d | Client +%d ~%d ⊘%d ✗%d',
                 $batch->investor_inserted, $batch->investor_updated, $batch->investor_failed,
                 $batch->resto_inserted,    $batch->resto_updated,    $batch->resto_failed,
-                $batch->klien_inserted,    $batch->klien_updated,    $batch->klien_failed,
+                $batch->klien_inserted,    $batch->klien_updated,    $batch->klien_skipped, $batch->klien_failed,
             );
         }
         if ($batch->barang_total > 0) {
@@ -990,5 +996,76 @@ class MasterImportService
     {
         if ($raw === '') return true;
         return in_array(strtolower($raw), ['aktif', '1', 'true', 'yes', 'ya']);
+    }
+
+    private function normalizeStr(mixed $val): ?string
+    {
+        if ($val === null) return null;
+        $s = trim((string) $val);
+        return ($s === '' || $s === '-') ? null : $s;
+    }
+
+    private function normalizeId(mixed $val): ?int
+    {
+        if ($val === null || $val === '' || $val === '-') return null;
+        $i = (int) $val;
+        return $i === 0 ? null : $i;
+    }
+
+    private function investorHasChanged(Investor $existing, array $import): bool
+    {
+        foreach (['nama_investor', 'ktp', 'npwp', 'no_hp', 'pengelola', 'no_hp_pengelola', 'kode_cabang', 'id_cabang'] as $f) {
+            if ($this->normalizeStr($existing->{$f}) !== $this->normalizeStr($import[$f])) {
+                return true;
+            }
+        }
+        return (bool) $existing->status !== (bool) ($import['status'] ?? true);
+    }
+
+    private function restoHasChanged(Resto $existing, array $import): bool
+    {
+        foreach (['nama_resto', 'supervisor', 'no_hp_supervisor', 'stokis', 'area', 'kota', 'alamat', 'no_telp', 'keterangan'] as $f) {
+            if ($this->normalizeStr($existing->{$f}) !== $this->normalizeStr($import[$f])) {
+                return true;
+            }
+        }
+        foreach (['perusahaan_id', 'brand_id', 'investor_id', 'karyawan_id'] as $f) {
+            if ($this->normalizeId($existing->{$f}) !== $this->normalizeId($import[$f])) {
+                return true;
+            }
+        }
+        // tgl_aktif: bandingkan sebagai Y-m-d
+        $existingDate = $existing->tgl_aktif
+            ? (is_string($existing->tgl_aktif) ? substr($existing->tgl_aktif, 0, 10) : $existing->tgl_aktif->format('Y-m-d'))
+            : null;
+        if ($existingDate !== $import['tgl_aktif']) {
+            return true;
+        }
+        return (bool) $existing->status !== (bool) ($import['status'] ?? true);
+    }
+
+    private function barangHasChanged(Barang $existing, array $import): bool
+    {
+        foreach (['nama_barang', 'spesifikasi', 'keterangan'] as $f) {
+            if ($this->normalizeStr($existing->{$f}) !== $this->normalizeStr($import[$f])) {
+                return true;
+            }
+        }
+        return (bool) $existing->status !== (bool) ($import['status'] ?? true);
+    }
+
+    private function klienArHasChanged(KlienAr $existing, array $import): bool
+    {
+        foreach (['nama_klien', 'tipe_klien', 'no_npwp', 'no_wa'] as $f) {
+            if ($this->normalizeStr($existing->{$f}) !== $this->normalizeStr($import[$f])) {
+                return true;
+            }
+        }
+        foreach (['perusahaan_id', 'karyawan_ar_id', 'resto_id'] as $f) {
+            if ($this->normalizeId($existing->{$f}) !== $this->normalizeId($import[$f])) {
+                return true;
+            }
+        }
+        return (bool) $existing->status !== (bool) ($import['status'] ?? true);
     }
 }

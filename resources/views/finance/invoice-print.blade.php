@@ -58,6 +58,9 @@
     .dl-colon { width: 5%; text-align: center; }
     .dl-val { width: 61%; color: #111; }
 
+    .dl-row-divider td { border-top: 1px solid #ddd; padding-top: 10px; }
+    .dl-row-divider .dl-lbl { color: #888; }
+
     .badge { padding: 4px 8px; font-weight: bold; font-size: 13px; border-radius: 4px; border: 1px solid #ccc; text-transform: uppercase; background: #eee; }
     .badge-TERKIRIM { color: #1d4ed8; border-color: #bfdbfe; background: #eff6ff; }
     .badge-SEBAGIAN { color: #c2410c; border-color: #fed7aa; background: #fff7ed; }
@@ -213,6 +216,20 @@
                 @if($invoice->is_opening_balance)<span class="badge badge-OB" style="margin-left:4px;">OB</span>@endif
               </td>
             </tr>
+            <tr class="dl-row-divider">
+              <td class="dl-lbl">Staff AR</td><td class="dl-colon">:</td>
+              <td class="dl-val">{{ $invoice->klienAr->karyawanAr->nama_karyawan ?? '-' }}</td>
+            </tr>
+            <tr>
+              <td class="dl-lbl">Penagih</td><td class="dl-colon">:</td>
+              <td class="dl-val">
+                @if($invoice->klienAr->tipe_klien === 'PT')
+                  {{ $invoice->karyawan?->perusahaan?->nama_perusahaan ?? '-' }}
+                @else
+                  {{ $invoice->klienAr->karyawanAr?->perusahaan?->nama_perusahaan ?? $invoice->perusahaan?->nama_perusahaan ?? '-' }}
+                @endif
+              </td>
+            </tr>
           </table>
         </td>
         <td class="info-col">
@@ -239,12 +256,8 @@
               <td class="dl-val">{{ $clientNpwp ?: '-' }}</td>
             </tr>
             <tr>
-              <td class="dl-lbl">Tipe Klien</td><td class="dl-colon">:</td>
+              <td class="dl-lbl">Klasifikasi</td><td class="dl-colon">:</td>
               <td class="dl-val">{{ $invoice->klienAr->tipe_klien ?: '-' }}</td>
-            </tr>
-            <tr>
-              <td class="dl-lbl">Staff AR</td><td class="dl-colon">:</td>
-              <td class="dl-val">{{ $invoice->klienAr->karyawanAr->nama_karyawan ?? '-' }}</td>
             </tr>
             @if($invoice->klienAr->tipe_klien === 'PT' && $invoice->resto)
             <tr>
@@ -252,16 +265,6 @@
               <td class="dl-val">{{ $invoice->resto->nama_resto }} ({{ $invoice->resto->kode_resto }})</td>
             </tr>
             @endif
-            <tr>
-              <td class="dl-lbl">Penagih</td><td class="dl-colon">:</td>
-              <td class="dl-val">
-                @if($invoice->klienAr->tipe_klien === 'PT')
-                  {{ $invoice->karyawan?->perusahaan?->nama_perusahaan ?? '-' }}
-                @else
-                  {{ $invoice->klienAr->karyawanAr?->perusahaan?->nama_perusahaan ?? $invoice->perusahaan?->nama_perusahaan ?? '-' }}
-                @endif
-              </td>
-            </tr>
           </table>
         </td>
       </tr>
@@ -626,6 +629,20 @@
                 <td class="dl-lbl">Status</td><td class="dl-colon">:</td>
                 <td class="dl-val"><span class="badge badge-{{ $regInv->status }}">{{ $regInv->status }}</span></td>
               </tr>
+              <tr class="dl-row-divider">
+                <td class="dl-lbl">Staff AR</td><td class="dl-colon">:</td>
+                <td class="dl-val">{{ $regInv->klienAr->karyawanAr->nama_karyawan ?? '-' }}</td>
+              </tr>
+              <tr>
+                <td class="dl-lbl">Penagih</td><td class="dl-colon">:</td>
+                <td class="dl-val">
+                  @if($regInv->klienAr->tipe_klien === 'PT')
+                    {{ $regInv->karyawan?->perusahaan?->nama_perusahaan ?? '-' }}
+                  @else
+                    {{ $regInv->klienAr->karyawanAr?->perusahaan?->nama_perusahaan ?? $regInv->perusahaan?->nama_perusahaan ?? '-' }}
+                  @endif
+                </td>
+              </tr>
             </table>
           </td>
           <td class="info-col">
@@ -646,12 +663,8 @@
                 <td class="dl-val">{{ $regClientNpwp ?: '-' }}</td>
               </tr>
               <tr>
-                <td class="dl-lbl">Tipe Klien</td><td class="dl-colon">:</td>
+                <td class="dl-lbl">Klasifikasi</td><td class="dl-colon">:</td>
                 <td class="dl-val">{{ $regInv->klienAr->tipe_klien ?: '-' }}</td>
-              </tr>
-              <tr>
-                <td class="dl-lbl">Staff AR</td><td class="dl-colon">:</td>
-                <td class="dl-val">{{ $regInv->klienAr->karyawanAr->nama_karyawan ?? '-' }}</td>
               </tr>
               @if($regInv->klienAr->tipe_klien === 'PT' && $regInv->resto && !$regInv->tanggal_kirim_barang)
               <tr>
@@ -659,16 +672,6 @@
                 <td class="dl-val">{{ $regInv->resto->nama_resto }} ({{ $regInv->resto->kode_resto }})</td>
               </tr>
               @endif
-              <tr>
-                <td class="dl-lbl">Penagih</td><td class="dl-colon">:</td>
-                <td class="dl-val">
-                  @if($regInv->klienAr->tipe_klien === 'PT')
-                    {{ $regInv->karyawan?->perusahaan?->nama_perusahaan ?? '-' }}
-                  @else
-                    {{ $regInv->klienAr->karyawanAr?->perusahaan?->nama_perusahaan ?? $regInv->perusahaan?->nama_perusahaan ?? '-' }}
-                  @endif
-                </td>
-              </tr>
             </table>
           </td>
         </tr>

@@ -16,7 +16,6 @@ class Barang extends Model
         'kode_barang',
         'nama_barang',
         'spesifikasi',
-        'brand_id',
         'keterangan',
         'status',
         'created_by',
@@ -26,11 +25,6 @@ class Barang extends Model
     protected $casts = [
         'status' => 'boolean',
     ];
-
-    public function brand()
-    {
-        return $this->belongsTo(Brand::class, 'brand_id');
-    }
 
     public function createdBy()
     {

@@ -149,14 +149,17 @@ class InvoiceService
             foreach ($dto->items as $item) {
                 $itemSubtotal = ($item['qty'] ?? 0) * ($item['harga_satuan'] ?? 0);
                 $invoice->items()->create([
-                    'barang_id'    => $item['barang_id'] ?? null,
-                    'kode_barang'  => $item['kode_barang'] ?? null,
-                    'nama_barang'  => $item['nama_barang'],
-                    'qty'          => $item['qty'],
-                    'satuan'       => $item['satuan'] ?? null,
-                    'harga_satuan' => $item['harga_satuan'],
-                    'subtotal'     => $itemSubtotal,
-                    'keterangan'   => $item['keterangan'] ?? null,
+                    'barang_id'        => $item['barang_id'] ?? null,
+                    'kode_barang'      => $item['kode_barang'] ?? null,
+                    'nama_barang'      => $item['nama_barang'],
+                    'qty'              => $item['qty'],
+                    'satuan'           => $item['satuan'] ?? null,
+                    'harga_satuan'     => $item['harga_satuan'],
+                    'subtotal'         => $itemSubtotal,
+                    'keterangan'       => $item['keterangan'] ?? null,
+                    'no_invoice_resto' => $item['no_invoice_resto'] ?? null,
+                    'kode_resto'       => $item['kode_resto'] ?? null,
+                    'nama_resto'       => $item['nama_resto'] ?? null,
                 ]);
             }
 
@@ -398,14 +401,17 @@ class InvoiceService
         foreach ($dto->items as $item) {
             $itemSubtotal = ($item['qty'] ?? 0) * ($item['harga_satuan'] ?? 0);
             $invoice->items()->create([
-                'barang_id'    => $item['barang_id'] ?? null,
-                'kode_barang'  => $item['kode_barang'] ?? null,
-                'nama_barang'  => $item['nama_barang'],
-                'qty'          => $item['qty'],
-                'satuan'       => $item['satuan'] ?? null,
-                'harga_satuan' => $item['harga_satuan'],
-                'subtotal'     => $itemSubtotal,
-                'keterangan'   => $item['keterangan'] ?? null,
+                'barang_id'        => $item['barang_id'] ?? null,
+                'kode_barang'      => $item['kode_barang'] ?? null,
+                'nama_barang'      => $item['nama_barang'],
+                'qty'              => $item['qty'],
+                'satuan'           => $item['satuan'] ?? null,
+                'harga_satuan'     => $item['harga_satuan'],
+                'subtotal'         => $itemSubtotal,
+                'keterangan'       => $item['keterangan'] ?? null,
+                'no_invoice_resto' => $item['no_invoice_resto'] ?? null,
+                'kode_resto'       => $item['kode_resto'] ?? null,
+                'nama_resto'       => $item['nama_resto'] ?? null,
             ]);
         }
 

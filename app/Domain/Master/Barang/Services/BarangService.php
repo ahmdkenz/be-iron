@@ -28,7 +28,6 @@ class BarangService
         return $this->repository->create([
             'kode_barang' => $dto->kode_barang,
             'nama_barang' => $dto->nama_barang,
-            'brand_id'    => $dto->brand_id,
             'spesifikasi' => $dto->spesifikasi,
             'keterangan'  => $dto->keterangan,
             'status'      => $dto->status,
@@ -40,7 +39,6 @@ class BarangService
         return $this->repository->update($barang, [
             'kode_barang' => $dto->kode_barang,
             'nama_barang' => $dto->nama_barang,
-            'brand_id'    => $dto->brand_id,
             'spesifikasi' => $dto->spesifikasi,
             'keterangan'  => $dto->keterangan,
             'status'      => $dto->status,

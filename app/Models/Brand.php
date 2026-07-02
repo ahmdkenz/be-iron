@@ -39,9 +39,4 @@ class Brand extends Model
     {
         return $this->hasMany(Resto::class, 'brand_id');
     }
-
-    public function barangs()
-    {
-        return $this->hasMany(Barang::class, 'brand_id');
-    }
 }
