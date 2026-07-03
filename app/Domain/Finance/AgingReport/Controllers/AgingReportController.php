@@ -58,7 +58,7 @@ class AgingReportController extends Controller
 
         $spreadsheet = new Spreadsheet();
         $sheet       = $spreadsheet->getActiveSheet();
-        $sheet->setTitle('Aging Report');
+        $sheet->setTitle('Summary per Klien');
 
         $lastCol = 'J';
 
@@ -147,6 +147,10 @@ class AgingReportController extends Controller
 
         $sheet->freezePane('A5');
 
+        // ─── Sheet 2: Detail Invoice ────────────────────────────────────────
+        $this->buildDetailSheet($spreadsheet, $report);
+        $spreadsheet->setActiveSheetIndex(0);
+
         $temp = tempnam(sys_get_temp_dir(), 'ar_') . '.xlsx';
         (new XlsxWriter($spreadsheet))->save($temp);
 
@@ -155,5 +159,111 @@ class AgingReportController extends Controller
                 'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             ])
             ->deleteFileAfterSend(true);
+    }
+
+    private function buildDetailSheet(Spreadsheet $spreadsheet, array $report): void
+    {
+        $sheet = $spreadsheet->createSheet();
+        $sheet->setTitle('Detail Invoice');
+
+        $lastCol = 'O';
+
+        $sheet->mergeCells("A1:{$lastCol}1");
+        $sheet->setCellValue('A1', 'DETAIL INVOICE PIUTANG');
+        $sheet->getStyle('A1')->applyFromArray([
+            'font'      => ['bold' => true, 'size' => 14, 'color' => ['argb' => 'FFFFFFFF']],
+            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFB71C1C']],
+            'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
+        ]);
+        $sheet->getRowDimension(1)->setRowHeight(36);
+
+        $sheet->mergeCells("A2:{$lastCol}2");
+        $sheet->setCellValue('A2', 'Per Tanggal: ' . $report['as_of_date'] . '   |   Diekspor: ' . now()->format('d-m-Y H:i'));
+        $sheet->getStyle('A2')->applyFromArray([
+            'font'      => ['italic' => true, 'size' => 9, 'color' => ['argb' => 'FF455A64']],
+            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFFFEBEE']],
+            'alignment' => ['horizontal' => Alignment::HORIZONTAL_LEFT, 'vertical' => Alignment::VERTICAL_CENTER],
+        ]);
+        $sheet->getRowDimension(2)->setRowHeight(18);
+        $sheet->getRowDimension(3)->setRowHeight(6);
+
+        $cols = [
+            'A' => ['No',              5],
+            'B' => ['Kode Klien',     14],
+            'C' => ['Nama Klien',     26],
+            'D' => ['No Invoice',     18],
+            'E' => ['Tgl Invoice',    13],
+            'F' => ['Jatuh Tempo',    13],
+            'G' => ['Umur (hari)',    11],
+            'H' => ['Hari Terlambat', 13],
+            'I' => ['Bucket',         14],
+            'J' => ['Total Tagihan',  16],
+            'K' => ['Total Bayar',    16],
+            'L' => ['Sisa Tagihan',   16],
+            'M' => ['Status',         16],
+            'N' => ['PIC AR',         18],
+            'O' => ['Entitas',        12],
+        ];
+
+        foreach ($cols as $col => [$label, $width]) {
+            $sheet->setCellValue("{$col}4", $label);
+            $sheet->getColumnDimension($col)->setWidth($width);
+        }
+        $sheet->getStyle("A4:{$lastCol}4")->applyFromArray([
+            'font'      => ['bold' => true, 'size' => 10, 'color' => ['argb' => 'FFFFFFFF']],
+            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFC62828']],
+            'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
+            'borders'   => ['allBorders' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FFB71C1C']]],
+        ]);
+        $sheet->getRowDimension(4)->setRowHeight(22);
+
+        $bucketLabels = [
+            'current'      => 'Belum JT',
+            'hari_1_30'    => '1–30 Hari',
+            'hari_31_60'   => '31–60 Hari',
+            'hari_61_90'   => '61–90 Hari',
+            'hari_91_plus' => '>90 Hari',
+        ];
+
+        $rowNum = 5;
+        $no     = 1;
+        foreach ($report['rows'] as $klienRow) {
+            foreach (($klienRow['details'] ?? []) as $d) {
+                $bg = $rowNum % 2 === 0 ? 'FFFFEBEE' : 'FFFFFFFF';
+
+                $sheet->getCell("A{$rowNum}")->setValueExplicit($no, DataType::TYPE_NUMERIC);
+                $sheet->getCell("B{$rowNum}")->setValueExplicit($klienRow['kode_klien'] ?? '', DataType::TYPE_STRING);
+                $sheet->getCell("C{$rowNum}")->setValueExplicit($klienRow['nama_klien'] ?? '', DataType::TYPE_STRING);
+                $sheet->getCell("D{$rowNum}")->setValueExplicit($d['no_invoice'] ?? '', DataType::TYPE_STRING);
+                $sheet->getCell("E{$rowNum}")->setValueExplicit($d['tanggal_invoice'] ?? '', DataType::TYPE_STRING);
+                $sheet->getCell("F{$rowNum}")->setValueExplicit($d['tanggal_jatuh_tempo'] ?? '', DataType::TYPE_STRING);
+
+                $umur = $d['umur_invoice'];
+                $sheet->getCell("G{$rowNum}")->setValueExplicit($umur === null ? '' : (int) $umur, $umur === null ? DataType::TYPE_STRING : DataType::TYPE_NUMERIC);
+                $sheet->getCell("H{$rowNum}")->setValueExplicit((int) ($d['hari_terlambat'] ?? 0), DataType::TYPE_NUMERIC);
+                $sheet->getCell("I{$rowNum}")->setValueExplicit($bucketLabels[$d['bucket'] ?? ''] ?? ($d['bucket'] ?? ''), DataType::TYPE_STRING);
+
+                foreach (['total_tagihan' => 'J', 'total_pembayaran' => 'K', 'sisa_tagihan' => 'L'] as $field => $col) {
+                    $val = (float) ($d[$field] ?? 0);
+                    $sheet->getCell("{$col}{$rowNum}")->setValueExplicit($val ?: '', $val ? DataType::TYPE_NUMERIC : DataType::TYPE_STRING);
+                    if ($val) $sheet->getStyle("{$col}{$rowNum}")->getNumberFormat()->setFormatCode('#,##0');
+                }
+
+                $sheet->getCell("M{$rowNum}")->setValueExplicit($d['status'] ?? '', DataType::TYPE_STRING);
+                $sheet->getCell("N{$rowNum}")->setValueExplicit($d['pic_ar'] ?? '', DataType::TYPE_STRING);
+                $sheet->getCell("O{$rowNum}")->setValueExplicit($d['perusahaan'] ?? '', DataType::TYPE_STRING);
+
+                $sheet->getStyle("A{$rowNum}:{$lastCol}{$rowNum}")->applyFromArray([
+                    'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => $bg]],
+                    'borders'   => ['allBorders' => ['borderStyle' => Border::BORDER_HAIR, 'color' => ['argb' => 'FFCFD8DC']]],
+                    'alignment' => ['vertical' => Alignment::VERTICAL_CENTER],
+                ]);
+                $sheet->getRowDimension($rowNum)->setRowHeight(18);
+                $rowNum++;
+                $no++;
+            }
+        }
+
+        $sheet->freezePane('A5');
     }
 }

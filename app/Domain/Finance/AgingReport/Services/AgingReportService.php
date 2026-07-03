@@ -17,7 +17,7 @@ class AgingReportService
         $segmentTypes = $this->resolveSegmentTypes($filters['segment'] ?? null);
 
         $regularInvoices = Invoice::query()
-            ->with(['klienAr.perusahaan'])
+            ->with(['klienAr.perusahaan', 'klienAr.karyawanAr'])
             ->where('is_opening_balance', false)
             ->whereNotIn('status', ['LUNAS'])
             ->when($filters['klien_ar_id'] ?? null, fn($q, $v) => $q->where('klien_ar_id', $v))
@@ -27,7 +27,7 @@ class AgingReportService
             ->get();
 
         $obInvoices = Invoice::query()
-            ->with(['klienAr.perusahaan', 'openingBalanceDetails'])
+            ->with(['klienAr.perusahaan', 'klienAr.karyawanAr', 'openingBalanceDetails'])
             ->where('is_opening_balance', true)
             ->where('approval_status', 'APPROVED')
             ->whereNotIn('status', ['LUNAS'])
@@ -40,31 +40,49 @@ class AgingReportService
         $lines = collect();
 
         foreach ($regularInvoices as $inv) {
-            $lines->push([
-                'klien_ar_id'   => $inv->klien_ar_id,
-                'klien'         => $inv->klienAr,
-                'tanggal_anchor'=> $inv->tanggal_invoice,
-                'sisa'          => (float) $inv->sisa_tagihan,
-            ]);
+            $anchor = $inv->tanggal_jatuh_tempo ?: $inv->tanggal_invoice;
+            $lines->push($this->makeLine($inv->klien_ar_id, $inv->klienAr, [
+                'no_invoice'          => $inv->no_invoice,
+                'tanggal_invoice'     => $inv->tanggal_invoice,
+                'tanggal_jatuh_tempo' => $inv->tanggal_jatuh_tempo,
+                'tanggal_anchor'      => $anchor,
+                'total_tagihan'       => (float) $inv->total_tagihan,
+                'total_pembayaran'    => (float) $inv->total_pembayaran,
+                'sisa'                => (float) $inv->sisa_tagihan,
+                'status'              => $inv->status,
+            ]));
         }
 
         foreach ($obInvoices as $ob) {
             if ($ob->openingBalanceDetails->isNotEmpty()) {
                 foreach ($ob->openingBalanceDetails as $detail) {
-                    $lines->push([
-                        'klien_ar_id'   => $ob->klien_ar_id,
-                        'klien'         => $ob->klienAr,
-                        'tanggal_anchor'=> $detail->tanggal_invoice_asal,
-                        'sisa'          => (float) $detail->sisa_tagihan_asal,
-                    ]);
+                    // Opening Balance tidak memiliki tanggal jatuh tempo → anchor = tanggal invoice asal.
+                    $anchor = $detail->tanggal_invoice_asal ?: $ob->tanggal_invoice;
+                    $sisa   = (float) $detail->sisa_tagihan_asal;
+                    $tagih  = (float) $detail->jumlah_tagihan_asal;
+                    $lines->push($this->makeLine($ob->klien_ar_id, $ob->klienAr, [
+                        'no_invoice'          => $detail->no_invoice_asal,
+                        'tanggal_invoice'     => $detail->tanggal_invoice_asal,
+                        'tanggal_jatuh_tempo' => null,
+                        'tanggal_anchor'      => $anchor,
+                        'total_tagihan'       => $tagih,
+                        'total_pembayaran'    => $tagih - $sisa,
+                        'sisa'                => $sisa,
+                        'status'              => 'OPENING BALANCE',
+                    ]));
                 }
             } else {
-                $lines->push([
-                    'klien_ar_id'   => $ob->klien_ar_id,
-                    'klien'         => $ob->klienAr,
-                    'tanggal_anchor'=> $ob->tanggal_invoice,
-                    'sisa'          => (float) $ob->sisa_tagihan,
-                ]);
+                $anchor = $ob->tanggal_jatuh_tempo ?: $ob->tanggal_invoice;
+                $lines->push($this->makeLine($ob->klien_ar_id, $ob->klienAr, [
+                    'no_invoice'          => $ob->no_invoice,
+                    'tanggal_invoice'     => $ob->tanggal_invoice,
+                    'tanggal_jatuh_tempo' => $ob->tanggal_jatuh_tempo,
+                    'tanggal_anchor'      => $anchor,
+                    'total_tagihan'       => (float) $ob->total_tagihan,
+                    'total_pembayaran'    => (float) $ob->total_pembayaran,
+                    'sisa'                => (float) $ob->sisa_tagihan,
+                    'status'              => 'OPENING BALANCE',
+                ]));
             }
         }
 
@@ -73,22 +91,31 @@ class AgingReportService
         $rows = $grouped->map(function (Collection $group) use ($asOf) {
             $klien   = $group->first()['klien'];
             $buckets = ['current' => 0, 'hari_1_30' => 0, 'hari_31_60' => 0, 'hari_61_90' => 0, 'hari_91_plus' => 0];
+            $details = [];
 
             foreach ($group as $line) {
-                $anchor      = Carbon::parse($line['tanggal_anchor'])->startOfDay();
-                $ageDays     = $anchor->diffInDays($asOf, false);
+                $ageDays = (int) Carbon::parse($line['tanggal_anchor'])->startOfDay()->diffInDays($asOf, false);
+                $bucket  = $this->classifyBucket($ageDays);
+                $buckets[$bucket] += $line['sisa'];
 
-                if ($ageDays <= 0) {
-                    $buckets['current'] += $line['sisa'];
-                } elseif ($ageDays <= 30) {
-                    $buckets['hari_1_30'] += $line['sisa'];
-                } elseif ($ageDays <= 60) {
-                    $buckets['hari_31_60'] += $line['sisa'];
-                } elseif ($ageDays <= 90) {
-                    $buckets['hari_61_90'] += $line['sisa'];
-                } else {
-                    $buckets['hari_91_plus'] += $line['sisa'];
-                }
+                $umur = $line['tanggal_invoice']
+                    ? (int) Carbon::parse($line['tanggal_invoice'])->startOfDay()->diffInDays($asOf, false)
+                    : null;
+
+                $details[] = [
+                    'no_invoice'          => $line['no_invoice'],
+                    'tanggal_invoice'     => $line['tanggal_invoice'] ? Carbon::parse($line['tanggal_invoice'])->toDateString() : null,
+                    'tanggal_jatuh_tempo' => $line['tanggal_jatuh_tempo'] ? Carbon::parse($line['tanggal_jatuh_tempo'])->toDateString() : null,
+                    'umur_invoice'        => $umur,
+                    'hari_terlambat'      => max(0, $ageDays),
+                    'bucket'              => $bucket,
+                    'total_tagihan'       => $line['total_tagihan'],
+                    'total_pembayaran'    => $line['total_pembayaran'],
+                    'sisa_tagihan'        => $line['sisa'],
+                    'status'              => $line['status'],
+                    'pic_ar'              => $line['pic_ar'],
+                    'perusahaan'          => $line['perusahaan'],
+                ];
             }
 
             $total = array_sum($buckets);
@@ -98,12 +125,14 @@ class AgingReportService
                 'kode_klien'   => $klien?->kode_klien,
                 'nama_klien'   => $klien?->nama_klien,
                 'perusahaan'   => $klien?->perusahaan?->nama_singkatan_perusahaan,
+                'pic_ar'       => $klien?->karyawanAr?->nama_karyawan,
                 'current'      => $buckets['current'],
                 'hari_1_30'    => $buckets['hari_1_30'],
                 'hari_31_60'   => $buckets['hari_31_60'],
                 'hari_61_90'   => $buckets['hari_61_90'],
                 'hari_91_plus' => $buckets['hari_91_plus'],
                 'total'        => $total,
+                'details'      => $details,
             ];
         })->values()->all();
 
@@ -121,6 +150,26 @@ class AgingReportService
             'summary'    => $summary,
             'rows'       => $rows,
         ];
+    }
+
+    private function makeLine($klienArId, $klien, array $data): array
+    {
+        return array_merge([
+            'klien_ar_id' => $klienArId,
+            'klien'       => $klien,
+            'pic_ar'      => $klien?->karyawanAr?->nama_karyawan,
+            'perusahaan'  => $klien?->perusahaan?->nama_singkatan_perusahaan,
+        ], $data);
+    }
+
+    private function classifyBucket(int $ageDays): string
+    {
+        if ($ageDays <= 0)  return 'current';
+        if ($ageDays <= 30) return 'hari_1_30';
+        if ($ageDays <= 60) return 'hari_31_60';
+        if ($ageDays <= 90) return 'hari_61_90';
+
+        return 'hari_91_plus';
     }
 
     private function resolveSegmentTypes(?string $segment): ?array
