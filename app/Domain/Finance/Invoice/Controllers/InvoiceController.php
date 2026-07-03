@@ -172,7 +172,14 @@ class InvoiceController extends Controller
     public function rekapKlien(Request $request): JsonResponse
     {
         $user    = auth()->user();
-        $filters = $request->only(['klien_ar_id', 'periode_bulan', 'periode_tahun']);
+        $request->validate([
+            'klien_ar_id'    => ['nullable', 'integer', 'exists:tb_klien_ar,id'],
+            'periode_bulan'  => ['nullable', 'integer', 'between:1,12'],
+            'periode_tahun'  => ['nullable', 'integer', 'between:2000,2100'],
+            'segment'        => ['nullable', 'in:B2B,B2C,ALL'],
+        ]);
+
+        $filters = $request->only(['klien_ar_id', 'periode_bulan', 'periode_tahun', 'segment']);
         ArFilterScope::apply($filters, $user);
 
         return $this->successResponse($this->service->getRekapKlien($filters));

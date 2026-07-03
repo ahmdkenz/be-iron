@@ -23,68 +23,68 @@ class MutasiPiutangService
 
         $klienFilter  = $filters['klien_ar_id'] ?? null;
         $segmentTypes = $this->resolveSegmentTypes($filters['segment'] ?? null);
+        $perusahaanFilter = $filters['perusahaan_id'] ?? null;
+        $picArFilter      = $filters['pic_ar_karyawan_id'] ?? null;
 
         // Invoice masuk dalam periode (per klien)
         $invoiceMasukQuery = Invoice::query()
-            ->select('klien_ar_id', DB::raw('SUM(total_tagihan) as invoice_masuk'))
-            ->whereBetween('tanggal_invoice', [$from->toDateString(), $to->toDateString()])
-            ->where(fn($q) => $q
-                ->where('is_opening_balance', false)
-                ->orWhere(fn($q2) => $q2->where('is_opening_balance', true)->where('approval_status', 'APPROVED'))
+            ->select(
+                'klien_ar_id',
+                DB::raw('SUM(CASE WHEN subtotal = 0 THEN total_tagihan ELSE subtotal END) as invoice_masuk'),
+                DB::raw('COUNT(*) as jumlah_invoice_masuk')
             )
+            ->whereBetween('tanggal_invoice', [$from->toDateString(), $to->toDateString()])
+            ->where(fn($q) => $this->approvedInvoiceScope($q))
             ->when($klienFilter, fn($q) => $q->where('klien_ar_id', $klienFilter))
+            ->when($perusahaanFilter, fn($q) => $q->where('perusahaan_id', $perusahaanFilter))
             ->when($segmentTypes, fn($q) => $q->whereHas('klienAr', fn($q) => $q->whereIn('tipe_klien', $segmentTypes)))
+            ->when($picArFilter, fn($q) => $q->whereHas('klienAr', fn($q) => $q->where('karyawan_ar_id', $picArFilter)))
             ->groupBy('klien_ar_id')
-            ->pluck('invoice_masuk', 'klien_ar_id');
+            ->get()
+            ->keyBy('klien_ar_id');
 
         // Pembayaran dalam periode (per klien via join invoice)
         $pembayaranQuery = PembayaranAr::query()
             ->join('tb_invoice', 'tb_pembayaran_ar.invoice_id', '=', 'tb_invoice.id')
             ->join('tb_klien_ar', 'tb_invoice.klien_ar_id', '=', 'tb_klien_ar.id')
-            ->select('tb_invoice.klien_ar_id', DB::raw('SUM(tb_pembayaran_ar.jumlah_pembayaran) as pembayaran'))
+            ->select(
+                'tb_invoice.klien_ar_id',
+                DB::raw('SUM(tb_pembayaran_ar.jumlah_pembayaran) as pembayaran'),
+                DB::raw('COUNT(tb_pembayaran_ar.id) as jumlah_pembayaran')
+            )
             ->whereBetween('tb_pembayaran_ar.tanggal_pembayaran', [$from->toDateString(), $to->toDateString()])
             ->when($klienFilter, fn($q) => $q->where('tb_invoice.klien_ar_id', $klienFilter))
+            ->when($perusahaanFilter, fn($q) => $q->where('tb_invoice.perusahaan_id', $perusahaanFilter))
             ->when($segmentTypes, fn($q) => $q->whereIn('tb_klien_ar.tipe_klien', $segmentTypes))
+            ->when($picArFilter, fn($q) => $q->where('tb_klien_ar.karyawan_ar_id', $picArFilter))
             ->groupBy('tb_invoice.klien_ar_id')
-            ->pluck('pembayaran', 'klien_ar_id');
+            ->get()
+            ->keyBy('klien_ar_id');
 
-        // Total tagihan sebelum periode (saldo awal part 1)
-        $tagihanSebelumQuery = Invoice::query()
-            ->select('klien_ar_id', DB::raw('SUM(total_tagihan) as total_tagihan'))
-            ->where('tanggal_invoice', '<', $from->toDateString())
-            ->where(fn($q) => $q
-                ->where('is_opening_balance', false)
-                ->orWhere(fn($q2) => $q2->where('is_opening_balance', true)->where('approval_status', 'APPROVED'))
+        // Saldo awal fallback: outstanding invoice historis sebelum periode.
+        $saldoAwalFallback = Invoice::query()
+            ->select(
+                'klien_ar_id',
+                DB::raw('COALESCE(SUM(GREATEST(0, CASE WHEN subtotal = 0 THEN sisa_tagihan ELSE subtotal - total_pembayaran - COALESCE(total_penyesuaian, 0) END)), 0) as saldo_awal')
             )
+            ->where('tanggal_invoice', '<', $from->toDateString())
+            ->where(fn($q) => $this->approvedInvoiceScope($q))
             ->when($klienFilter, fn($q) => $q->where('klien_ar_id', $klienFilter))
+            ->when($perusahaanFilter, fn($q) => $q->where('perusahaan_id', $perusahaanFilter))
             ->when($segmentTypes, fn($q) => $q->whereHas('klienAr', fn($q) => $q->whereIn('tipe_klien', $segmentTypes)))
+            ->when($picArFilter, fn($q) => $q->whereHas('klienAr', fn($q) => $q->where('karyawan_ar_id', $picArFilter)))
             ->groupBy('klien_ar_id')
-            ->pluck('total_tagihan', 'klien_ar_id');
-
-        // Total pembayaran sebelum periode (saldo awal part 2)
-        $pembayaranSebelumQuery = PembayaranAr::query()
-            ->join('tb_invoice', 'tb_pembayaran_ar.invoice_id', '=', 'tb_invoice.id')
-            ->join('tb_klien_ar', 'tb_invoice.klien_ar_id', '=', 'tb_klien_ar.id')
-            ->select('tb_invoice.klien_ar_id', DB::raw('SUM(tb_pembayaran_ar.jumlah_pembayaran) as pembayaran'))
-            ->where('tb_pembayaran_ar.tanggal_pembayaran', '<', $from->toDateString())
-            ->when($klienFilter, fn($q) => $q->where('tb_invoice.klien_ar_id', $klienFilter))
-            ->when($segmentTypes, fn($q) => $q->whereIn('tb_klien_ar.tipe_klien', $segmentTypes))
-            ->groupBy('tb_invoice.klien_ar_id')
-            ->pluck('pembayaran', 'klien_ar_id');
+            ->pluck('saldo_awal', 'klien_ar_id');
 
         // Cek apakah ada EB LOCKED tepat sebelum periode ini (carry-forward snapshot)
         $ebSnapshot = EndingBalance::query()
             ->select('klien_ar_id', 'saldo_akhir_final')
             ->where('status', 'LOCKED')
             ->where('periode_akhir', '<', $from->toDateString())
-            ->whereIn('klien_ar_id', function ($sub) use ($from, $to, $klienFilter) {
-                $sub->select('klien_ar_id')->from('tb_ending_balance')
-                    ->where('status', 'LOCKED')
-                    ->where('periode_akhir', '<', $from->toDateString());
-                if ($klienFilter) {
-                    $sub->where('klien_ar_id', $klienFilter);
-                }
-            })
+            ->when($klienFilter, fn($q) => $q->where('klien_ar_id', $klienFilter))
+            ->when($segmentTypes, fn($q) => $q->whereHas('klienAr', fn($q) => $q->whereIn('tipe_klien', $segmentTypes)))
+            ->when($perusahaanFilter, fn($q) => $q->whereHas('klienAr', fn($q) => $q->where('perusahaan_id', $perusahaanFilter)))
+            ->when($picArFilter, fn($q) => $q->whereHas('klienAr', fn($q) => $q->where('karyawan_ar_id', $picArFilter)))
             ->orderByDesc('periode_akhir')
             ->get()
             ->unique('klien_ar_id')          // ambil EB paling akhir per klien
@@ -94,8 +94,7 @@ class MutasiPiutangService
         $klienIds = collect([
             $invoiceMasukQuery->keys(),
             $pembayaranQuery->keys(),
-            $tagihanSebelumQuery->keys(),
-            $pembayaranSebelumQuery->keys(),
+            $saldoAwalFallback->keys(),
             $ebSnapshot->keys(),
         ])->flatten()->unique()->values();
 
@@ -108,40 +107,91 @@ class MutasiPiutangService
             ];
         }
 
-        $klienMap = KlienAr::with('perusahaan')
+        $klienMap = KlienAr::with(['perusahaan', 'karyawanAr'])
             ->whereIn('id', $klienIds)
             ->get()
             ->keyBy('id');
 
+        $invoiceDetails = Invoice::query()
+            ->whereIn('klien_ar_id', $klienIds)
+            ->whereBetween('tanggal_invoice', [$from->toDateString(), $to->toDateString()])
+            ->where(fn($q) => $this->approvedInvoiceScope($q))
+            ->when($perusahaanFilter, fn($q) => $q->where('perusahaan_id', $perusahaanFilter))
+            ->get([
+                'id',
+                'klien_ar_id',
+                'no_invoice',
+                'tanggal_invoice',
+                'tanggal_jatuh_tempo',
+                'subtotal',
+                'total_tagihan',
+                'total_pembayaran',
+                'total_penyesuaian',
+                'sisa_tagihan',
+                'status',
+            ])
+            ->groupBy('klien_ar_id');
+
+        $paymentDetails = PembayaranAr::query()
+            ->join('tb_invoice', 'tb_pembayaran_ar.invoice_id', '=', 'tb_invoice.id')
+            ->join('tb_klien_ar', 'tb_invoice.klien_ar_id', '=', 'tb_klien_ar.id')
+            ->whereIn('tb_invoice.klien_ar_id', $klienIds)
+            ->whereBetween('tb_pembayaran_ar.tanggal_pembayaran', [$from->toDateString(), $to->toDateString()])
+            ->when($perusahaanFilter, fn($q) => $q->where('tb_invoice.perusahaan_id', $perusahaanFilter))
+            ->when($picArFilter, fn($q) => $q->where('tb_klien_ar.karyawan_ar_id', $picArFilter))
+            ->get([
+                'tb_pembayaran_ar.id',
+                'tb_invoice.klien_ar_id',
+                'tb_invoice.no_invoice',
+                'tb_pembayaran_ar.invoice_id',
+                'tb_pembayaran_ar.tanggal_pembayaran',
+                'tb_pembayaran_ar.jumlah_pembayaran',
+                'tb_pembayaran_ar.metode_pembayaran',
+                'tb_pembayaran_ar.no_referensi',
+                'tb_pembayaran_ar.keterangan',
+            ])
+            ->groupBy('klien_ar_id');
+
         $rows = $klienIds->map(function ($klienId) use (
             $invoiceMasukQuery, $pembayaranQuery,
-            $tagihanSebelumQuery, $pembayaranSebelumQuery,
-            $ebSnapshot, $klienMap
+            $saldoAwalFallback, $ebSnapshot, $klienMap,
+            $invoiceDetails, $paymentDetails, $from
         ) {
             $klien        = $klienMap->get($klienId);
-            $invoiceMasuk = (float) ($invoiceMasukQuery[$klienId] ?? 0);
-            $pembayaran   = (float) ($pembayaranQuery[$klienId] ?? 0);
+            $invoiceStat  = $invoiceMasukQuery->get($klienId);
+            $paymentStat  = $pembayaranQuery->get($klienId);
+            $invoiceMasuk = (float) ($invoiceStat?->invoice_masuk ?? 0);
+            $pembayaran   = (float) ($paymentStat?->pembayaran ?? 0);
 
             // Gunakan EB snapshot jika ada, fallback ke compute all-time
             if (isset($ebSnapshot[$klienId])) {
                 $saldoAwal = (float) $ebSnapshot[$klienId];
             } else {
-                $tagihanSebelum = (float) ($tagihanSebelumQuery[$klienId] ?? 0);
-                $bayarSebelum   = (float) ($pembayaranSebelumQuery[$klienId] ?? 0);
-                $saldoAwal      = $tagihanSebelum - $bayarSebelum;
+                $saldoAwal = (float) ($saldoAwalFallback[$klienId] ?? 0);
             }
 
             $saldoAkhir  = $saldoAwal + $invoiceMasuk - $pembayaran;
+            $details     = $this->buildLedgerDetails(
+                $from->toDateString(),
+                max(0, $saldoAwal),
+                $invoiceDetails->get($klienId, collect()),
+                $paymentDetails->get($klienId, collect())
+            );
 
             return [
                 'klien_id'      => $klienId,
                 'kode_klien'    => $klien?->kode_klien,
                 'nama_klien'    => $klien?->nama_klien,
+                'tipe_klien'    => $klien?->tipe_klien,
                 'perusahaan'    => $klien?->perusahaan?->nama_singkatan_perusahaan,
+                'pic_ar'        => $klien?->karyawanAr?->nama_karyawan,
                 'saldo_awal'    => max(0, $saldoAwal),
                 'invoice_masuk' => $invoiceMasuk,
                 'pembayaran'    => $pembayaran,
                 'saldo_akhir'   => max(0, $saldoAkhir),
+                'jumlah_invoice_masuk' => (int) ($invoiceStat?->jumlah_invoice_masuk ?? 0),
+                'jumlah_pembayaran'     => (int) ($paymentStat?->jumlah_pembayaran ?? 0),
+                'details'       => $details,
             ];
         })->sortBy('nama_klien')->values()->all();
 
@@ -158,6 +208,89 @@ class MutasiPiutangService
             'summary'       => $summary,
             'rows'          => $rows,
         ];
+    }
+
+    private function approvedInvoiceScope($query): void
+    {
+        $query
+            ->where('is_opening_balance', false)
+            ->orWhere(fn($q) => $q->where('is_opening_balance', true)->where('approval_status', 'APPROVED'));
+    }
+
+    private function buildLedgerDetails(string $periodStart, float $saldoAwal, $invoices, $payments): array
+    {
+        $events = collect([[
+            'tanggal'    => $periodStart,
+            'tipe'       => 'SALDO_AWAL',
+            'label'      => 'Saldo Awal',
+            'no_dokumen' => 'Saldo Awal',
+            'debit'      => 0,
+            'kredit'     => 0,
+            'keterangan' => 'Saldo awal periode',
+            'sort_order' => 0,
+            'id'         => 0,
+        ]]);
+
+        foreach ($invoices as $invoice) {
+            $nominal = (float) ($invoice->subtotal == 0 ? $invoice->total_tagihan : $invoice->subtotal);
+            $events->push([
+                'tanggal'       => $invoice->tanggal_invoice?->toDateString(),
+                'tipe'          => 'INVOICE',
+                'label'         => 'Invoice',
+                'invoice_id'    => $invoice->id,
+                'no_dokumen'    => $invoice->no_invoice,
+                'no_invoice'    => $invoice->no_invoice,
+                'debit'         => $nominal,
+                'kredit'        => 0,
+                'tanggal_jatuh_tempo' => $invoice->tanggal_jatuh_tempo?->toDateString(),
+                'status'        => $invoice->status,
+                'sisa_tagihan'  => (float) $invoice->sisa_tagihan,
+                'keterangan'    => 'Invoice masuk',
+                'sort_order'    => 1,
+                'id'            => $invoice->id,
+            ]);
+        }
+
+        foreach ($payments as $payment) {
+            $events->push([
+                'tanggal'       => $payment->tanggal_pembayaran?->toDateString(),
+                'tipe'          => 'PEMBAYARAN',
+                'label'         => 'Pembayaran',
+                'pembayaran_id' => $payment->id,
+                'invoice_id'    => $payment->invoice_id,
+                'no_dokumen'    => $payment->no_referensi ?: $payment->no_invoice,
+                'no_invoice'    => $payment->no_invoice,
+                'debit'         => 0,
+                'kredit'        => (float) $payment->jumlah_pembayaran,
+                'metode'        => $payment->metode_pembayaran,
+                'keterangan'    => $payment->keterangan,
+                'sort_order'    => 2,
+                'id'            => $payment->id,
+            ]);
+        }
+
+        $running = $saldoAwal;
+
+        return $events
+            ->sortBy(fn($event) => sprintf(
+                '%s-%02d-%010d',
+                $event['tanggal'] ?? $periodStart,
+                $event['sort_order'],
+                $event['id']
+            ))
+            ->values()
+            ->map(function ($event) use (&$running) {
+                if ($event['tipe'] !== 'SALDO_AWAL') {
+                    $running = max(0, $running + (float) $event['debit'] - (float) $event['kredit']);
+                }
+
+                unset($event['sort_order']);
+                $event['saldo'] = $running;
+
+                return $event;
+            })
+            ->values()
+            ->all();
     }
 
     private function resolveSegmentTypes(?string $segment): ?array

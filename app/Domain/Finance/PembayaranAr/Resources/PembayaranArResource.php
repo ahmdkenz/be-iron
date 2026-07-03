@@ -19,12 +19,27 @@ class PembayaranArResource extends JsonResource
 
     public function toArray(Request $request): array
     {
+        $bankDetail = $this->relationLoaded('bankStatementDetail') ? $this->bankStatementDetail : null;
+        if (!$bankDetail && $this->relationLoaded('sumberPembayaran')) {
+            $bankDetail = $this->sumberPembayaran?->bankStatementDetail;
+        }
+
         return [
             'id'                    => $this->id,
             'invoice_id'            => $this->invoice_id,
             'no_invoice'            => $this->whenLoaded('invoice', fn() => $this->invoice?->no_invoice),
+            'tanggal_invoice'       => $this->whenLoaded('invoice', fn() => $this->invoice?->tanggal_invoice?->format('d-m-Y')),
+            'tanggal_jatuh_tempo'   => $this->whenLoaded('invoice', fn() => $this->invoice?->tanggal_jatuh_tempo?->format('d-m-Y')),
+            'invoice_status'        => $this->whenLoaded('invoice', fn() => $this->invoice?->status),
+            'total_tagihan'         => $this->whenLoaded('invoice', fn() => (float) ($this->invoice?->total_tagihan ?? 0)),
+            'total_pembayaran_invoice' => $this->whenLoaded('invoice', fn() => (float) ($this->invoice?->total_pembayaran ?? 0)),
+            'sisa_tagihan'          => $this->whenLoaded('invoice', fn() => (float) ($this->invoice?->sisa_tagihan ?? 0)),
+            'klien_ar_id'           => $this->whenLoaded('invoice', fn() => $this->invoice?->klien_ar_id),
+            'kode_klien'            => $this->whenLoaded('invoice', fn() => $this->invoice?->klienAr?->kode_klien),
             'klien'                 => $this->whenLoaded('invoice', fn() => $this->invoice?->klienAr?->nama_klien),
+            'tipe_klien'            => $this->whenLoaded('invoice', fn() => $this->invoice?->klienAr?->tipe_klien),
             'perusahaan'            => $this->whenLoaded('invoice', fn() => $this->invoice?->perusahaan?->nama_singkatan_perusahaan),
+            'pic_ar'                => $this->whenLoaded('invoice', fn() => $this->invoice?->karyawan?->nama_karyawan),
             'tanggal_pembayaran'    => $this->tanggal_pembayaran?->format('d-m-Y'),
             'jumlah_pembayaran'     => (float) $this->jumlah_pembayaran,
             'metode_pembayaran'     => $this->metode_pembayaran,
@@ -39,6 +54,10 @@ class PembayaranArResource extends JsonResource
             'bukti_gdrive_url'      => $this->bukti_gdrive_file_id
                 ? 'https://drive.google.com/file/d/' . $this->bukti_gdrive_file_id . '/view'
                 : null,
+            'status_rekonsiliasi'   => $bankDetail?->status_cocok,
+            'tanggal_rekonsiliasi'  => $bankDetail?->tanggal?->format('d-m-Y'),
+            'no_ref_bank'           => $bankDetail?->no_referensi,
+            'nominal_bank'          => $bankDetail ? (float) $bankDetail->kredit : null,
             'created_by'            => $this->created_by,
             'created_by_name'       => $this->whenLoaded('createdBy', fn() => $this->createdBy?->karyawan?->nama_karyawan ?? $this->createdBy?->username),
             'created_at'            => $this->created_at?->format('d-m-Y H:i'),

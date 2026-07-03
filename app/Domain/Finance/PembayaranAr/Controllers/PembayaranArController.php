@@ -34,7 +34,14 @@ class PembayaranArController extends Controller
             default => null,
         };
 
-        $query = PembayaranAr::with(['invoice.klienAr', 'invoice.perusahaan', 'createdBy.karyawan'])
+        $query = PembayaranAr::with([
+            'invoice.klienAr',
+            'invoice.perusahaan',
+            'invoice.karyawan',
+            'createdBy.karyawan',
+            'bankStatementDetail',
+            'sumberPembayaran.bankStatementDetail',
+        ])
             ->when($request->klien_ar_id, fn($q, $v) =>
                 $q->whereHas('invoice', fn($q) => $q->where('klien_ar_id', $v))
             )

@@ -4,6 +4,7 @@ namespace App\Domain\Finance\MutasiPiutang\Controllers;
 
 use App\Domain\Finance\MutasiPiutang\Services\MutasiPiutangService;
 use App\Http\Controllers\Controller;
+use App\Support\Helpers\ArFilterScope;
 use App\Support\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -30,9 +31,10 @@ class MutasiPiutangController extends Controller
             'segment'       => ['nullable', 'in:B2B,B2C,ALL'],
         ]);
 
-        $report = $this->service->getReport(
-            $request->only(['periode_awal', 'periode_akhir', 'klien_ar_id', 'segment'])
-        );
+        $filters = $request->only(['periode_awal', 'periode_akhir', 'klien_ar_id', 'segment']);
+        ArFilterScope::apply($filters, $request->user());
+
+        $report = $this->service->getReport($filters);
 
         return $this->successResponse($report);
     }
@@ -50,9 +52,10 @@ class MutasiPiutangController extends Controller
             'segment'       => ['nullable', 'in:B2B,B2C,ALL'],
         ]);
 
-        $report = $this->service->getReport(
-            $request->only(['periode_awal', 'periode_akhir', 'klien_ar_id', 'segment'])
-        );
+        $filters = $request->only(['periode_awal', 'periode_akhir', 'klien_ar_id', 'segment']);
+        ArFilterScope::apply($filters, $request->user());
+
+        $report = $this->service->getReport($filters);
 
         $spreadsheet = new Spreadsheet();
         $sheet       = $spreadsheet->getActiveSheet();
@@ -144,6 +147,59 @@ class MutasiPiutangController extends Controller
         $sheet->getRowDimension($rowNum)->setRowHeight(20);
 
         $sheet->freezePane('A5');
+
+        $detailSheet = $spreadsheet->createSheet();
+        $detailSheet->setTitle('Detail Mutasi');
+        $detailCols = [
+            'A' => ['No',          5],
+            'B' => ['Kode Klien', 16],
+            'C' => ['Nama Klien', 30],
+            'D' => ['Tanggal',    14],
+            'E' => ['Tipe',       14],
+            'F' => ['Dokumen',    24],
+            'G' => ['Invoice',    22],
+            'H' => ['Debit',      18],
+            'I' => ['Kredit',     18],
+            'J' => ['Saldo',      18],
+            'K' => ['Keterangan', 32],
+        ];
+
+        foreach ($detailCols as $col => [$label, $width]) {
+            $detailSheet->setCellValue("{$col}1", $label);
+            $detailSheet->getColumnDimension($col)->setWidth($width);
+        }
+
+        $detailSheet->getStyle('A1:K1')->applyFromArray([
+            'font'      => ['bold' => true, 'size' => 10, 'color' => ['argb' => 'FFFFFFFF']],
+            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF512DA8']],
+            'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
+            'borders'   => ['allBorders' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FF4527A0']]],
+        ]);
+
+        $detailRow = 2;
+        $detailNo  = 1;
+        foreach ($report['rows'] as $row) {
+            foreach (($row['details'] ?? []) as $detail) {
+                $detailSheet->getCell("A{$detailRow}")->setValueExplicit($detailNo++, DataType::TYPE_NUMERIC);
+                $detailSheet->getCell("B{$detailRow}")->setValueExplicit($row['kode_klien'] ?? '', DataType::TYPE_STRING);
+                $detailSheet->getCell("C{$detailRow}")->setValueExplicit($row['nama_klien'] ?? '', DataType::TYPE_STRING);
+                $detailSheet->getCell("D{$detailRow}")->setValueExplicit($detail['tanggal'] ?? '', DataType::TYPE_STRING);
+                $detailSheet->getCell("E{$detailRow}")->setValueExplicit($detail['label'] ?? $detail['tipe'] ?? '', DataType::TYPE_STRING);
+                $detailSheet->getCell("F{$detailRow}")->setValueExplicit($detail['no_dokumen'] ?? '', DataType::TYPE_STRING);
+                $detailSheet->getCell("G{$detailRow}")->setValueExplicit($detail['no_invoice'] ?? '', DataType::TYPE_STRING);
+
+                foreach (['debit' => 'H', 'kredit' => 'I', 'saldo' => 'J'] as $field => $col) {
+                    $detailSheet->getCell("{$col}{$detailRow}")->setValueExplicit((float) ($detail[$field] ?? 0), DataType::TYPE_NUMERIC);
+                    $detailSheet->getStyle("{$col}{$detailRow}")->getNumberFormat()->setFormatCode('#,##0');
+                }
+
+                $detailSheet->getCell("K{$detailRow}")->setValueExplicit($detail['keterangan'] ?? '', DataType::TYPE_STRING);
+                $detailRow++;
+            }
+        }
+
+        $detailSheet->freezePane('A2');
+        $spreadsheet->setActiveSheetIndex(0);
 
         $temp = tempnam(sys_get_temp_dir(), 'mp_') . '.xlsx';
         (new XlsxWriter($spreadsheet))->save($temp);

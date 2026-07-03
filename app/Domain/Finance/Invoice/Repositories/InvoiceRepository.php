@@ -3,6 +3,7 @@
 namespace App\Domain\Finance\Invoice\Repositories;
 
 use App\Models\Invoice;
+use App\Models\PembayaranAr;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
@@ -122,32 +123,76 @@ class InvoiceRepository
 
     public function getRekapKlien(array $filters = []): array
     {
-        $rows = $this->applyFilters(Invoice::query()->with('klienAr.perusahaan'), $filters)
+        $today = now()->toDateString();
+
+        $rows = $this->applyFilters(Invoice::query()->with(['klienAr.perusahaan', 'klienAr.karyawanAr']), $filters)
             ->selectRaw('
                 klien_ar_id,
                 COUNT(*) as total_invoice,
                 COALESCE(SUM(total_tagihan), 0) as total_tagihan,
                 COALESCE(SUM(total_pembayaran), 0) as total_pembayaran,
                 COALESCE(SUM(sisa_tagihan), 0) as sisa_tagihan,
+                SUM(CASE WHEN sisa_tagihan > 0 THEN 1 ELSE 0 END) as outstanding_invoice,
+                SUM(CASE WHEN sisa_tagihan > 0 AND tanggal_jatuh_tempo IS NOT NULL AND tanggal_jatuh_tempo < ? THEN 1 ELSE 0 END) as overdue_invoice,
+                COALESCE(SUM(CASE WHEN sisa_tagihan > 0 AND tanggal_jatuh_tempo IS NOT NULL AND tanggal_jatuh_tempo < ? THEN sisa_tagihan ELSE 0 END), 0) as overdue_amount,
+                MIN(CASE WHEN sisa_tagihan > 0 THEN tanggal_invoice ELSE NULL END) as invoice_tertua_tanggal,
+                MIN(CASE WHEN sisa_tagihan > 0 THEN tanggal_jatuh_tempo ELSE NULL END) as jatuh_tempo_terdekat,
                 SUM(CASE WHEN status = "DRAFT"    THEN 1 ELSE 0 END) as draft,
                 SUM(CASE WHEN status = "TERKIRIM" THEN 1 ELSE 0 END) as terkirim,
                 SUM(CASE WHEN status = "SEBAGIAN" THEN 1 ELSE 0 END) as sebagian,
                 SUM(CASE WHEN status = "LUNAS"    THEN 1 ELSE 0 END) as lunas
-            ')
+            ', [$today, $today])
             ->groupBy('klien_ar_id')
             ->get();
 
-        return $rows->map(function ($row) {
-            $klien = $row->klienAr;
+        $klienIds = $rows->pluck('klien_ar_id')->filter()->values();
+
+        $lastPayments = $klienIds->isEmpty()
+            ? collect()
+            : PembayaranAr::query()
+                ->join('tb_invoice', 'tb_pembayaran_ar.invoice_id', '=', 'tb_invoice.id')
+                ->whereIn('tb_invoice.klien_ar_id', $klienIds)
+                ->select(
+                    'tb_invoice.klien_ar_id',
+                    'tb_pembayaran_ar.tanggal_pembayaran',
+                    'tb_pembayaran_ar.jumlah_pembayaran',
+                    'tb_pembayaran_ar.metode_pembayaran',
+                    'tb_pembayaran_ar.no_referensi',
+                )
+                ->orderBy('tb_invoice.klien_ar_id')
+                ->orderByDesc('tb_pembayaran_ar.tanggal_pembayaran')
+                ->orderByDesc('tb_pembayaran_ar.id')
+                ->get()
+                ->unique('klien_ar_id')
+                ->keyBy('klien_ar_id');
+
+        return $rows->map(function ($row) use ($lastPayments) {
+            $klien       = $row->klienAr;
+            $lastPayment = $lastPayments->get($row->klien_ar_id);
+            $totalTagih  = (float) $row->total_tagihan;
+            $totalBayar  = (float) $row->total_pembayaran;
+
             return [
                 'klien_id'        => $klien?->id,
                 'kode_klien'      => $klien?->kode_klien,
                 'nama_klien'      => $klien?->nama_klien,
+                'tipe_klien'      => $klien?->tipe_klien,
                 'perusahaan'      => $klien?->perusahaan?->nama_singkatan_perusahaan,
+                'pic_ar'          => $klien?->karyawanAr?->nama_karyawan,
                 'total_invoice'   => (int) $row->total_invoice,
-                'total_tagihan'   => (float) $row->total_tagihan,
-                'total_pembayaran'=> (float) $row->total_pembayaran,
+                'total_tagihan'   => $totalTagih,
+                'total_pembayaran'=> $totalBayar,
                 'sisa_tagihan'    => (float) $row->sisa_tagihan,
+                'collection_rate'  => $totalTagih > 0 ? round(($totalBayar / $totalTagih) * 100, 2) : 0,
+                'outstanding_invoice'     => (int) $row->outstanding_invoice,
+                'overdue_invoice'         => (int) $row->overdue_invoice,
+                'overdue_amount'          => (float) $row->overdue_amount,
+                'invoice_tertua_tanggal'  => $row->invoice_tertua_tanggal,
+                'jatuh_tempo_terdekat'    => $row->jatuh_tempo_terdekat,
+                'pembayaran_terakhir_tanggal' => $lastPayment?->tanggal_pembayaran?->format('Y-m-d'),
+                'pembayaran_terakhir_nominal' => $lastPayment ? (float) $lastPayment->jumlah_pembayaran : 0,
+                'pembayaran_terakhir_metode'  => $lastPayment?->metode_pembayaran,
+                'pembayaran_terakhir_ref'     => $lastPayment?->no_referensi,
                 'draft'           => (int) $row->draft,
                 'terkirim'        => (int) $row->terkirim,
                 'sebagian'        => (int) $row->sebagian,
@@ -177,6 +222,12 @@ class InvoiceRepository
             )
             ->when($filters['status'] ?? null, fn($q, $v) => $q->where('status', $v))
             ->when($filters['approval_status'] ?? null, fn($q, $v) => $q->where('approval_status', $v))
+            ->when($filters['periode_bulan'] ?? null, fn($q, $v) =>
+                $q->whereMonth('tanggal_invoice', (int) $v)
+            )
+            ->when($filters['periode_tahun'] ?? null, fn($q, $v) =>
+                $q->whereYear('tanggal_invoice', (int) $v)
+            )
             ->when($filters['tanggal_dari'] ?? null, fn($q, $v) =>
                 $q->where('tanggal_invoice', '>=', $v)
             )
