@@ -75,7 +75,7 @@ class EndingBalanceKoreksiController extends Controller
 
         return $this->createdResponse(
             $this->formatKoreksi($koreksi),
-            'Koreksi berhasil diajukan dan menunggu persetujuan SPV.'
+            'Koreksi berhasil diajukan dan menunggu persetujuan Manager/Supervisor.'
         );
     }
 
@@ -171,7 +171,7 @@ class EndingBalanceKoreksiController extends Controller
 
         return $this->successResponse(
             $this->formatKoreksi($updated),
-            'Koreksi disetujui oleh Manager. Saldo akhir final telah diperbarui.'
+            'Koreksi disetujui. Saldo akhir final telah diperbarui.'
         );
     }
 
@@ -188,7 +188,7 @@ class EndingBalanceKoreksiController extends Controller
 
         return $this->successResponse(
             $this->formatKoreksi($updated),
-            'Koreksi ditolak oleh Manager.'
+            'Koreksi ditolak.'
         );
     }
 
@@ -199,7 +199,7 @@ class EndingBalanceKoreksiController extends Controller
     {
         $user  = auth()->user();
         $roles = $user->getRoleNames()->map(fn($r) => strtoupper($r));
-        $role  = $roles->first(fn($r) => in_array($r, ['SUPERVISOR', 'MANAGER']));
+        $role  = $roles->first(fn($r) => in_array($r, ['MANAGER', 'SUPERVISOR', 'ADMIN']));
 
         $list = $this->service->pendingForUser($role ?? '');
 
@@ -351,7 +351,7 @@ class EndingBalanceKoreksiController extends Controller
     {
         abort_if(
             !RoleHelper::canApproveEndingBalanceManager(auth()->user()),
-            403, 'Hanya Manager yang dapat melakukan aksi ini.'
+            403, 'Hanya Manager/Supervisor yang dapat melakukan aksi ini.'
         );
     }
 }

@@ -82,7 +82,7 @@ class RoleHelper
 
     public static function canApproveOpeningBalance(?User $user): bool
     {
-        return self::hasRole($user, RoleEnum::MANAGER);
+        return self::hasAnyRole($user, [RoleEnum::MANAGER, RoleEnum::SUPERVISOR]);
     }
 
     public static function canViewEndingBalance(?User $user): bool
@@ -119,9 +119,13 @@ class RoleHelper
         return self::hasAnyRole($user, [RoleEnum::ADMIN, RoleEnum::SUPERVISOR]);
     }
 
+    /**
+     * Approver final koreksi Ending Balance (satu tahap).
+     * Supervisor dibuat setara Manager, Admin tetap mengikuti behavior existing.
+     */
     public static function canApproveEndingBalanceManager(?User $user): bool
     {
-        return self::hasAnyRole($user, [RoleEnum::ADMIN, RoleEnum::MANAGER]);
+        return self::hasAnyRole($user, [RoleEnum::ADMIN, RoleEnum::MANAGER, RoleEnum::SUPERVISOR]);
     }
 
     public static function canAccessArDashboard(?User $user): bool

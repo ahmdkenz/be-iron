@@ -26,7 +26,8 @@ class EndingBalanceKoreksiService
      *  - DEBIT_NOTE        : penambahan tagihan per-invoice → nilai_koreksi > 0
      *  - KOREKSI_QTY_HARGA : koreksi qty/harga per item invoice → nilai_koreksi = SUM(selisih)
      *
-     * Semua tipe selalu membutuhkan approval SPV → Manager.
+     * Semua tipe langsung masuk pending final approval (PENDING_MANAGER),
+     * yang dapat diproses oleh Manager atau Supervisor (satu tahap).
      */
     public function submit(EndingBalance $eb, array $data, int $userId): EndingBalanceKoreksi
     {
@@ -57,7 +58,7 @@ class EndingBalanceKoreksiService
                 'nilai_koreksi'     => $nilaiKoreksi,
                 'alasan_koreksi'    => $data['alasan_koreksi'],
                 'dokumen_url'       => $data['dokumen_url'] ?? null,
-                'status'            => 'PENDING_SPV',
+                'status'            => 'PENDING_MANAGER',
                 'submitted_by'      => $userId,
                 'submitted_at'      => now(),
                 'updated_by'        => $userId,
@@ -108,7 +109,8 @@ class EndingBalanceKoreksiService
     }
 
     /**
-     * Manager approves the correction → APPROVED, triggers recompute of saldo_akhir_final.
+     * Approver (Manager/Supervisor/Admin) menyetujui koreksi → APPROVED,
+     * memicu recompute saldo_akhir_final. Data approver disimpan di kolom manager_* existing.
      */
     public function approveManager(EndingBalanceKoreksi $koreksi, ?string $note, int $managerId): EndingBalanceKoreksi
     {
@@ -132,7 +134,7 @@ class EndingBalanceKoreksiService
     }
 
     /**
-     * Manager rejects the correction.
+     * Approver (Manager/Supervisor/Admin) menolak koreksi.
      */
     public function rejectManager(EndingBalanceKoreksi $koreksi, string $note, int $managerId): EndingBalanceKoreksi
     {
@@ -151,21 +153,20 @@ class EndingBalanceKoreksiService
 
     /**
      * List corrections pending action for the currently authenticated user.
+     *
+     * Approval EB kini satu tahap: koreksi menunggu di status PENDING_MANAGER dan
+     * bisa diproses oleh Manager, Supervisor, maupun Admin. AR tidak melihat inbox ini.
      */
     public function pendingForUser(string $role): \Illuminate\Database\Eloquent\Collection
     {
-        $status = match(strtoupper($role)) {
-            'SUPERVISOR' => 'PENDING_SPV',
-            'MANAGER'    => 'PENDING_MANAGER',
-            default      => null,
-        };
+        $canApprove = in_array(strtoupper($role), ['MANAGER', 'SUPERVISOR', 'ADMIN'], true);
 
-        if (!$status) {
+        if (!$canApprove) {
             return EndingBalanceKoreksi::newModelInstance()->newCollection();
         }
 
         return EndingBalanceKoreksi::with(['endingBalance.klienAr', 'submittedBy', 'invoice', 'items'])
-            ->where('status', $status)
+            ->where('status', 'PENDING_MANAGER')
             ->orderBy('submitted_at')
             ->get();
     }
