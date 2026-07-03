@@ -318,9 +318,9 @@ class MasterImportService
                 if ($namaCabang !== '' && in_array($tipeKlien, ['PT', 'RESTO'])) {
                     $namaPicAr      = $this->importValue($col($row, 'pic_ar'));
                     $namaEntitasKli = $this->importValue($col($row, 'nama_entitas')) ?? '';
-                    // no_npwp & no_wa hanya ada di template lama — fallback jika kolom tidak ada = null
-                    $noNpwp         = $this->importValue($col($row, 'no_npwp'));
-                    $noWa           = $this->importValue($col($row, 'no_wa'));
+                    // no_npwp & no_wa diturunkan otomatis dari Investor (semua tipe) — diisi di blok penentuan nama klien di bawah
+                    $noNpwp         = null;
+                    $noWa           = null;
                     $rowErrors      = [];
                     $namaKlien      = $namaCabang;
 
@@ -356,18 +356,25 @@ class MasterImportService
                         }
                     }
 
-                    // Nama Client AR ditentukan otomatis berdasarkan tipe
+                    // Resolve Investor baris ini — sumber kontak Client AR (semua tipe) & nama klien RESTO
+                    $klienInvestor = $investor;
+                    if (!$klienInvestor) {
+                        $restoForInv = $resto;
+                        if (!$restoForInv && $restoIdKli) {
+                            $restoForInv = Resto::find($restoIdKli);
+                        }
+                        $klienInvestor = $restoForInv?->loadMissing('investor')->investor;
+                    }
+
+                    // Kontak Client AR SELALU dari Investor
+                    $noNpwp = $this->importValue($klienInvestor?->npwp);
+                    $noWa   = $this->importValue($klienInvestor?->no_hp);
+
+                    // Nama Client AR ditentukan berdasarkan tipe
                     if ($tipeKlien === 'PT') {
                         $namaKlien = $namaEntitasKli ?: $namaCabang;
                     } elseif ($tipeKlien === 'RESTO') {
-                        $investorName = $investor?->nama_investor;
-                        if (!$investorName) {
-                            $restoForInv = $resto;
-                            if (!$restoForInv && $restoIdKli) {
-                                $restoForInv = Resto::find($restoIdKli);
-                            }
-                            $investorName = $restoForInv?->loadMissing('investor')->investor?->nama_investor;
-                        }
+                        $investorName = $klienInvestor?->nama_investor;
                         if ($investorName) {
                             $namaKlien = $investorName;
                         } elseif ($investorFailed) {

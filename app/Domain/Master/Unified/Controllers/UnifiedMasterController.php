@@ -210,7 +210,7 @@ class UnifiedMasterController extends Controller
 
         // Row 2 — Subtitle
         $sheet->mergeCells("A2:{$lastCol}2");
-        $sheet->setCellValue('A2', 'Satu baris = 1 outlet (Investor + Resto + Client AR). Kolom tipe_klien wajib (PT/RESTO) untuk Client AR. Kolom nama_entitas wajib jika tipe_klien=PT. NPWP & kontak Client otomatis dari Investor (RESTO) atau Perusahaan (PT). Hanya role ADMIN/MANAGER/SUPERVISOR. Lihat sheet "Petunjuk Pengisian".');
+        $sheet->setCellValue('A2', 'Satu baris = 1 outlet (Investor + Resto + Client AR). Kolom tipe_klien wajib (PT/RESTO) untuk Client AR. Kolom nama_entitas wajib jika tipe_klien=PT. NPWP & kontak Client AR otomatis dari Investor baris ini (npwp → no_npwp, no_hp → no_wa) untuk semua tipe. Hanya role ADMIN/MANAGER/SUPERVISOR. Lihat sheet "Petunjuk Pengisian".');
         $sheet->getStyle('A2')->applyFromArray([
             'font'      => ['italic' => true, 'size' => 9, 'color' => ['argb' => 'FF37474F']],
             'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFE3F2FD']],
@@ -643,7 +643,7 @@ class UnifiedMasterController extends Controller
             ['no_telp',         'Nomor telepon Resto',                                             'Opsional',               '02112345678'],
             ['tgl_aktif',       'Tanggal aktif Resto (format: DD-MM-YYYY)',                        'Opsional',               '01-01-2026'],
             ['keterangan',      'Keterangan tambahan Resto',                                       'Opsional',               'Gerai pusat'],
-            ['pic_ar',          'Nama karyawan AR — wajib jika tipe_klien diisi. NPWP Client otomatis dari Investor (RESTO) atau Perusahaan (PT). Kontak Client dari no_hp Investor (RESTO) atau no_telp Perusahaan (PT).', 'Ya (untuk Klien)', 'Siti Rahayu'],
+            ['pic_ar',          'Nama karyawan AR — wajib jika tipe_klien diisi. NPWP & kontak Client AR otomatis dari Investor baris ini (npwp → no_npwp, no_hp → no_wa) untuk semua tipe.', 'Ya (untuk Klien)', 'Siti Rahayu'],
             ['tipe_klien',      'Tipe Client AR: PT atau RESTO — kosongkan jika tidak membuat Klien', 'Ya (untuk Klien)',   'RESTO'],
             ['status',          '1 = Aktif (default), 0 = Nonaktif',                              'Opsional',               '1'],
         ];
