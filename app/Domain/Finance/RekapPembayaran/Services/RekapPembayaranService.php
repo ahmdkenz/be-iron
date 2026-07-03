@@ -12,11 +12,11 @@ class RekapPembayaranService
     {
         $from = isset($filters['tanggal_dari'])
             ? Carbon::parse($filters['tanggal_dari'])->startOfDay()
-            : Carbon::now()->startOfMonth();
+            : null;
 
         $to = isset($filters['tanggal_sampai'])
             ? Carbon::parse($filters['tanggal_sampai'])->endOfDay()
-            : Carbon::now()->endOfMonth();
+            : null;
 
         $segmentTypes = $this->resolveSegmentTypes($filters['segment'] ?? null);
 
@@ -26,7 +26,8 @@ class RekapPembayaranService
             ->leftJoin('tb_perusahaan', 'tb_invoice.perusahaan_id', '=', 'tb_perusahaan.id')
             ->leftJoin('tb_karyawan as pic_karyawan', 'tb_klien_ar.karyawan_ar_id', '=', 'pic_karyawan.id')
             ->leftJoin('tb_bank_statement_detail as bsd', 'bsd.pembayaran_ar_id', '=', 'tb_pembayaran_ar.id')
-            ->whereBetween('tb_pembayaran_ar.tanggal_pembayaran', [$from->toDateString(), $to->toDateString()])
+            ->when($from, fn($q) => $q->whereDate('tb_pembayaran_ar.tanggal_pembayaran', '>=', $from->toDateString()))
+            ->when($to, fn($q) => $q->whereDate('tb_pembayaran_ar.tanggal_pembayaran', '<=', $to->toDateString()))
             ->when($filters['klien_ar_id'] ?? null, fn($q, $v) => $q->where('tb_invoice.klien_ar_id', $v))
             ->when($filters['metode_pembayaran'] ?? null, fn($q, $v) => $q->where('tb_pembayaran_ar.metode_pembayaran', $v))
             ->when($segmentTypes, fn($q) => $q->whereIn('tb_klien_ar.tipe_klien', $segmentTypes));
@@ -95,8 +96,8 @@ class RekapPembayaranService
         ])->values()->all();
 
         return [
-            'tanggal_dari'    => $from->toDateString(),
-            'tanggal_sampai'  => $to->toDateString(),
+            'tanggal_dari'    => $from?->toDateString(),
+            'tanggal_sampai'  => $to?->toDateString(),
             'summary'         => $summary,
             'rows'            => $rows,
         ];

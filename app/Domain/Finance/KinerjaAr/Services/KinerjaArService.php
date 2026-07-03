@@ -14,11 +14,11 @@ class KinerjaArService
     {
         $from = isset($filters['periode_awal'])
             ? Carbon::parse($filters['periode_awal'])->startOfDay()
-            : Carbon::now()->startOfMonth();
+            : null;
 
         $to = isset($filters['periode_akhir'])
             ? Carbon::parse($filters['periode_akhir'])->endOfDay()
-            : Carbon::now()->endOfMonth();
+            : null;
 
         $segmentTypes = $this->resolveSegmentTypes($filters['segment'] ?? null);
 
@@ -34,7 +34,8 @@ class KinerjaArService
                 DB::raw('SUM(tb_invoice.sisa_tagihan) as total_sisa')
             )
             ->whereNotNull('tb_klien_ar.karyawan_ar_id')
-            ->whereBetween('tb_invoice.tanggal_invoice', [$from->toDateString(), $to->toDateString()])
+            ->when($from, fn($q) => $q->whereDate('tb_invoice.tanggal_invoice', '>=', $from->toDateString()))
+            ->when($to, fn($q) => $q->whereDate('tb_invoice.tanggal_invoice', '<=', $to->toDateString()))
             ->where(fn($q) => $q
                 ->where('tb_invoice.is_opening_balance', false)
                 ->orWhere(fn($q2) => $q2->where('tb_invoice.is_opening_balance', true)->where('tb_invoice.approval_status', 'APPROVED'))
@@ -47,8 +48,8 @@ class KinerjaArService
 
         if ($invoiceStats->isEmpty()) {
             return [
-                'periode_awal'  => $from->toDateString(),
-                'periode_akhir' => $to->toDateString(),
+                'periode_awal'  => $from?->toDateString(),
+                'periode_akhir' => $to?->toDateString(),
                 'summary'       => ['total_tagihan' => 0, 'total_terkumpul' => 0, 'total_sisa' => 0, 'collection_rate' => 0],
                 'rows'          => [],
             ];
@@ -98,8 +99,8 @@ class KinerjaArService
         ];
 
         return [
-            'periode_awal'  => $from->toDateString(),
-            'periode_akhir' => $to->toDateString(),
+            'periode_awal'  => $from?->toDateString(),
+            'periode_akhir' => $to?->toDateString(),
             'summary'       => $summary,
             'rows'          => $rows,
         ];

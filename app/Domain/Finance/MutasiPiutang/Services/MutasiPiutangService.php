@@ -15,11 +15,11 @@ class MutasiPiutangService
     {
         $from = isset($filters['periode_awal'])
             ? Carbon::parse($filters['periode_awal'])->startOfDay()
-            : Carbon::now()->startOfMonth();
+            : null;
 
         $to = isset($filters['periode_akhir'])
             ? Carbon::parse($filters['periode_akhir'])->endOfDay()
-            : Carbon::now()->endOfMonth();
+            : null;
 
         $klienFilter  = $filters['klien_ar_id'] ?? null;
         $segmentTypes = $this->resolveSegmentTypes($filters['segment'] ?? null);
@@ -33,7 +33,8 @@ class MutasiPiutangService
                 DB::raw('SUM(CASE WHEN subtotal = 0 THEN total_tagihan ELSE subtotal END) as invoice_masuk'),
                 DB::raw('COUNT(*) as jumlah_invoice_masuk')
             )
-            ->whereBetween('tanggal_invoice', [$from->toDateString(), $to->toDateString()])
+            ->when($from, fn($q) => $q->whereDate('tanggal_invoice', '>=', $from->toDateString()))
+            ->when($to, fn($q) => $q->whereDate('tanggal_invoice', '<=', $to->toDateString()))
             ->where(fn($q) => $this->approvedInvoiceScope($q))
             ->when($klienFilter, fn($q) => $q->where('klien_ar_id', $klienFilter))
             ->when($perusahaanFilter, fn($q) => $q->where('perusahaan_id', $perusahaanFilter))
@@ -52,7 +53,8 @@ class MutasiPiutangService
                 DB::raw('SUM(tb_pembayaran_ar.jumlah_pembayaran) as pembayaran'),
                 DB::raw('COUNT(tb_pembayaran_ar.id) as jumlah_pembayaran')
             )
-            ->whereBetween('tb_pembayaran_ar.tanggal_pembayaran', [$from->toDateString(), $to->toDateString()])
+            ->when($from, fn($q) => $q->whereDate('tb_pembayaran_ar.tanggal_pembayaran', '>=', $from->toDateString()))
+            ->when($to, fn($q) => $q->whereDate('tb_pembayaran_ar.tanggal_pembayaran', '<=', $to->toDateString()))
             ->when($klienFilter, fn($q) => $q->where('tb_invoice.klien_ar_id', $klienFilter))
             ->when($perusahaanFilter, fn($q) => $q->where('tb_invoice.perusahaan_id', $perusahaanFilter))
             ->when($segmentTypes, fn($q) => $q->whereIn('tb_klien_ar.tipe_klien', $segmentTypes))
@@ -62,33 +64,38 @@ class MutasiPiutangService
             ->keyBy('klien_ar_id');
 
         // Saldo awal fallback: outstanding invoice historis sebelum periode.
-        $saldoAwalFallback = Invoice::query()
-            ->select(
-                'klien_ar_id',
-                DB::raw('COALESCE(SUM(GREATEST(0, CASE WHEN subtotal = 0 THEN sisa_tagihan ELSE subtotal - total_pembayaran - COALESCE(total_penyesuaian, 0) END)), 0) as saldo_awal')
-            )
-            ->where('tanggal_invoice', '<', $from->toDateString())
-            ->where(fn($q) => $this->approvedInvoiceScope($q))
-            ->when($klienFilter, fn($q) => $q->where('klien_ar_id', $klienFilter))
-            ->when($perusahaanFilter, fn($q) => $q->where('perusahaan_id', $perusahaanFilter))
-            ->when($segmentTypes, fn($q) => $q->whereHas('klienAr', fn($q) => $q->whereIn('tipe_klien', $segmentTypes)))
-            ->when($picArFilter, fn($q) => $q->whereHas('klienAr', fn($q) => $q->where('karyawan_ar_id', $picArFilter)))
-            ->groupBy('klien_ar_id')
-            ->pluck('saldo_awal', 'klien_ar_id');
+        // Tanpa $from (tampilkan semua histori), tidak ada "sebelum periode" -> saldo awal = 0 untuk semua klien.
+        $saldoAwalFallback = $from
+            ? Invoice::query()
+                ->select(
+                    'klien_ar_id',
+                    DB::raw('COALESCE(SUM(GREATEST(0, CASE WHEN subtotal = 0 THEN sisa_tagihan ELSE subtotal - total_pembayaran - COALESCE(total_penyesuaian, 0) END)), 0) as saldo_awal')
+                )
+                ->where('tanggal_invoice', '<', $from->toDateString())
+                ->where(fn($q) => $this->approvedInvoiceScope($q))
+                ->when($klienFilter, fn($q) => $q->where('klien_ar_id', $klienFilter))
+                ->when($perusahaanFilter, fn($q) => $q->where('perusahaan_id', $perusahaanFilter))
+                ->when($segmentTypes, fn($q) => $q->whereHas('klienAr', fn($q) => $q->whereIn('tipe_klien', $segmentTypes)))
+                ->when($picArFilter, fn($q) => $q->whereHas('klienAr', fn($q) => $q->where('karyawan_ar_id', $picArFilter)))
+                ->groupBy('klien_ar_id')
+                ->pluck('saldo_awal', 'klien_ar_id')
+            : collect();
 
         // Cek apakah ada EB LOCKED tepat sebelum periode ini (carry-forward snapshot)
-        $ebSnapshot = EndingBalance::query()
-            ->select('klien_ar_id', 'saldo_akhir_final')
-            ->where('status', 'LOCKED')
-            ->where('periode_akhir', '<', $from->toDateString())
-            ->when($klienFilter, fn($q) => $q->where('klien_ar_id', $klienFilter))
-            ->when($segmentTypes, fn($q) => $q->whereHas('klienAr', fn($q) => $q->whereIn('tipe_klien', $segmentTypes)))
-            ->when($perusahaanFilter, fn($q) => $q->whereHas('klienAr', fn($q) => $q->where('perusahaan_id', $perusahaanFilter)))
-            ->when($picArFilter, fn($q) => $q->whereHas('klienAr', fn($q) => $q->where('karyawan_ar_id', $picArFilter)))
-            ->orderByDesc('periode_akhir')
-            ->get()
-            ->unique('klien_ar_id')          // ambil EB paling akhir per klien
-            ->pluck('saldo_akhir_final', 'klien_ar_id');
+        $ebSnapshot = $from
+            ? EndingBalance::query()
+                ->select('klien_ar_id', 'saldo_akhir_final')
+                ->where('status', 'LOCKED')
+                ->where('periode_akhir', '<', $from->toDateString())
+                ->when($klienFilter, fn($q) => $q->where('klien_ar_id', $klienFilter))
+                ->when($segmentTypes, fn($q) => $q->whereHas('klienAr', fn($q) => $q->whereIn('tipe_klien', $segmentTypes)))
+                ->when($perusahaanFilter, fn($q) => $q->whereHas('klienAr', fn($q) => $q->where('perusahaan_id', $perusahaanFilter)))
+                ->when($picArFilter, fn($q) => $q->whereHas('klienAr', fn($q) => $q->where('karyawan_ar_id', $picArFilter)))
+                ->orderByDesc('periode_akhir')
+                ->get()
+                ->unique('klien_ar_id')          // ambil EB paling akhir per klien
+                ->pluck('saldo_akhir_final', 'klien_ar_id')
+            : collect();
 
         // Kumpulkan semua klien_ar_id yang relevan
         $klienIds = collect([
@@ -100,8 +107,8 @@ class MutasiPiutangService
 
         if ($klienIds->isEmpty()) {
             return [
-                'periode_awal'  => $from->toDateString(),
-                'periode_akhir' => $to->toDateString(),
+                'periode_awal'  => $from?->toDateString(),
+                'periode_akhir' => $to?->toDateString(),
                 'summary'       => ['saldo_awal' => 0, 'invoice_masuk' => 0, 'pembayaran' => 0, 'saldo_akhir' => 0],
                 'rows'          => [],
             ];
@@ -114,7 +121,8 @@ class MutasiPiutangService
 
         $invoiceDetails = Invoice::query()
             ->whereIn('klien_ar_id', $klienIds)
-            ->whereBetween('tanggal_invoice', [$from->toDateString(), $to->toDateString()])
+            ->when($from, fn($q) => $q->whereDate('tanggal_invoice', '>=', $from->toDateString()))
+            ->when($to, fn($q) => $q->whereDate('tanggal_invoice', '<=', $to->toDateString()))
             ->where(fn($q) => $this->approvedInvoiceScope($q))
             ->when($perusahaanFilter, fn($q) => $q->where('perusahaan_id', $perusahaanFilter))
             ->get([
@@ -136,7 +144,8 @@ class MutasiPiutangService
             ->join('tb_invoice', 'tb_pembayaran_ar.invoice_id', '=', 'tb_invoice.id')
             ->join('tb_klien_ar', 'tb_invoice.klien_ar_id', '=', 'tb_klien_ar.id')
             ->whereIn('tb_invoice.klien_ar_id', $klienIds)
-            ->whereBetween('tb_pembayaran_ar.tanggal_pembayaran', [$from->toDateString(), $to->toDateString()])
+            ->when($from, fn($q) => $q->whereDate('tb_pembayaran_ar.tanggal_pembayaran', '>=', $from->toDateString()))
+            ->when($to, fn($q) => $q->whereDate('tb_pembayaran_ar.tanggal_pembayaran', '<=', $to->toDateString()))
             ->when($perusahaanFilter, fn($q) => $q->where('tb_invoice.perusahaan_id', $perusahaanFilter))
             ->when($picArFilter, fn($q) => $q->where('tb_klien_ar.karyawan_ar_id', $picArFilter))
             ->get([
@@ -172,7 +181,7 @@ class MutasiPiutangService
 
             $saldoAkhir  = $saldoAwal + $invoiceMasuk - $pembayaran;
             $details     = $this->buildLedgerDetails(
-                $from->toDateString(),
+                $from?->toDateString(),
                 max(0, $saldoAwal),
                 $invoiceDetails->get($klienId, collect()),
                 $paymentDetails->get($klienId, collect())
@@ -203,8 +212,8 @@ class MutasiPiutangService
         ];
 
         return [
-            'periode_awal'  => $from->toDateString(),
-            'periode_akhir' => $to->toDateString(),
+            'periode_awal'  => $from?->toDateString(),
+            'periode_akhir' => $to?->toDateString(),
             'summary'       => $summary,
             'rows'          => $rows,
         ];
@@ -217,7 +226,7 @@ class MutasiPiutangService
             ->orWhere(fn($q) => $q->where('is_opening_balance', true)->where('approval_status', 'APPROVED'));
     }
 
-    private function buildLedgerDetails(string $periodStart, float $saldoAwal, $invoices, $payments): array
+    private function buildLedgerDetails(?string $periodStart, float $saldoAwal, $invoices, $payments): array
     {
         $events = collect([[
             'tanggal'    => $periodStart,
