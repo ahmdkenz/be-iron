@@ -24,10 +24,12 @@ Route::delete('/resto/bulk',                  [RestoController::class, 'bulkDest
 Route::get('/barang/external-catalog',      [BarangController::class, 'externalCatalog']);
 Route::delete('/barang/bulk',               [BarangController::class, 'bulkDestroy']);
 
-Route::get('/master-data/import-template',    [UnifiedMasterController::class, 'importTemplate']);
-Route::post('/master-data/import',            [UnifiedMasterController::class, 'import']);
-Route::get('/master-data/import/latest',      [UnifiedMasterController::class, 'latestImport']);
-Route::get('/master-data/import/{id}/status', [UnifiedMasterController::class, 'importStatus']);
+Route::middleware('role:ADMIN|MANAGER|SUPERVISOR')->group(function () {
+    Route::get('/master-data/import-template',    [UnifiedMasterController::class, 'importTemplate']);
+    Route::post('/master-data/import',            [UnifiedMasterController::class, 'import']);
+    Route::get('/master-data/import/latest',      [UnifiedMasterController::class, 'latestImport']);
+    Route::get('/master-data/import/{id}/status', [UnifiedMasterController::class, 'importStatus']);
+});
 
 Route::apiResource('karyawan', KaryawanController::class);
 Route::apiResource('perusahaan', PerusahaanController::class);
