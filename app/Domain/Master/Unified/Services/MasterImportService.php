@@ -973,11 +973,13 @@ class MasterImportService
         $value = $cell->getValue();
         if ($value === null)    return '';
         if (is_bool($value))   return $value ? '1' : '0';
+
+        if ((is_int($value) || is_float($value)) && PhpSpreadsheetDate::isDateTime($cell)) {
+            return PhpSpreadsheetDate::excelToDateTimeObject($value)->format('Y-m-d');
+        }
+
         if (is_int($value))    return (string) $value;
         if (is_float($value)) {
-            if (PhpSpreadsheetDate::isDateTime($cell)) {
-                return PhpSpreadsheetDate::excelToDateTimeObject($value)->format('d-m-Y');
-            }
             return fmod($value, 1.0) === 0.0 ? sprintf('%.0f', $value) : (string) $value;
         }
         return trim((string) $value);
@@ -993,8 +995,20 @@ class MasterImportService
     {
         $s = trim((string) $val);
         if ($s === '' || $s === '-') return null;
+
         if (preg_match('/^(\d{1,2})-(\d{1,2})-(\d{4})$/', $s, $m)) {
             return sprintf('%04d-%02d-%02d', (int) $m[3], (int) $m[2], (int) $m[1]);
+        }
+        if (preg_match('/^(\d{4})-(\d{1,2})-(\d{1,2})$/', $s, $m)) {
+            return sprintf('%04d-%02d-%02d', (int) $m[1], (int) $m[2], (int) $m[3]);
+        }
+        // Fallback: serial number Excel yang lolos tanpa format tanggal pada cell (mis. hasil paste/text)
+        if (is_numeric($s)) {
+            try {
+                return PhpSpreadsheetDate::excelToDateTimeObject((float) $s)->format('Y-m-d');
+            } catch (\Throwable) {
+                return $s;
+            }
         }
         return $s;
     }

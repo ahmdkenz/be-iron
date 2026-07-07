@@ -539,4 +539,63 @@ class MasterImportServiceTest extends TestCase
 
         $this->assertTrue($this->invoke('klienArHasChanged', $klien, $import));
     }
+
+    // ──────────────────────────────────────────────────────────────
+    //  importDate
+    // ──────────────────────────────────────────────────────────────
+
+    public function test_import_date_from_ddmmyyyy_text(): void
+    {
+        $this->assertSame('2024-05-02', $this->invoke('importDate', '02-05-2024'));
+    }
+
+    public function test_import_date_from_yyyymmdd_text(): void
+    {
+        $this->assertSame('2024-05-02', $this->invoke('importDate', '2024-05-02'));
+    }
+
+    public function test_import_date_from_excel_serial_number(): void
+    {
+        // 45414 = 2 Mei 2024 (serial number Excel yang lolos tanpa format tanggal pada cell)
+        $this->assertSame('2024-05-02', $this->invoke('importDate', '45414'));
+    }
+
+    public function test_import_date_empty_or_dash_returns_null(): void
+    {
+        $this->assertNull($this->invoke('importDate', ''));
+        $this->assertNull($this->invoke('importDate', '-'));
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    //  xlsxCellToString
+    // ──────────────────────────────────────────────────────────────
+
+    private function makeCell(mixed $value, ?string $numberFormat = null): \PhpOffice\PhpSpreadsheet\Cell\Cell
+    {
+        $spreadsheet = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
+        $sheet       = $spreadsheet->getActiveSheet();
+        $sheet->setCellValue('A1', $value);
+        if ($numberFormat !== null) {
+            $sheet->getStyle('A1')->getNumberFormat()->setFormatCode($numberFormat);
+        }
+        return $sheet->getCell('A1');
+    }
+
+    public function test_xlsx_cell_date_formatted_serial_converts_to_ymd(): void
+    {
+        $cell = $this->makeCell(45414, \PhpOffice\PhpSpreadsheet\Style\NumberFormat::FORMAT_DATE_DDMMYYYY);
+        $this->assertSame('2024-05-02', $this->invoke('xlsxCellToString', $cell));
+    }
+
+    public function test_xlsx_cell_plain_integer_without_date_format_stays_numeric(): void
+    {
+        $cell = $this->makeCell(45414);
+        $this->assertSame('45414', $this->invoke('xlsxCellToString', $cell));
+    }
+
+    public function test_xlsx_cell_text_date_stays_as_text(): void
+    {
+        $cell = $this->makeCell('02-05-2024');
+        $this->assertSame('02-05-2024', $this->invoke('xlsxCellToString', $cell));
+    }
 }
