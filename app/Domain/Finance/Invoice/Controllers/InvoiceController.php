@@ -315,6 +315,7 @@ class InvoiceController extends Controller
 
         $invoices = $this->service->getAllForExport($filters);
         $invoices->load('items:id,invoice_id,nama_resto');
+        $invoiceIds = $invoices->pluck('id');
 
         $spreadsheet = new Spreadsheet();
         $sheet       = $spreadsheet->getActiveSheet();
@@ -430,14 +431,10 @@ class InvoiceController extends Controller
         $sheet->freezePane('A5');
 
         // â”€â”€â”€ Sheet 2: Data Detail Tagihan Invoice â”€â”€â”€
+        // Pakai invoice_id dari $invoices (sudah lewat scope + filter yang sama)
+        // supaya sheet detail selalu konsisten dengan sheet utama.
         $details = InvoiceItem::with(['invoice.klienAr.resto.perusahaan', 'invoice.perusahaan', 'invoice.resto', 'barang'])
-            ->whereHas('invoice', function ($q) use ($filters) {
-                $q->where('is_opening_balance', false)
-                  ->when($filters['tanggal_dari'] ?? null, fn($q, $v) => $q->where('tanggal_invoice', '>=', $v))
-                  ->when($filters['tanggal_sampai'] ?? null, fn($q, $v) => $q->where('tanggal_invoice', '<=', $v))
-                  ->when($filters['klien_ar_id'] ?? null, fn($q, $v) => $q->where('klien_ar_id', $v))
-                  ->when($filters['perusahaan_id'] ?? null, fn($q, $v) => $q->where('perusahaan_id', $v));
-            })
+            ->whereIn('invoice_id', $invoiceIds)
             ->orderBy('invoice_id')
             ->orderBy('id')
             ->get();
