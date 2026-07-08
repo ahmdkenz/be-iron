@@ -409,7 +409,7 @@ class UnifiedMasterController extends Controller
 
         // Row 2 — Subtitle
         $sheet->mergeCells("A2:{$lastCol}2");
-        $sheet->setCellValue('A2', '1 baris = 1 item invoice. Baris dengan tipe_invoice + nama_klien + tanggal_invoice yang sama digabung menjadi 1 invoice. 1 klien hanya boleh punya 1 invoice per hari. B2B: isi no_invoice_resto/kode_resto/nama_resto. B2C: no_invoice_resto opsional (nomor asli/referensi asal), kode_resto/nama_resto opsional. Lihat sheet "Petunjuk Pengisian".');
+        $sheet->setCellValue('A2', '1 baris = 1 item invoice. Baris dengan tipe_invoice + klien + tanggal_invoice yang sama digabung menjadi 1 invoice. 1 klien (1 outlet) hanya boleh punya 1 invoice per hari. B2B: isi no_invoice_resto/kode_resto/nama_resto. B2C: no_invoice_resto opsional (nomor asli/referensi asal); kode_resto WAJIB diisi jika investor/klien punya lebih dari 1 outlet (baris ambigu akan ditolak). Lihat sheet "Petunjuk Pengisian".');
         $sheet->getStyle('A2')->applyFromArray([
             'font'      => ['italic' => true, 'size' => 9, 'color' => ['argb' => 'FF37474F']],
             'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFF3E5F5']],
@@ -574,8 +574,8 @@ class UnifiedMasterController extends Controller
             '4. Kolom tipe_klien (PT/RESTO) wajib jika ingin membuat/memperbarui Client AR. Kolom pic_ar wajib jika tipe_klien diisi.',
             '5. Kolom nama_entitas WAJIB jika tipe_klien=PT. Nama Client AR otomatis: RESTO = nama_investor, PT = nama_entitas.',
             '6. Sheet MASTER BARANG: kode_barang wajib untuk barang baru. Kolom: kode_barang, nama_barang, spesifikasi, keterangan, status.',
-            '7. Sheet MASTER INVOICE: 1 baris = 1 item. Baris dengan tipe_invoice + nama_klien + tanggal_invoice sama digabung jadi 1 invoice. 1 klien = 1 invoice per hari. tipe_invoice: "B2C" atau "B2B".',
-            '8. Invoice B2C: isi kolom header + item (kode_barang/nama_barang, qty, satuan, harga_satuan). Kolom no_invoice_resto opsional (isi nomor asli/referensi asal jika ada); kode_resto/nama_resto opsional.',
+            '7. Sheet MASTER INVOICE: 1 baris = 1 item. Baris dengan tipe_invoice + klien (outlet) + tanggal_invoice sama digabung jadi 1 invoice. 1 klien (1 outlet) = 1 invoice per hari. tipe_invoice: "B2C" atau "B2B".',
+            '8. Invoice B2C: isi kolom header + item (kode_barang/nama_barang, qty, satuan, harga_satuan). Kolom no_invoice_resto opsional. Kolom kode_resto opsional HANYA jika investor/klien tersebut punya 1 outlet; jika investor punya banyak outlet, kode_resto WAJIB diisi di setiap baris agar order masuk ke invoice outlet yang benar (baris tanpa kode_resto yang ambigu akan ditolak saat import).',
             '9. Invoice B2B (konsolidasi): sama seperti B2C, wajib isi no_invoice_resto, kode_resto, nama_resto di setiap item.',
             '10. Aturan update invoice: jika sudah ada → item lama dihapus, item baru masuk, keuangan dikalkulasi ulang. Invoice LUNAS atau periode EB Terkunci → dilewati.',
             '11. Setelah invoice berhasil disimpan, PDF otomatis diupload ke Google Drive (proses antrian). Link share muncul setelah antrian selesai.',
@@ -745,7 +745,7 @@ class UnifiedMasterController extends Controller
             ['satuan',             'Satuan item (pcs, kg, lusin, dll).',                                                    'Opsional', 'pcs'],
             ['harga_satuan',       'Harga per satuan item.',                                                                'Ya',       '50000'],
             ['no_invoice_resto',   'Nomor invoice/referensi asal dari resto. Wajib untuk B2B; opsional untuk B2C (nomor asli untuk pencocokan data).', 'B2B, Opsional (B2C)', 'SI-RESTO-0001'],
-            ['kode_resto',         'Kode resto asal. Wajib untuk B2B; opsional untuk B2C.',                                'B2B, Opsional (B2C)', 'KD-001'],
+            ['kode_resto',         'Kode resto asal. Wajib untuk B2B. Untuk B2C: opsional HANYA jika klien/investor punya 1 outlet — wajib diisi jika klien tsb punya lebih dari 1 outlet, karena inilah yang menentukan invoice outlet mana yang dituju (baris ambigu tanpa kode_resto akan ditolak).', 'B2B, Kondisional (B2C)', 'KD-001'],
             ['nama_resto',         'Nama resto asal. Wajib untuk B2B; opsional untuk B2C.',                                'B2B, Opsional (B2C)', 'Warung Makan Enak'],
         ];
 

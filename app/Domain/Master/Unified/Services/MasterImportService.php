@@ -633,17 +633,20 @@ class MasterImportService
             return;
         }
 
-        // Preload klien dan barang map
-        $klienMap  = $this->buildKlienMapForInvoice();
+        // Preload klien (nama + resto/outlet) dan barang map
+        [$namaMap, $restoMap, $restoNameMap, $restoNameCount] = $this->buildKlienMapsForInvoice();
         $barangMap = $this->buildBarangMapForInvoice();
 
         // Preload EB locked
         $lockedEbMap = $this->invoiceGroupProcessor->buildLockedEbMap();
 
-        // ── Group rows by (tipe_invoice + nama_klien + tanggal_invoice) ──
-        $groups      = [];   // key => ['header' => row, 'items' => [], 'firstLine' => int]
+        // ── Group rows by (tipe_invoice + klien_ar_id + tanggal_invoice) ──
+        // Klien di-resolve DI SINI (per baris, sebelum grouping) supaya B2C dari
+        // outlet berbeda milik investor yang sama tidak ikut tergabung jadi 1 invoice.
+        $groups      = [];   // key => ['tipe_invoice', 'klien', 'header', 'first_line', 'items']
         $lineNumber  = 0;
         $headerSkipped = false;
+        $invFail     = 0;
 
         foreach ($rows as $row) {
             $lineNumber++;
@@ -657,17 +660,37 @@ class MasterImportService
             $tipeInvoice = strtoupper(trim((string) ($row[13] ?? '')));
             $namaKlien   = $this->importValue($row[0] ?? '');
             $tanggal     = $this->importDate($row[1] ?? '');
+            $kodeResto   = $this->importValue($row[6] ?? '');
 
             if (!$tipeInvoice || !$namaKlien || !$tanggal) {
                 $errors[] = ['sheet' => 'MASTER INVOICE', 'row' => $lineNumber, 'message' => 'tipe_invoice, nama_klien, dan tanggal_invoice wajib diisi.'];
+                $invFail++;
                 continue;
             }
 
-            $key = $tipeInvoice . '||' . strtolower($namaKlien) . '||' . $tanggal;
+            if (!in_array($tipeInvoice, ['B2B', 'B2C'])) {
+                $errors[] = ['sheet' => 'MASTER INVOICE', 'row' => $lineNumber, 'message' => "tipe_invoice '{$tipeInvoice}' tidak valid. Harus 'B2B' atau 'B2C'."];
+                $invFail++;
+                continue;
+            }
+
+            [$klien, $klienError] = $this->resolveKlienForInvoiceRow(
+                $tipeInvoice, $namaKlien, $kodeResto,
+                $namaMap, $restoMap, $restoNameMap, $restoNameCount,
+            );
+
+            if (!$klien) {
+                $errors[] = ['sheet' => 'MASTER INVOICE', 'row' => $lineNumber, 'message' => $klienError];
+                $invFail++;
+                continue;
+            }
+
+            $key = $tipeInvoice . '||' . $klien->id . '||' . $tanggal;
 
             if (!isset($groups[$key])) {
                 $groups[$key] = [
                     'tipe_invoice' => $tipeInvoice,
+                    'klien'        => $klien,
                     'header'       => $row,
                     'first_line'   => $lineNumber,
                     'items'        => [],
@@ -678,7 +701,7 @@ class MasterImportService
             $groups[$key]['items'][] = [
                 'row'              => $lineNumber,
                 'no_invoice_resto' => $this->importValue($row[5] ?? ''),
-                'kode_resto'       => $this->importValue($row[6] ?? ''),
+                'kode_resto'       => $kodeResto,
                 'nama_resto'       => $this->importValue($row[7] ?? ''),
                 'kode_barang'      => $this->importValue($row[8] ?? ''),
                 'nama_barang'      => $this->importValue($row[9] ?? ''),
@@ -694,7 +717,6 @@ class MasterImportService
         $invIns  = 0;
         $invUpd  = 0;
         $invSkip = 0;
-        $invFail = 0;
         $processed   = 0;
         $newInvoices = [];
 
@@ -703,31 +725,9 @@ class MasterImportService
             $tipeInvoice = $group['tipe_invoice'];
             $headerRow   = $group['header'];
             $firstLine   = $group['first_line'];
-
-            // Validasi tipe
-            if (!in_array($tipeInvoice, ['B2B', 'B2C'])) {
-                $errors[] = ['sheet' => 'MASTER INVOICE', 'row' => $firstLine, 'message' => "tipe_invoice '{$tipeInvoice}' tidak valid. Harus 'B2B' atau 'B2C'."];
-                $invFail++;
-                continue;
-            }
-
-            // Validasi field header wajib
+            $klien       = $group['klien'];
             $namaKlien   = $this->importValue($headerRow[0] ?? '');
             $tanggal     = $this->importDate($headerRow[1] ?? '');
-
-            if (!$namaKlien || !$tanggal) {
-                $errors[] = ['sheet' => 'MASTER INVOICE', 'row' => $firstLine, 'message' => 'nama_klien dan tanggal_invoice wajib diisi.'];
-                $invFail++;
-                continue;
-            }
-
-            // Resolve klien
-            $klien = $klienMap[strtolower($namaKlien)] ?? null;
-            if (!$klien) {
-                $errors[] = ['sheet' => 'MASTER INVOICE', 'row' => $firstLine, 'message' => "Klien '{$namaKlien}' tidak ditemukan di sistem."];
-                $invFail++;
-                continue;
-            }
 
             // Validasi item
             $items     = [];
@@ -934,19 +934,97 @@ class MasterImportService
         return implode(' | ', $parts) ?: 'Import selesai.';
     }
 
-    /** @return array<string, KlienAr> lower(nama_klien) => KlienAr */
-    private function buildKlienMapForInvoice(): array
+    /**
+     * @return array{0: array<string, KlienAr>, 1: array<string, KlienAr>, 2: array<string, KlienAr>, 3: array<string, int>}
+     *   [0] namaMap        lower(nama_klien) => KlienAr (semua tipe, first match) — dipakai B2B.
+     *   [1] restoMap       upper(kode_resto) => KlienAr tipe RESTO — jalur utama B2C.
+     *   [2] restoNameMap   lower(nama_klien) => KlienAr tipe RESTO — fallback B2C saat kode_resto kosong.
+     *   [3] restoNameCount lower(nama_klien) => jumlah KlienAr tipe RESTO dengan nama tsb (guard ambiguitas).
+     */
+    private function buildKlienMapsForInvoice(): array
     {
-        $map = [];
-        foreach (KlienAr::all(['id', 'nama_klien', 'resto_id', 'perusahaan_id', 'karyawan_ar_id']) as $klien) {
-            if ($klien->nama_klien !== null) {
-                $key = strtolower($klien->nama_klien);
-                if (!isset($map[$key])) {
-                    $map[$key] = $klien;
+        $namaMap        = [];
+        $restoMap       = [];
+        $restoNameMap   = [];
+        $restoNameCount = [];
+
+        $klienList = KlienAr::with('resto:id,kode_resto')
+            ->get(['id', 'nama_klien', 'tipe_klien', 'resto_id', 'perusahaan_id', 'karyawan_ar_id']);
+
+        foreach ($klienList as $klien) {
+            if ($klien->nama_klien === null) {
+                continue;
+            }
+            $namaKey = strtolower($klien->nama_klien);
+
+            if (!isset($namaMap[$namaKey])) {
+                $namaMap[$namaKey] = $klien;
+            }
+
+            if ($klien->tipe_klien === 'RESTO') {
+                $restoNameCount[$namaKey] = ($restoNameCount[$namaKey] ?? 0) + 1;
+                if (!isset($restoNameMap[$namaKey])) {
+                    $restoNameMap[$namaKey] = $klien;
+                }
+
+                $kodeResto = $klien->resto?->kode_resto;
+                if ($kodeResto !== null && $kodeResto !== '') {
+                    $restoKey = strtoupper($kodeResto);
+                    if (!isset($restoMap[$restoKey])) {
+                        $restoMap[$restoKey] = $klien;
+                    }
                 }
             }
         }
-        return $map;
+
+        return [$namaMap, $restoMap, $restoNameMap, $restoNameCount];
+    }
+
+    /**
+     * Resolve KlienAr untuk satu baris import MASTER INVOICE.
+     *
+     * B2B selalu resolve via nama_klien (perilaku konsolidasi multi-outlet tidak berubah).
+     * B2C dengan kode_resto terisi resolve via outlet — tidak fallback ke nama, supaya
+     * kode_resto yang salah ketik tidak diam-diam nyasar ke klien/outlet lain.
+     * B2C dengan kode_resto kosong resolve via nama HANYA jika investor itu memiliki
+     * tepat satu outlet; jika ambigu (>1 outlet), baris wajib diisi kode_resto.
+     *
+     * @return array{0: ?KlienAr, 1: ?string} [klien, pesan error]
+     */
+    private function resolveKlienForInvoiceRow(
+        string $tipeInvoice,
+        string $namaKlien,
+        ?string $kodeResto,
+        array $namaMap,
+        array $restoMap,
+        array $restoNameMap,
+        array $restoNameCount,
+    ): array {
+        $namaKey = strtolower($namaKlien);
+
+        if ($tipeInvoice === 'B2B') {
+            $klien = $namaMap[$namaKey] ?? null;
+            return $klien ? [$klien, null] : [null, "Klien '{$namaKlien}' tidak ditemukan di sistem."];
+        }
+
+        // B2C
+        if ($kodeResto) {
+            $klien = $restoMap[strtoupper($kodeResto)] ?? null;
+            if (!$klien) {
+                return [null, "kode_resto '{$kodeResto}' tidak ditemukan atau belum terhubung ke Client AR tipe RESTO."];
+            }
+            return [$klien, null];
+        }
+
+        $count = $restoNameCount[$namaKey] ?? 0;
+        if ($count === 0) {
+            return [null, "Klien '{$namaKlien}' tidak ditemukan di sistem."];
+        }
+        if ($count > 1) {
+            return [null, "Klien '{$namaKlien}' memiliki {$count} outlet berbeda. Isi kolom kode_resto pada baris ini untuk menentukan outlet yang dituju."];
+        }
+
+        return [$restoNameMap[$namaKey], null];
     }
 
     /** @return array<string, int> upper(kode_barang) => id */

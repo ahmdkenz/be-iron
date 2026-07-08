@@ -541,6 +541,129 @@ class MasterImportServiceTest extends TestCase
     }
 
     // ──────────────────────────────────────────────────────────────
+    //  resolveKlienForInvoiceRow
+    // ──────────────────────────────────────────────────────────────
+
+    private function makeKlien(int $id, string $namaKlien, string $tipeKlien): KlienAr
+    {
+        $klien = new KlienAr();
+        $klien->forceFill([
+            'id'         => $id,
+            'nama_klien' => $namaKlien,
+            'tipe_klien' => $tipeKlien,
+        ]);
+        return $klien;
+    }
+
+    public function test_resolve_b2b_uses_nama_map_and_ignores_kode_resto(): void
+    {
+        $klienPt = $this->makeKlien(1, 'PT Sejahtera', 'PT');
+        $namaMap = ['pt sejahtera' => $klienPt];
+
+        [$klien, $error] = $this->invoke(
+            'resolveKlienForInvoiceRow',
+            'B2B', 'PT Sejahtera', 'KD-999', // kode_resto sengaja diisi salah, harus tetap diabaikan
+            $namaMap, [], [], [],
+        );
+
+        $this->assertSame($klienPt, $klien);
+        $this->assertNull($error);
+    }
+
+    public function test_resolve_b2b_not_found_returns_error(): void
+    {
+        [$klien, $error] = $this->invoke(
+            'resolveKlienForInvoiceRow',
+            'B2B', 'PT Tidak Ada', null,
+            [], [], [], [],
+        );
+
+        $this->assertNull($klien);
+        $this->assertStringContainsString('tidak ditemukan', $error);
+    }
+
+    public function test_resolve_b2c_with_kode_resto_uses_resto_map(): void
+    {
+        $outletA = $this->makeKlien(10, 'Investor X', 'RESTO');
+        $outletB = $this->makeKlien(11, 'Investor X', 'RESTO');
+        $restoMap = ['KD-A' => $outletA, 'KD-B' => $outletB];
+
+        [$klien, $error] = $this->invoke(
+            'resolveKlienForInvoiceRow',
+            'B2C', 'Investor X', 'kd-b', // lowercase, harus dinormalisasi ke upper
+            [], $restoMap, [], [],
+        );
+
+        $this->assertSame($outletB, $klien);
+        $this->assertNull($error);
+    }
+
+    public function test_resolve_b2c_with_unknown_kode_resto_fails_without_name_fallback(): void
+    {
+        $outletA = $this->makeKlien(10, 'Investor X', 'RESTO');
+        $restoMap = ['KD-A' => $outletA];
+        // Meski nama investor cocok & tidak ambigu, kode_resto yang salah tidak boleh
+        // fallback diam-diam ke pencocokan nama.
+        $restoNameMap   = ['investor x' => $outletA];
+        $restoNameCount = ['investor x' => 1];
+
+        [$klien, $error] = $this->invoke(
+            'resolveKlienForInvoiceRow',
+            'B2C', 'Investor X', 'KD-SALAH',
+            [], $restoMap, $restoNameMap, $restoNameCount,
+        );
+
+        $this->assertNull($klien);
+        $this->assertStringContainsString('KD-SALAH', $error);
+        $this->assertStringContainsString('tidak ditemukan', $error);
+    }
+
+    public function test_resolve_b2c_blank_kode_resto_single_outlet_uses_name_fallback(): void
+    {
+        $outlet = $this->makeKlien(20, 'Investor Tunggal', 'RESTO');
+        $restoNameMap   = ['investor tunggal' => $outlet];
+        $restoNameCount = ['investor tunggal' => 1];
+
+        [$klien, $error] = $this->invoke(
+            'resolveKlienForInvoiceRow',
+            'B2C', 'Investor Tunggal', null,
+            [], [], $restoNameMap, $restoNameCount,
+        );
+
+        $this->assertSame($outlet, $klien);
+        $this->assertNull($error);
+    }
+
+    public function test_resolve_b2c_blank_kode_resto_ambiguous_multi_outlet_fails(): void
+    {
+        $outletA = $this->makeKlien(30, 'Investor Banyak Outlet', 'RESTO');
+        $restoNameMap   = ['investor banyak outlet' => $outletA];
+        $restoNameCount = ['investor banyak outlet' => 4];
+
+        [$klien, $error] = $this->invoke(
+            'resolveKlienForInvoiceRow',
+            'B2C', 'Investor Banyak Outlet', null,
+            [], [], $restoNameMap, $restoNameCount,
+        );
+
+        $this->assertNull($klien);
+        $this->assertStringContainsString('4 outlet', $error);
+        $this->assertStringContainsString('kode_resto', $error);
+    }
+
+    public function test_resolve_b2c_blank_kode_resto_not_found_returns_error(): void
+    {
+        [$klien, $error] = $this->invoke(
+            'resolveKlienForInvoiceRow',
+            'B2C', 'Investor Tidak Ada', null,
+            [], [], [], [],
+        );
+
+        $this->assertNull($klien);
+        $this->assertStringContainsString('tidak ditemukan', $error);
+    }
+
+    // ──────────────────────────────────────────────────────────────
     //  importDate
     // ──────────────────────────────────────────────────────────────
 
