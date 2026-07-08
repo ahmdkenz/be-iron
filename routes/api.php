@@ -35,7 +35,6 @@ Route::prefix('v1')->group(function () {
                 Route::get('kinerja-ar/export-excel',      [\App\Domain\Finance\KinerjaAr\Controllers\KinerjaArController::class, 'exportExcel']);
                 Route::get('pendapatan-di-muka/export-excel', [\App\Domain\Finance\PendapatanDiMuka\Controllers\PendapatanDiMukaController::class, 'exportExcel']);
                 Route::get('opening-balance/export',       [\App\Domain\Finance\OpeningBalance\Controllers\OpeningBalanceController::class, 'export']);
-                Route::post('opening-balance/import',      [\App\Domain\Finance\OpeningBalance\Controllers\OpeningBalanceController::class, 'import']);
                 Route::post('rekonsiliasi-bank/upload',    [\App\Domain\Finance\RekonsiliasiBankStatement\Controllers\BankStatementController::class, 'upload']);
             });
 
