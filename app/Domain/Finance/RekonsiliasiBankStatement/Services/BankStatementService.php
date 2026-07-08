@@ -490,8 +490,10 @@ class BankStatementService
         BankStatementDetail $detail,
         ?string $search = null,
         ?string $type = null,
-    ): \Illuminate\Support\Collection {
-        $query = Invoice::with('klienAr')
+        int $page = 1,
+        int $perPage = 50,
+    ): \Illuminate\Contracts\Pagination\LengthAwarePaginator {
+        $query = Invoice::with('klienAr.resto')
             ->whereNotIn('status', ['LUNAS', 'DRAFT'])
             ->where(function ($q) {
                 $q->where('is_opening_balance', false)
@@ -515,7 +517,7 @@ class BankStatementService
             });
         }
 
-        return $query->limit(30)->get()->map(function ($inv) {
+        return $query->paginate($perPage, ['*'], 'page', $page)->through(function ($inv) {
             $subtotal         = (float) $inv->subtotal;
             $totalPembayaran  = (float) $inv->total_pembayaran;
             $totalPenyesuaian = (float) $inv->total_penyesuaian;
@@ -531,6 +533,7 @@ class BankStatementService
                 'sisa_tagihan'       => $sisaEfektif,
                 'status'             => $inv->status,
                 'nama_klien'         => $inv->klienAr?->nama_klien,
+                'nama_resto'         => $inv->klienAr?->resto?->nama_resto,
                 'is_opening_balance' => (bool) $inv->is_opening_balance,
             ];
         });
