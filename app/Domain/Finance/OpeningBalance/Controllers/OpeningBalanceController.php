@@ -49,7 +49,11 @@ class OpeningBalanceController extends Controller
         $filters['is_opening_balance'] = true;
         ArFilterScope::apply($filters, $user);
 
-        $list = $this->service->paginate($filters);
+        $list = $this->service->paginate($filters, with: [
+            'klienAr' => fn($q) => $q->withTrashed(),
+            'resto', 'perusahaan', 'karyawan.perusahaan',
+            'submittedBy', 'createdBy', 'updatedBy',
+        ]);
 
         return $this->paginatedResponse(
             $list->through(fn($invoice) => new InvoiceResource($invoice))
@@ -153,7 +157,7 @@ class OpeningBalanceController extends Controller
 
         return $this->successResponse(
             OpeningBalanceDetailResource::collection(
-                $invoice->openingBalanceDetails()->orderBy('tanggal_invoice_asal')->get()
+                $invoice->openingBalanceDetails()->with('items.barang')->orderBy('tanggal_invoice_asal')->get()
             )
         );
     }

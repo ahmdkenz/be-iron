@@ -132,6 +132,13 @@ class Invoice extends Model
         return $this->hasMany(EndingBalanceKoreksi::class, 'invoice_id')->latest('submitted_at');
     }
 
+    public function lastDecisionLog()
+    {
+        return $this->hasOne(InvoiceApprovalLog::class, 'invoice_id')
+            ->whereIn('action', ['APPROVED', 'REJECTED'])
+            ->latestOfMany('id');
+    }
+
     public function requiresApproval(): bool
     {
         return $this->is_opening_balance === true;

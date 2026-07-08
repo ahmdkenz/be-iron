@@ -92,6 +92,7 @@ class InvoiceResource extends JsonResource
             'rejected_at'                => $this->rejected_at?->toIso8601String(),
             'rejected_by'                => $this->rejected_by,
             'rejected_by_name'           => $this->whenLoaded('rejectedBy', fn() => $this->rejectedBy?->username),
+            'last_decision_note'         => $this->whenLoaded('lastDecisionLog', fn() => $this->lastDecisionLog?->note),
             'is_opening_balance'         => $this->is_opening_balance,
             'keterangan'                 => $this->keterangan,
             'items'                      => $this->whenLoaded('items', fn() =>

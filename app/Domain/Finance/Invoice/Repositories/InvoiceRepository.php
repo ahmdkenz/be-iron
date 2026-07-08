@@ -10,24 +10,15 @@ use Illuminate\Support\Collection;
 
 class InvoiceRepository
 {
-    public function paginate(array $filters = [], int $perPage = 15): LengthAwarePaginator
+    public function paginate(array $filters = [], int $perPage = 15, ?array $with = null): LengthAwarePaginator
     {
         if (isset($filters['per_page']) && is_numeric($filters['per_page'])) {
             $perPage = max(1, (int) $filters['per_page']);
         }
 
-        return $this->applyFilters(
-            Invoice::with([
-                'klienAr' => fn($q) => $q->withTrashed(),
-                'resto',
-                'perusahaan',
-                'karyawan.perusahaan',
-                'submittedBy',
-                'createdBy',
-                'updatedBy',
-            ]),
-            $filters
-        )
+        $relations = $with ?? ['klienAr' => fn($q) => $q->withTrashed()];
+
+        return $this->applyFilters(Invoice::with($relations), $filters)
             ->latest('tanggal_invoice')
             ->paginate($perPage);
     }
@@ -46,6 +37,30 @@ class InvoiceRepository
         )
             ->latest('tanggal_invoice')
             ->get();
+    }
+
+    /**
+     * Header saja untuk halaman detail — TANPA items/pembayarans/openingBalanceDetails/
+     * approvalLogs/endingBalanceKoreksi, yang di-fetch terpisah lewat endpoint lazy-nya
+     * masing-masing. Jangan dipakai untuk alur yang butuh child collections (pakai
+     * findById() untuk itu).
+     */
+    public function findHeaderById(int $id): ?Invoice
+    {
+        return Invoice::with([
+            'klienAr.perusahaan',
+            'klienAr.karyawanAr',
+            'klienAr.resto.investor',
+            'resto',
+            'perusahaan',
+            'karyawan.perusahaan',
+            'createdBy',
+            'submittedBy',
+            'approvedBy',
+            'rejectedBy',
+            'updatedBy',
+            'lastDecisionLog',
+        ])->find($id);
     }
 
     public function findById(int $id): ?Invoice

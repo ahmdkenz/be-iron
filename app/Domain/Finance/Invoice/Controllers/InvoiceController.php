@@ -6,6 +6,8 @@ use App\Domain\Finance\Invoice\DTO\InvoiceDTO;
 use App\Domain\Finance\Invoice\Jobs\UploadInvoiceToGDriveJob;
 use App\Domain\Finance\Invoice\Requests\StoreInvoiceRequest;
 use App\Domain\Finance\Invoice\Requests\UpdateInvoiceRequest;
+use App\Domain\Finance\Invoice\Resources\InvoiceItemResource;
+use App\Domain\Finance\Invoice\Resources\InvoiceListResource;
 use App\Domain\Finance\Invoice\Resources\InvoiceResource;
 use App\Domain\Finance\Invoice\Services\InvoiceService;
 use App\Http\Controllers\Controller;
@@ -44,18 +46,47 @@ class InvoiceController extends Controller
 
     public function index(Request $request): JsonResponse
     {
+        $request->validate([
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
+        ]);
+
         $user    = auth()->user();
         $filters = $request->only([
             'search', 'status', 'klien_ar_id', 'karyawan_id',
-            'tanggal_dari', 'tanggal_sampai', 'segment',
+            'tanggal_dari', 'tanggal_sampai', 'segment', 'per_page',
         ]);
         $filters['is_opening_balance'] = false;
         ArFilterScope::apply($filters, $user);
 
-        $list = $this->service->paginate($filters);
+        $list      = $this->service->paginate($filters);
+        $lockedIds = $this->batchLoadEbLockedIds($list->getCollection());
+
         return $this->paginatedResponse(
-            $list->through(fn($inv) => new InvoiceResource($inv))
+            $list->through(fn($inv) => new InvoiceListResource($inv, $lockedIds))
         );
+    }
+
+    /**
+     * Batch-load id invoice yang berada dalam periode ending balance LOCKED,
+     * satu query untuk seluruh halaman (hindari N+1 per baris).
+     */
+    private function batchLoadEbLockedIds(\Illuminate\Support\Collection $invoices): array
+    {
+        $ids = $invoices->pluck('id')->all();
+        if (empty($ids)) {
+            return [];
+        }
+
+        return DB::table('tb_invoice as i')
+            ->join('tb_ending_balance as eb', function ($join) {
+                $join->on('i.klien_ar_id', '=', 'eb.klien_ar_id')
+                    ->whereColumn('i.tanggal_invoice', '>=', 'eb.periode_awal')
+                    ->whereColumn('i.tanggal_invoice', '<=', 'eb.periode_akhir');
+            })
+            ->where('eb.status', 'LOCKED')
+            ->whereIn('i.id', $ids)
+            ->pluck('i.id')
+            ->all();
     }
 
     public function summary(Request $request): JsonResponse
@@ -205,8 +236,68 @@ class InvoiceController extends Controller
 
     public function show(int $id): JsonResponse
     {
-        $invoice = $this->service->findOrFail($id);
+        $invoice = $this->service->findHeaderOrFail($id);
         return $this->successResponse(new InvoiceResource($invoice));
+    }
+
+    public function items(int $id): JsonResponse
+    {
+        $invoice = Invoice::findOrFail($id);
+        $items   = $invoice->items()->with('barang')->get();
+
+        return $this->successResponse(InvoiceItemResource::collection($items));
+    }
+
+    public function pembayaran(int $id): JsonResponse
+    {
+        $invoice = Invoice::findOrFail($id);
+        $rows    = $invoice->pembayarans()->with('createdBy')->get();
+
+        return $this->successResponse($rows->map(fn($p) => [
+            'id'                 => $p->id,
+            'tanggal_pembayaran' => $p->tanggal_pembayaran?->format('d-m-Y'),
+            'jumlah_pembayaran'  => (float) $p->jumlah_pembayaran,
+            'metode_pembayaran'  => $p->metode_pembayaran,
+            'no_referensi'       => $p->no_referensi,
+            'keterangan'         => $p->keterangan,
+            'created_by_name'    => $p->createdBy?->username,
+            'created_at'         => $p->created_at?->toIso8601String(),
+        ]));
+    }
+
+    public function approvalLogs(int $id): JsonResponse
+    {
+        $invoice = Invoice::findOrFail($id);
+        $logs    = $invoice->approvalLogs()->with('actor')->get();
+
+        return $this->successResponse($logs->map(fn($log) => [
+            'id'         => $log->id,
+            'action'     => $log->action,
+            'note'       => $log->note,
+            'actor_id'   => $log->actor_id,
+            'actor_name' => $log->actor?->username,
+            'created_at' => $log->created_at?->toIso8601String(),
+        ])->values());
+    }
+
+    public function koreksi(int $id): JsonResponse
+    {
+        $invoice = Invoice::findOrFail($id);
+        $rows    = $invoice->endingBalanceKoreksi()->with(['submittedBy', 'spv', 'manager'])->get();
+
+        return $this->successResponse($rows->map(fn($k) => [
+            'id'                  => $k->id,
+            'tipe'                => $k->tipe,
+            'no_dokumen'          => $k->no_dokumen,
+            'nilai_koreksi'       => (float) $k->nilai_koreksi,
+            'alasan_koreksi'      => $k->alasan_koreksi,
+            'status'              => $k->status,
+            'submitted_by'        => $k->submittedBy?->username,
+            'submitted_at'        => $k->submitted_at?->toIso8601String(),
+            'spv'                 => $k->spv?->username,
+            'manager'             => $k->manager?->username,
+            'manager_actioned_at' => $k->manager_actioned_at?->toIso8601String(),
+        ])->values());
     }
 
     public function update(UpdateInvoiceRequest $request, int $id): JsonResponse
@@ -265,7 +356,10 @@ class InvoiceController extends Controller
         $filters['is_opening_balance'] = false;
         ArFilterScope::apply($filters, $user);
 
-        $invoices = $this->service->paginate(array_merge($filters, ['per_page' => 9999]))->items();
+        $invoices = $this->service->paginate(
+            array_merge($filters, ['per_page' => 9999]),
+            with: ['klienAr' => fn($q) => $q->withTrashed(), 'resto', 'perusahaan']
+        )->items();
 
         $headers = [
             'No Invoice', 'Klien', 'Resto', 'Perusahaan', 'Tanggal Invoice',

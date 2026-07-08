@@ -53,6 +53,10 @@ Route::prefix('invoices')->group(function () {
     Route::post('/', [InvoiceController::class, 'store']);
     Route::delete('/bulk', [InvoiceController::class, 'bulkDestroy']);
     Route::get('/{invoice}/settleable-originals', [InvoiceController::class, 'settleableOriginals']);
+    Route::get('/{invoice}/items', [InvoiceController::class, 'items']);
+    Route::get('/{invoice}/pembayaran', [InvoiceController::class, 'pembayaran']);
+    Route::get('/{invoice}/approval-logs', [InvoiceController::class, 'approvalLogs']);
+    Route::get('/{invoice}/koreksi', [InvoiceController::class, 'koreksi']);
     Route::get('/{invoice}', [InvoiceController::class, 'show']);
     Route::put('/{invoice}', [InvoiceController::class, 'update']);
     Route::delete('/{invoice}', [InvoiceController::class, 'destroy']);

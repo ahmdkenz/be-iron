@@ -23,9 +23,9 @@ class InvoiceService
 {
     public function __construct(private readonly InvoiceRepository $repository) {}
 
-    public function paginate(array $filters = []): LengthAwarePaginator
+    public function paginate(array $filters = [], ?array $with = null): LengthAwarePaginator
     {
-        return $this->repository->paginate($filters);
+        return $this->repository->paginate($filters, with: $with);
     }
 
     public function getAllForExport(array $filters = []): Collection
@@ -36,6 +36,13 @@ class InvoiceService
     public function findOrFail(int $id): Invoice
     {
         $invoice = $this->repository->findById($id);
+        abort_if(!$invoice, 404, 'Invoice tidak ditemukan');
+        return $invoice;
+    }
+
+    public function findHeaderOrFail(int $id): Invoice
+    {
+        $invoice = $this->repository->findHeaderById($id);
         abort_if(!$invoice, 404, 'Invoice tidak ditemukan');
         return $invoice;
     }
