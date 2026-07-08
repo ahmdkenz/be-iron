@@ -25,6 +25,11 @@ class InvoiceListResource extends JsonResource
                 'nama_klien' => $this->klienAr->nama_klien,
                 'no_wa'      => $this->klienAr->no_wa,
             ] : null),
+            'resto'                      => $this->whenLoaded('resto', fn() => $this->resto ? [
+                'id'         => $this->resto->id,
+                'kode_resto' => $this->resto->kode_resto,
+                'nama_resto' => $this->resto->nama_resto,
+            ] : null),
             'subtotal'                   => (float) $this->subtotal,
             'tagihan_periode_sebelumnya' => (float) $this->tagihan_periode_sebelumnya,
             'total_pembayaran'           => (float) $this->total_pembayaran,

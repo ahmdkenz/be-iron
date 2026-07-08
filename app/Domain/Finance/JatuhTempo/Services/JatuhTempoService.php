@@ -15,7 +15,7 @@ class JatuhTempoService
         $segmentTypes = $this->resolveSegmentTypes($filters['segment'] ?? null);
 
         $query = Invoice::query()
-            ->with(['klienAr.perusahaan', 'klienAr.karyawanAr'])
+            ->with(['klienAr.perusahaan', 'klienAr.karyawanAr', 'klienAr.resto'])
             ->whereIn('status', ['TERKIRIM', 'SEBAGIAN'])
             ->where('sisa_tagihan', '>', 0)
             ->where(fn($q) => $q
@@ -60,6 +60,7 @@ class JatuhTempoService
                 'klien_id'            => $klien?->id,
                 'kode_klien'          => $klien?->kode_klien,
                 'nama_klien'          => $klien?->nama_klien,
+                'nama_resto'          => $klien?->resto?->nama_resto,
                 'perusahaan'          => $klien?->perusahaan?->nama_singkatan_perusahaan,
                 'pic_ar'              => $klien?->karyawanAr?->nama_karyawan,
             ];

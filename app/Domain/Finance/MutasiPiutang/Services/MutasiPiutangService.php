@@ -114,7 +114,7 @@ class MutasiPiutangService
             ];
         }
 
-        $klienMap = KlienAr::with(['perusahaan', 'karyawanAr'])
+        $klienMap = KlienAr::with(['perusahaan', 'karyawanAr', 'resto'])
             ->whereIn('id', $klienIds)
             ->get()
             ->keyBy('id');
@@ -191,6 +191,7 @@ class MutasiPiutangService
                 'klien_id'      => $klienId,
                 'kode_klien'    => $klien?->kode_klien,
                 'nama_klien'    => $klien?->nama_klien,
+                'nama_resto'    => $klien?->resto?->nama_resto,
                 'tipe_klien'    => $klien?->tipe_klien,
                 'perusahaan'    => $klien?->perusahaan?->nama_singkatan_perusahaan,
                 'pic_ar'        => $klien?->karyawanAr?->nama_karyawan,

@@ -17,7 +17,7 @@ class AgingReportService
         $segmentTypes = $this->resolveSegmentTypes($filters['segment'] ?? null);
 
         $regularInvoices = Invoice::query()
-            ->with(['klienAr.perusahaan', 'klienAr.karyawanAr'])
+            ->with(['klienAr.perusahaan', 'klienAr.karyawanAr', 'klienAr.resto'])
             ->where('is_opening_balance', false)
             ->whereNotIn('status', ['LUNAS'])
             ->when($filters['klien_ar_id'] ?? null, fn($q, $v) => $q->where('klien_ar_id', $v))
@@ -27,7 +27,7 @@ class AgingReportService
             ->get();
 
         $obInvoices = Invoice::query()
-            ->with(['klienAr.perusahaan', 'klienAr.karyawanAr', 'openingBalanceDetails'])
+            ->with(['klienAr.perusahaan', 'klienAr.karyawanAr', 'klienAr.resto', 'openingBalanceDetails'])
             ->where('is_opening_balance', true)
             ->where('approval_status', 'APPROVED')
             ->whereNotIn('status', ['LUNAS'])
@@ -124,6 +124,7 @@ class AgingReportService
                 'klien_id'     => $klien?->id,
                 'kode_klien'   => $klien?->kode_klien,
                 'nama_klien'   => $klien?->nama_klien,
+                'nama_resto'   => $klien?->resto?->nama_resto,
                 'perusahaan'   => $klien?->perusahaan?->nama_singkatan_perusahaan,
                 'pic_ar'       => $klien?->karyawanAr?->nama_karyawan,
                 'current'      => $buckets['current'],

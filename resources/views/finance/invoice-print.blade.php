@@ -210,6 +210,10 @@
             </tr>
             @endif
             <tr>
+              <td class="dl-lbl">No. Surat Jalan</td><td class="dl-colon">:</td>
+              <td class="dl-val">{{ $invoice->no_surat_jalan ?: '-' }}</td>
+            </tr>
+            <tr>
               <td class="dl-lbl">Status</td><td class="dl-colon">:</td>
               <td class="dl-val">
                 <span class="badge badge-{{ $invoice->status }}">{{ $invoice->status }}</span>
@@ -238,6 +242,8 @@
               <td class="dl-lbl">Kepada</td><td class="dl-colon">:</td>
               <td class="dl-val"><strong style="color:#b71c1c;">{{ $invoice->klienAr->nama_klien }}</strong> @if($invoice->klienAr->alias)<span style="color:#666;">({{ $invoice->klienAr->alias }})</span>@endif</td>
             </tr>
+            @if($invoice->klienAr->tipe_klien === 'RESTO' && $invoice->klienAr->resto)
+            @endif
             @if($invoice->klienAr->perusahaan && $invoice->klienAr->tipe_klien === 'PT')
             <tr>
               <td class="dl-lbl">Penerima Tagihan</td><td class="dl-colon">:</td>
@@ -651,6 +657,12 @@
                 <td class="dl-lbl">Kepada</td><td class="dl-colon">:</td>
                 <td class="dl-val"><strong style="color:#b71c1c;">{{ $regInv->klienAr->nama_klien }}</strong> @if($regInv->klienAr->alias)<span style="color:#666;">({{ $regInv->klienAr->alias }})</span>@endif</td>
               </tr>
+              @if($regInv->klienAr->tipe_klien === 'RESTO' && $regInv->klienAr->resto)
+              <tr>
+                <td class="dl-lbl">Outlet</td><td class="dl-colon">:</td>
+                <td class="dl-val">{{ $regInv->klienAr->resto->nama_resto }} ({{ $regInv->klienAr->resto->kode_resto }})</td>
+              </tr>
+              @endif
               @php
                 if ($regInv->klienAr->tipe_klien === 'RESTO') {
                     $regClientNpwp = $regInv->klienAr->resto?->investor?->npwp ?: ($regInv->klienAr->no_npwp ?: null);

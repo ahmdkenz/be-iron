@@ -16,7 +16,7 @@ class InvoiceRepository
             $perPage = max(1, (int) $filters['per_page']);
         }
 
-        $relations = $with ?? ['klienAr' => fn($q) => $q->withTrashed()];
+        $relations = $with ?? ['klienAr' => fn($q) => $q->withTrashed(), 'resto'];
 
         return $this->applyFilters(Invoice::with($relations), $filters)
             ->latest('tanggal_invoice')
@@ -140,7 +140,7 @@ class InvoiceRepository
     {
         $today = now()->toDateString();
 
-        $rows = $this->applyFilters(Invoice::query()->with(['klienAr.perusahaan', 'klienAr.karyawanAr']), $filters)
+        $rows = $this->applyFilters(Invoice::query()->with(['klienAr.perusahaan', 'klienAr.karyawanAr', 'klienAr.resto']), $filters)
             ->selectRaw('
                 klien_ar_id,
                 COUNT(*) as total_invoice,
@@ -191,6 +191,7 @@ class InvoiceRepository
                 'klien_id'        => $klien?->id,
                 'kode_klien'      => $klien?->kode_klien,
                 'nama_klien'      => $klien?->nama_klien,
+                'nama_resto'      => $klien?->resto?->nama_resto,
                 'tipe_klien'      => $klien?->tipe_klien,
                 'perusahaan'      => $klien?->perusahaan?->nama_singkatan_perusahaan,
                 'pic_ar'          => $klien?->karyawanAr?->nama_karyawan,
