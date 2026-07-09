@@ -492,12 +492,8 @@ class MasterImportService
         $batch->update(['barang_total' => count($rows)]);
 
         $actingUserId = $batch->user_id;
-        $kodeMap  = Barang::all(['id', 'kode_barang'])
-            ->mapWithKeys(fn($b) => [strtoupper($b->kode_barang) => $b->id])
-            ->all();
-        $newKodeSeen = [];
 
-        $brgIns = $brgUpd = $brgFail = 0;
+        $brgIns = $brgUpd = $brgSkip = $brgFail = 0;
         $processed     = 0;
         $lineNumber    = 0;
         $headerSkipped = false;
@@ -512,6 +508,7 @@ class MasterImportService
                         'barang_processed' => min($processed, $batch->barang_total),
                         'barang_inserted'  => $brgIns,
                         'barang_updated'   => $brgUpd,
+                        'barang_skipped'   => $brgSkip,
                         'barang_failed'    => $brgFail,
                     ]);
                     DB::beginTransaction();
@@ -539,33 +536,21 @@ class MasterImportService
                     'status'      => $this->parseStatus($rawStatus),
                 ];
 
-                $existing = Barang::whereRaw('LOWER(nama_barang) = ?', [strtolower($rawNama)])->first();
-
-                $rules = [
+                $validator = Validator::make($data, [
+                    'kode_barang' => ['required', 'string', 'max:50'],
                     'nama_barang' => ['required', 'string', 'max:150'],
                     'spesifikasi' => ['nullable', 'string'],
                     'keterangan'  => ['nullable', 'string'],
                     'status'      => ['nullable', 'boolean'],
-                ];
-                if (!$existing) {
-                    $rules['kode_barang'] = ['required', 'string', 'max:50'];
-                }
-
-                $validator = Validator::make($data, $rules);
+                ]);
                 if ($validator->fails()) {
                     $errors[] = ['sheet' => 'MASTER BARANG', 'row' => $lineNumber, 'message' => implode('; ', $validator->errors()->all())];
                     $brgFail++;
                     continue;
                 }
 
-                if (!$existing) {
-                    $kodeUpper = strtoupper($data['kode_barang']);
-                    if (isset($kodeMap[$kodeUpper]) || isset($newKodeSeen[$kodeUpper])) {
-                        $errors[] = ['sheet' => 'MASTER BARANG', 'row' => $lineNumber, 'message' => "kode_barang '{$kodeUpper}' sudah digunakan oleh barang lain."];
-                        $brgFail++;
-                        continue;
-                    }
-                }
+                // kode_barang adalah identitas unik barang — nama_barang bisa sama untuk produk berbeda (varian/kategori berbeda)
+                $existing = Barang::where('kode_barang', $rawKode)->first();
 
                 try {
                     if ($existing) {
@@ -578,18 +563,17 @@ class MasterImportService
                                 'updated_by'  => $actingUserId,
                             ]);
                             $brgUpd++;
+                        } else {
+                            $brgSkip++;
                         }
                     } else {
-                        $kodeUpper = strtoupper($data['kode_barang']);
-                        $barang    = Barang::create([
-                            'kode_barang' => $kodeUpper,
+                        Barang::create([
+                            'kode_barang' => $rawKode,
                             'nama_barang' => $data['nama_barang'],
                             'spesifikasi' => $data['spesifikasi'],
                             'keterangan'  => $data['keterangan'],
                             'status'      => $data['status'] ?? true,
                         ]);
-                        $newKodeSeen[$kodeUpper] = $barang->id;
-                        $kodeMap[$kodeUpper]     = $barang->id;
                         $brgIns++;
                     }
                 } catch (\Throwable $e) {
@@ -607,6 +591,7 @@ class MasterImportService
             'barang_processed' => $batch->barang_total,
             'barang_inserted'  => $brgIns,
             'barang_updated'   => $brgUpd,
+            'barang_skipped'   => $brgSkip,
             'barang_failed'    => $brgFail,
         ]);
     }
@@ -920,8 +905,8 @@ class MasterImportService
         }
         if ($batch->barang_total > 0) {
             $parts[] = sprintf(
-                'MASTER BARANG: Barang +%d ~%d ✗%d',
-                $batch->barang_inserted, $batch->barang_updated, $batch->barang_failed,
+                'MASTER BARANG: Barang +%d ~%d ⊘%d ✗%d',
+                $batch->barang_inserted, $batch->barang_updated, $batch->barang_skipped, $batch->barang_failed,
             );
         }
         if ($batch->invoice_total > 0) {

@@ -17,6 +17,7 @@ class OpeningBalanceDetailItemResource extends JsonResource
                 'kode_barang' => $this->barang->kode_barang,
                 'nama_barang' => $this->barang->nama_barang,
             ] : null),
+            'kode_barang'  => $this->kode_barang ?? $this->barang?->kode_barang,
             'nama_barang'  => $this->nama_barang,
             'qty'          => (float) $this->qty,
             'satuan'       => $this->satuan,

@@ -138,8 +138,22 @@ class InvoiceController extends Controller
         $invoices = $query
             ->orderBy('tanggal_invoice')
             ->orderBy('id')
-            ->get()
-            ->map(fn($inv) => [
+            ->get();
+
+        // Fallback: item lama bisa punya barang_id kosong tapi kode_barang valid.
+        // Cari master barang berdasarkan kode_barang agar tetap tersambung.
+        $kodeBarangTanpaId = $invoices->flatMap(fn($inv) => $inv->items)
+            ->whereNull('barang_id')
+            ->pluck('kode_barang')
+            ->filter()
+            ->unique()
+            ->values();
+
+        $barangByKode = $kodeBarangTanpaId->isNotEmpty()
+            ? \App\Models\Barang::whereIn('kode_barang', $kodeBarangTanpaId)->get()->keyBy('kode_barang')
+            : collect();
+
+        $invoices = $invoices->map(fn($inv) => [
                 'id'              => $inv->id,
                 'no_invoice'      => $inv->no_invoice,
                 'tanggal_invoice' => $inv->tanggal_invoice?->toDateString(),
@@ -148,16 +162,22 @@ class InvoiceController extends Controller
                 'sisa_tagihan'    => max(0.0, (float) $inv->subtotal - (float) $inv->total_pembayaran - (float) $inv->total_penyesuaian),
                 'status'          => $inv->status,
                 'keterangan'      => $inv->keterangan,
-                'items'           => $inv->items->map(fn($item) => [
-                    'barang_id'    => $item->barang_id,
-                    'kode_barang'  => $item->kode_barang ?? $item->barang?->kode_barang ?? '',
-                    'nama_barang'  => $item->nama_barang,
-                    'qty'          => (float) $item->qty,
-                    'satuan'       => $item->satuan ?? 'pcs',
-                    'harga_satuan' => (float) $item->harga_satuan,
-                    'subtotal'     => (float) $item->subtotal,
-                    'keterangan'   => $item->keterangan ?? '',
-                ])->values()->all(),
+                'items'           => $inv->items->map(function ($item) use ($barangByKode) {
+                    $fallbackBarang = !$item->barang_id && $item->kode_barang
+                        ? $barangByKode->get($item->kode_barang)
+                        : null;
+
+                    return [
+                        'barang_id'    => $item->barang_id ?? $fallbackBarang?->id,
+                        'kode_barang'  => $item->kode_barang ?? $item->barang?->kode_barang ?? '',
+                        'nama_barang'  => $item->nama_barang,
+                        'qty'          => (float) $item->qty,
+                        'satuan'       => $item->satuan ?? 'pcs',
+                        'harga_satuan' => (float) $item->harga_satuan,
+                        'subtotal'     => (float) $item->subtotal,
+                        'keterangan'   => $item->keterangan ?? '',
+                    ];
+                })->values()->all(),
             ]);
 
         return $this->successResponse($invoices);

@@ -473,7 +473,7 @@ class OpeningBalanceController extends Controller
                     $rowData = [
                         'A' => [$inv->no_invoice,                        DataType::TYPE_STRING],
                         'B' => [$detail->no_invoice_asal,                DataType::TYPE_STRING],
-                        'C' => [$item->barang?->kode_barang ?? '-',      DataType::TYPE_STRING],
+                        'C' => [$item->kode_barang ?? $item->barang?->kode_barang ?? '-', DataType::TYPE_STRING],
                         'D' => [$item->nama_barang,                      DataType::TYPE_STRING],
                         'E' => [(float) $item->qty,                      DataType::TYPE_NUMERIC],
                         'F' => [$item->satuan ?? '-',                    DataType::TYPE_STRING],
