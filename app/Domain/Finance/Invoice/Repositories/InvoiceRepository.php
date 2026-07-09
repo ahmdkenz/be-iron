@@ -88,6 +88,33 @@ class InvoiceRepository
         ])->find($id);
     }
 
+    /**
+     * Relasi yang benar-benar dipakai template finance.invoice-print, dipakai
+     * satu kali oleh InvoiceController::print() alih-alih findById() penuh
+     * (yang membawa approvalLogs, endingBalanceKoreksi tanpa filter, dll)
+     * lalu di-load() ulang dengan set relasi yang berbeda.
+     */
+    public function findForPrintById(int $id): ?Invoice
+    {
+        return Invoice::with([
+            'klienAr.karyawanAr',
+            'klienAr.perusahaan',
+            'klienAr.resto.investor',
+            'perusahaan',
+            'karyawan.perusahaan',
+            'resto',
+            'items.barang',
+            'openingBalanceDetails.items.barang',
+            'pembayarans',
+            'createdBy.karyawan',
+            'submittedBy.karyawan',
+            'approvedBy.karyawan',
+            'endingBalanceKoreksi' => fn($q) => $q
+                ->whereIn('tipe', ['CREDIT_NOTE', 'DEBIT_NOTE'])
+                ->where('status', 'APPROVED'),
+        ])->find($id);
+    }
+
     public function create(array $data): Invoice
     {
         return Invoice::create($data);

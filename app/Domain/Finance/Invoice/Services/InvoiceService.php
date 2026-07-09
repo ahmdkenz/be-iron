@@ -47,6 +47,13 @@ class InvoiceService
         return $invoice;
     }
 
+    public function findForPrintOrFail(int $id): Invoice
+    {
+        $invoice = $this->repository->findForPrintById($id);
+        abort_if(!$invoice, 404, 'Invoice tidak ditemukan');
+        return $invoice;
+    }
+
     public function getSummary(array $filters = []): array
     {
         return $this->repository->getSummary($filters);

@@ -263,12 +263,23 @@ class InvoiceController extends Controller
         return $this->successResponse(new InvoiceResource($invoice));
     }
 
-    public function items(int $id): JsonResponse
+    public function items(Request $request, int $id): JsonResponse
     {
-        $invoice = Invoice::findOrFail($id);
-        $items   = $invoice->items()->with('barang')->get();
+        $request->validate([
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
+        ]);
 
-        return $this->successResponse(InvoiceItemResource::collection($items));
+        $invoice = Invoice::findOrFail($id);
+        $query   = $invoice->items()->with('barang')->orderBy('id');
+
+        if ($request->boolean('all')) {
+            return $this->successResponse(InvoiceItemResource::collection($query->get()));
+        }
+
+        $perPage = (int) $request->input('per_page', 50);
+        $items   = $query->paginate($perPage);
+
+        return $this->paginatedResponse($items->through(fn($item) => new InvoiceItemResource($item)));
     }
 
     public function pembayaran(int $id): JsonResponse
@@ -738,37 +749,19 @@ class InvoiceController extends Controller
                 'isHtml5ParserEnabled' => true,
                 'isRemoteEnabled'      => false,
                 'defaultFont'          => 'Arial',
-                'dpi'                  => 150,
+                'dpi'                  => 96,
             ])
             ->stream($filename);
     }
 
     public function print(Request $request, int $id): Response|string
     {
-        $invoice = $this->service->findOrFail($id);
+        $invoice = $this->service->findForPrintOrFail($id);
         abort_if(
             $invoice->requiresApproval() && !$invoice->isApprovedForFinanceFlow(),
             422,
             'Opening balance belum disetujui, dokumen belum dapat dicetak'
         );
-
-        $invoice->load([
-            'klienAr.karyawanAr',
-            'klienAr.perusahaan',
-            'klienAr.resto.investor',
-            'perusahaan',
-            'karyawan.perusahaan',
-            'resto',
-            'items.barang',
-            'openingBalanceDetails.items.barang',
-            'pembayarans',
-            'createdBy.karyawan',
-            'submittedBy.karyawan',
-            'approvedBy.karyawan',
-            'endingBalanceKoreksi' => fn($q) => $q
-                ->whereIn('tipe', ['CREDIT_NOTE', 'DEBIT_NOTE'])
-                ->where('status', 'APPROVED'),
-        ]);
 
         $regularInvoicesInPeriod = collect();
         if ($invoice->is_opening_balance && $invoice->klien_ar_id && $invoice->tanggal_invoice) {
@@ -819,7 +812,7 @@ class InvoiceController extends Controller
                 'isHtml5ParserEnabled' => true,
                 'isRemoteEnabled'      => false,
                 'defaultFont'          => 'Arial',
-                'dpi'                  => 150,
+                'dpi'                  => 96,
             ])
             ->stream($filename);
     }
