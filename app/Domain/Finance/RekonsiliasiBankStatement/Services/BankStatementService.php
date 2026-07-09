@@ -2,7 +2,6 @@
 
 namespace App\Domain\Finance\RekonsiliasiBankStatement\Services;
 
-use App\Domain\Finance\Invoice\Jobs\UploadInvoiceToGDriveJob;
 use App\Domain\Finance\PembayaranAr\Services\PembayaranArService;
 use App\Domain\Finance\RekonsiliasiBankStatement\Exceptions\DuplicateStatementException;
 use App\Domain\Finance\RekonsiliasiBankStatement\Parsers\BankParserFactory;
@@ -520,8 +519,6 @@ class BankStatementService
                 'updated_by'       => auth()->id(),
             ]);
         });
-
-        UploadInvoiceToGDriveJob::dispatch($target->id);
     }
 
     public function getInvoiceCandidatesForNewPayment(

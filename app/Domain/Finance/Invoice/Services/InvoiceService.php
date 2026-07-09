@@ -3,7 +3,6 @@
 namespace App\Domain\Finance\Invoice\Services;
 
 use App\Domain\Finance\Invoice\DTO\InvoiceDTO;
-use App\Domain\Finance\Invoice\Jobs\UploadInvoiceToGDriveJob;
 use App\Domain\Finance\Invoice\Repositories\InvoiceRepository;
 use App\Models\Invoice;
 use App\Models\InvoiceApprovalLog;
@@ -351,9 +350,6 @@ class InvoiceService
 
             $this->propagateCarryover($approved);
 
-            // Dispatch di dalam transaksi: job hanya masuk queue jika transaksi commit
-            UploadInvoiceToGDriveJob::dispatch($approved->id);
-
             return $approved;
         });
     }
@@ -613,8 +609,6 @@ class InvoiceService
         }
 
         $ob->update($updateData);
-
-        UploadInvoiceToGDriveJob::dispatch($ob->id);
     }
 
     public function propagateCarryover(Invoice $invoice): void
@@ -852,8 +846,6 @@ class InvoiceService
                 'updated_by'       => auth()->id(),
             ]);
 
-            UploadInvoiceToGDriveJob::dispatch($fresh->id);
-
             $available = round($available - $jumlah, 2);
         }
     }
@@ -972,7 +964,6 @@ class InvoiceService
                         'status'                     => $terbayarEfOb <= 0 ? 'TERKIRIM' : ($isLunasOb ? 'LUNAS' : 'SEBAGIAN'),
                         'updated_by'                 => auth()->id(),
                     ]);
-                    UploadInvoiceToGDriveJob::dispatch($nextInvoice->id);
                 }
                 // Lanjutkan cascade melewati OB agar invoice reguler sesudahnya ikut diperbarui
                 $current = $nextInvoice->fresh();
@@ -1011,8 +1002,6 @@ class InvoiceService
                 'status'                     => $newStatus,
                 'updated_by'                 => auth()->id(),
             ]);
-
-            UploadInvoiceToGDriveJob::dispatch($nextInvoice->id);
 
             $current = $nextInvoice->fresh();
         }

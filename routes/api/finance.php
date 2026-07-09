@@ -62,7 +62,6 @@ Route::prefix('invoices')->group(function () {
     Route::delete('/{invoice}', [InvoiceController::class, 'destroy']);
     Route::patch('/{invoice}/status', [InvoiceController::class, 'changeStatus']);
     Route::patch('/{invoice}/recalculate', [InvoiceController::class, 'recalculate']);
-    Route::post('/{invoice}/sync-gdrive', [InvoiceController::class, 'syncGdrive']);
 
     // Pembayaran per Invoice
     Route::post('/{invoice}/pembayaran', [PembayaranArController::class, 'store']);

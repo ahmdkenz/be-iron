@@ -28,6 +28,8 @@ class PembayaranAr extends Model
         'bukti_file_size',
         'bukti_mime_type',
         'bukti_uploaded_at',
+        'bukti_disk',
+        'bukti_path',
         'created_by',
         'updated_by',
     ];

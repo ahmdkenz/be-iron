@@ -274,8 +274,6 @@ class EndingBalanceKoreksiService
         $invoice->save();
 
         $this->invoiceService->recalculate($invoice->fresh());
-
-        \App\Domain\Finance\Invoice\Jobs\UploadInvoiceToGDriveJob::dispatch($invoice->id);
     }
 
     /**

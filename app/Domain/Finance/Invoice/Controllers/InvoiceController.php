@@ -3,7 +3,6 @@
 namespace App\Domain\Finance\Invoice\Controllers;
 
 use App\Domain\Finance\Invoice\DTO\InvoiceDTO;
-use App\Domain\Finance\Invoice\Jobs\UploadInvoiceToGDriveJob;
 use App\Domain\Finance\Invoice\Requests\StoreInvoiceRequest;
 use App\Domain\Finance\Invoice\Requests\UpdateInvoiceRequest;
 use App\Domain\Finance\Invoice\Resources\InvoiceItemResource;
@@ -242,17 +241,6 @@ class InvoiceController extends Controller
     public function store(StoreInvoiceRequest $request): JsonResponse
     {
         $invoice = $this->service->create(InvoiceDTO::fromRequest($request->validated()));
-        UploadInvoiceToGDriveJob::dispatch($invoice->id);
-
-        if ($invoice->klien_ar_id && $invoice->tanggal_invoice) {
-            $monthStart = \Carbon\Carbon::parse($invoice->tanggal_invoice)->startOfMonth()->toDateString();
-            $monthEnd   = \Carbon\Carbon::parse($invoice->tanggal_invoice)->endOfMonth()->toDateString();
-            Invoice::where('klien_ar_id', $invoice->klien_ar_id)
-                ->where('is_opening_balance', true)
-                ->where('approval_status', 'APPROVED')
-                ->whereBetween('tanggal_invoice', [$monthStart, $monthEnd])
-                ->each(fn($ob) => UploadInvoiceToGDriveJob::dispatch($ob->id));
-        }
 
         return $this->createdResponse(new InvoiceResource($invoice), 'Invoice berhasil dibuat');
     }
@@ -833,11 +821,6 @@ class InvoiceController extends Controller
             ->stream($filename);
     }
 
-    public function syncGdrive(Invoice $invoice): JsonResponse
-    {
-        UploadInvoiceToGDriveJob::dispatch($invoice->id);
-        return $this->successResponse(null, 'PDF sedang diupload ulang ke Google Drive');
-    }
     public function exportB2BDelivery(Request $request): BinaryFileResponse|JsonResponse
     {
         if (!class_exists('ZipArchive')) {

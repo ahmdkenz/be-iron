@@ -14,6 +14,8 @@ use App\Support\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class PembayaranArController extends Controller
 {
@@ -121,6 +123,17 @@ class PembayaranArController extends Controller
 
         $this->service->delete($pembayaran);
         return $this->successResponse(null, 'Pembayaran berhasil dihapus');
+    }
+
+    public function publicBukti(PembayaranAr $pembayaran): StreamedResponse
+    {
+        abort_if(!$pembayaran->bukti_path, 404);
+
+        return Storage::disk($pembayaran->bukti_disk)->response(
+            $pembayaran->bukti_path,
+            $pembayaran->bukti_file_name,
+            ['Content-Type' => $pembayaran->bukti_mime_type],
+        );
     }
 
     public function cekReferensi(Request $request): JsonResponse

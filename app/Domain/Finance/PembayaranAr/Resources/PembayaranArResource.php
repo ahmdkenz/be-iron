@@ -4,6 +4,7 @@ namespace App\Domain\Finance\PembayaranAr\Resources;
 
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
+use Illuminate\Support\Facades\URL;
 
 class PembayaranArResource extends JsonResource
 {
@@ -46,14 +47,17 @@ class PembayaranArResource extends JsonResource
             'no_referensi'          => $this->no_referensi,
             'jenis'                 => $this->resolveJenis(),
             'keterangan'            => $this->keterangan,
-            'bukti_gdrive_file_id'  => $this->bukti_gdrive_file_id,
             'bukti_file_name'       => $this->bukti_file_name,
             'bukti_file_size'       => $this->bukti_file_size,
             'bukti_mime_type'       => $this->bukti_mime_type,
             'bukti_uploaded_at'     => $this->bukti_uploaded_at?->format('d-m-Y H:i'),
-            'bukti_gdrive_url'      => $this->bukti_gdrive_file_id
-                ? 'https://drive.google.com/file/d/' . $this->bukti_gdrive_file_id . '/view'
-                : null,
+            'bukti_url'             => $this->bukti_path
+                ? URL::temporarySignedRoute(
+                    'pembayaran.public-bukti', now()->addDays(30), ['pembayaran' => $this->id]
+                )
+                : ($this->bukti_gdrive_file_id
+                    ? 'https://drive.google.com/file/d/' . $this->bukti_gdrive_file_id . '/view'
+                    : null),
             'status_rekonsiliasi'   => $bankDetail?->status_cocok,
             'tanggal_rekonsiliasi'  => $bankDetail?->tanggal?->format('d-m-Y'),
             'no_ref_bank'           => $bankDetail?->no_referensi,

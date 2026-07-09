@@ -2,9 +2,7 @@
 
 namespace App\Domain\Finance\PembayaranAr\Services;
 
-use App\Domain\Finance\Invoice\Jobs\UploadInvoiceToGDriveJob;
 use App\Domain\Finance\Invoice\Services\InvoiceService;
-use App\Domain\Finance\PembayaranAr\Jobs\UploadBuktiBayarToGDriveJob;
 use App\Domain\Finance\PendapatanDiMuka\Services\PendapatanDiMukaService;
 use App\Models\BankStatement;
 use App\Models\BankStatementDetail;
@@ -16,6 +14,7 @@ use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 
 class PembayaranArService
 {
@@ -67,13 +66,11 @@ class PembayaranArService
             );
         }
 
-        UploadInvoiceToGDriveJob::dispatch($invoice->id);
-
         if ($buktiBayar) {
             try {
-                $this->dispatchBuktiUpload($pembayaran, $buktiBayar);
+                $this->storeBukti($pembayaran, $buktiBayar);
             } catch (\Throwable $e) {
-                Log::error('PembayaranArService: gagal upload bukti bayar ke GDrive', [
+                Log::error('PembayaranArService: gagal menyimpan bukti bayar', [
                     'pembayaran_id' => $pembayaran->id,
                     'error'         => $e->getMessage(),
                 ]);
@@ -83,21 +80,21 @@ class PembayaranArService
         return $pembayaran->load('createdBy');
     }
 
-    private function dispatchBuktiUpload(PembayaranAr $pembayaran, UploadedFile $file): void
+    private function storeBukti(PembayaranAr $pembayaran, UploadedFile $file): void
     {
-        $ext      = $file->getClientOriginalExtension();
-        $fileName = 'Pembayaran-' . $pembayaran->id . '-' . now()->format('Ymd') . '.' . $ext;
-        $tempPath = 'temp/bukti/' . $fileName;
+        $ext  = $file->getClientOriginalExtension();
+        $path = "bukti-bayar/{$pembayaran->id}/" . Str::uuid()->toString() . ".{$ext}";
 
-        Storage::put($tempPath, file_get_contents($file->getRealPath()));
+        Storage::disk('local')->put($path, file_get_contents($file->getRealPath()));
 
-        UploadBuktiBayarToGDriveJob::dispatch(
-            $pembayaran->id,
-            $tempPath,
-            $fileName,
-            $file->getMimeType() ?? $file->getClientMimeType(),
-            $file->getSize(),
-        );
+        $pembayaran->update([
+            'bukti_disk'        => 'local',
+            'bukti_path'        => $path,
+            'bukti_file_name'   => $file->getClientOriginalName(),
+            'bukti_file_size'   => $file->getSize(),
+            'bukti_mime_type'   => $file->getMimeType() ?? $file->getClientMimeType(),
+            'bukti_uploaded_at' => now(),
+        ]);
     }
 
     public function delete(PembayaranAr $pembayaran): void
@@ -170,14 +167,9 @@ class PembayaranArService
             $invoice = Invoice::find($invoiceId);
             $this->invoiceService->recalculate($invoice);
 
-            if ($invoice) {
-                UploadInvoiceToGDriveJob::dispatch($invoice->id);
-            }
-
             foreach ($affectedInvoices as $targetInvoice) {
                 if ($targetInvoice->id !== $invoiceId) {
                     $this->invoiceService->recalculate($targetInvoice->fresh());
-                    UploadInvoiceToGDriveJob::dispatch($targetInvoice->id);
                 }
             }
         });

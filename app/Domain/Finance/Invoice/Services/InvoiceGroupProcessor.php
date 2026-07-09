@@ -2,7 +2,6 @@
 
 namespace App\Domain\Finance\Invoice\Services;
 
-use App\Domain\Finance\Invoice\Jobs\UploadInvoiceToGDriveJob;
 use App\Models\EndingBalance;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
@@ -23,7 +22,6 @@ use Illuminate\Support\Str;
  *  - Invoice LUNAS → skip
  *  - Invoice baru: create + insert items + recompute subtotal
  *  - Invoice update: delete items lama + insert baru + recalculate
- *  - Dispatch UploadInvoiceToGDriveJob setelah tersimpan
  *
  * TIDAK menangani:
  *  - Parsing Excel / grouping baris (tanggung jawab caller)
@@ -110,15 +108,6 @@ class InvoiceGroupProcessor
                 ]);
             }
         }
-
-        // Re-upload OB APPROVED yang terdampak
-        $klienIds = array_keys($firstByKlien);
-        if (!empty($klienIds)) {
-            Invoice::whereIn('klien_ar_id', $klienIds)
-                ->where('is_opening_balance', true)
-                ->where('approval_status', 'APPROVED')
-                ->each(fn($ob) => UploadInvoiceToGDriveJob::dispatch($ob->id));
-        }
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -201,8 +190,6 @@ class InvoiceGroupProcessor
             $this->insertItems($invoice, $items);
             $this->recomputeSubtotal($invoice);
 
-            UploadInvoiceToGDriveJob::dispatch($invoice->fresh()->id);
-
             return ProcessGroupResult::inserted($invoice->fresh());
         } catch (\Throwable $e) {
             return ProcessGroupResult::failed('Gagal membuat invoice: ' . $e->getMessage());
@@ -232,8 +219,6 @@ class InvoiceGroupProcessor
             }
 
             $this->service->recalculateDraftEndingBalance($existingInvoice);
-
-            UploadInvoiceToGDriveJob::dispatch($existingInvoice->fresh()->id);
 
             return ProcessGroupResult::updated($existingInvoice->fresh());
         } catch (\Throwable $e) {

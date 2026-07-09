@@ -35,12 +35,4 @@ return [
         ],
     ],
 
-    'google_drive' => [
-        'client_id'      => env('GOOGLE_CLIENT_ID'),
-        'client_secret'  => env('GOOGLE_CLIENT_SECRET'),
-        'redirect_uri'   => env('GOOGLE_REDIRECT_URI', 'urn:ietf:wg:oauth:2.0:oob'),
-        'refresh_token'  => env('GOOGLE_REFRESH_TOKEN'),
-        'root_folder_id' => env('GOOGLE_DRIVE_ROOT_FOLDER_ID'),
-    ],
-
 ];

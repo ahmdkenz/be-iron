@@ -6,6 +6,7 @@ use App\Models\User;
 use App\Support\Helpers\RoleHelper;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
+use Illuminate\Support\Facades\URL;
 use App\Domain\Finance\Invoice\Resources\OpeningBalanceDetailResource;
 use App\Models\EndingBalance;
 
@@ -162,8 +163,10 @@ class InvoiceResource extends JsonResource
             'can_submit'                 => $this->canSubmit($request->user()),
             'can_record_payment'         => $this->isApprovedForFinanceFlow(),
             'can_print'                  => $this->isApprovedForFinanceFlow(),
-            'share_url'                  => $this->isApprovedForFinanceFlow() && $this->gdrive_file_id
-                ? 'https://drive.google.com/file/d/' . $this->gdrive_file_id . '/view'
+            'share_url'                  => $this->isApprovedForFinanceFlow() && $this->prepared_token
+                ? URL::temporarySignedRoute(
+                    'invoice.public-print', now()->addDays(30), ['token' => $this->prepared_token]
+                )
                 : null,
             'created_at'                 => $this->created_at?->toIso8601String(),
             'updated_at'                 => $this->updated_at?->toIso8601String(),

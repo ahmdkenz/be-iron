@@ -4,6 +4,7 @@ namespace App\Domain\Finance\Invoice\Resources;
 
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
+use Illuminate\Support\Facades\URL;
 
 class InvoiceListResource extends JsonResource
 {
@@ -40,8 +41,10 @@ class InvoiceListResource extends JsonResource
             'is_eb_locked'               => in_array($this->id, $this->ebLockedIds, true),
             'can_record_payment'         => $this->isApprovedForFinanceFlow(),
             'can_print'                  => $this->isApprovedForFinanceFlow(),
-            'share_url'                  => $this->isApprovedForFinanceFlow() && $this->gdrive_file_id
-                ? 'https://drive.google.com/file/d/' . $this->gdrive_file_id . '/view'
+            'share_url'                  => $this->isApprovedForFinanceFlow() && $this->prepared_token
+                ? URL::temporarySignedRoute(
+                    'invoice.public-print', now()->addDays(30), ['token' => $this->prepared_token]
+                )
                 : null,
         ];
     }
