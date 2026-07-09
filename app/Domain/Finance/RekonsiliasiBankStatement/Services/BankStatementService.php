@@ -581,11 +581,12 @@ class BankStatementService
         BankStatementDetail $detail,
         Invoice $invoice,
         array $settleOriginalInvoiceIds = [],
+        ?UploadedFile $buktiBayar = null,
     ): BankStatementDetail {
         abort_if($detail->status_cocok === 'MATCHED', 422, 'Transaksi ini sudah dicocokkan.');
         abort_if($detail->kredit <= 0, 422, 'Hanya transaksi kredit yang dapat dicatat pembayarannya.');
 
-        return DB::transaction(function () use ($detail, $invoice, $settleOriginalInvoiceIds) {
+        return DB::transaction(function () use ($detail, $invoice, $settleOriginalInvoiceIds, $buktiBayar) {
             $subtotal         = (float) $invoice->subtotal;
             $totalBayar       = (float) $invoice->total_pembayaran;
             $totalPenyesuaian = (float) $invoice->total_penyesuaian;
@@ -604,7 +605,7 @@ class BankStatementService
                 'settle_original_invoice_ids' => $settleOriginalInvoiceIds,
             ];
 
-            $pembayaran = $this->pembayaranArService->create($invoice, $paymentData);
+            $pembayaran = $this->pembayaranArService->create($invoice, $paymentData, $buktiBayar);
 
             return $this->manualMatch($detail, $pembayaran->id);
         });

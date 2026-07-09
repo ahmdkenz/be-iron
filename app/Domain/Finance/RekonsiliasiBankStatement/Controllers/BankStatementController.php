@@ -267,6 +267,7 @@ class BankStatementController extends Controller
             'invoice_id'                    => ['required', 'integer', 'exists:tb_invoice,id'],
             'settle_original_invoice_ids'   => ['nullable', 'array'],
             'settle_original_invoice_ids.*' => ['integer', 'exists:tb_invoice,id'],
+            'bukti_pembayaran'              => ['nullable', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:10240'],
         ]);
 
         try {
@@ -275,6 +276,7 @@ class BankStatementController extends Controller
                 $detail,
                 $invoice,
                 $request->input('settle_original_invoice_ids', []),
+                $request->file('bukti_pembayaran'),
             );
 
             $updated->load([
