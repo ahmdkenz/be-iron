@@ -41,6 +41,22 @@ php artisan boost:install
 
 Boost provides your agent 15+ tools and skills that help agents build Laravel applications while following best practices.
 
+## Menjalankan Queue Worker (Import Batch)
+
+Fitur import (Import Master Data, dsb.) berjalan sebagai background job (`QUEUE_CONNECTION=database`). Tanpa worker aktif, job hanya akan tertahan di status `queued`/`processing` dan tidak pernah selesai.
+
+**Lokal (development):**
+- Cara termudah: `composer run dev` — sudah menyalakan `queue:listen` bersama server & vite.
+- Atau manual di terminal terpisah: `php artisan queue:work database --tries=1 --timeout=1800`
+
+**Produksi (cPanel / shared hosting):**
+Daemon jangka panjang (`queue:work` tanpa henti) biasanya tidak diizinkan di shared hosting. Gunakan **Cron Job** cPanel yang jalan tiap menit dan berhenti sendiri saat antrian kosong:
+1. cPanel → Cron Jobs → tambah job baru, jadwal `* * * * *` (every minute).
+2. Command (sesuaikan path PHP & path project):
+   ```
+   /usr/local/bin/php /home/<user>/<path-to>/be-iron/artisan queue:work database --stop-when-empty --tries=1 --timeout=1800 >> /home/<user>/<path-to>/be-iron/storage/logs/queue-worker.log 2>&1
+   ```
+
 ## Contributing
 
 Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
