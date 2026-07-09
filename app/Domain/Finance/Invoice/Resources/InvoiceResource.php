@@ -42,6 +42,11 @@ class InvoiceResource extends JsonResource
                     'id'           => $this->klienAr->karyawanAr?->id,
                     'nik'          => $this->klienAr->karyawanAr?->nik,
                     'nama_karyawan'=> $this->klienAr->karyawanAr?->nama_karyawan,
+                    'perusahaan'   => $this->klienAr->karyawanAr?->relationLoaded('perusahaan') && $this->klienAr->karyawanAr?->perusahaan ? [
+                        'id'                        => $this->klienAr->karyawanAr->perusahaan->id,
+                        'nama_singkatan_perusahaan' => $this->klienAr->karyawanAr->perusahaan->nama_singkatan_perusahaan,
+                        'nama_perusahaan'           => $this->klienAr->karyawanAr->perusahaan->nama_perusahaan,
+                    ] : null,
                 ] : null,
                 'resto'        => $this->klienAr->relationLoaded('resto') && $this->klienAr->resto ? [
                     'id'         => $this->klienAr->resto->id,
@@ -57,6 +62,7 @@ class InvoiceResource extends JsonResource
                     ] : null,
                 ] : null,
             ] : null),
+            'entitas_penagih'            => $this->resolveEntitasPenagihPayload(),
             'perusahaan_id'              => $this->perusahaan_id,
             'perusahaan'                 => $this->whenLoaded('perusahaan', fn() => [
                 'id'                        => $this->perusahaan->id,
@@ -161,6 +167,22 @@ class InvoiceResource extends JsonResource
                 : null,
             'created_at'                 => $this->created_at?->toIso8601String(),
             'updated_at'                 => $this->updated_at?->toIso8601String(),
+        ];
+    }
+
+    private function resolveEntitasPenagihPayload(): ?array
+    {
+        $perusahaan = $this->resolveEntitasPenagih();
+
+        if (!$perusahaan) {
+            return null;
+        }
+
+        return [
+            'id'                        => $perusahaan->id,
+            'nama_perusahaan'           => $perusahaan->nama_perusahaan,
+            'nama_singkatan_perusahaan' => $perusahaan->nama_singkatan_perusahaan,
+            'source'                    => $this->resolveEntitasPenagihSource(),
         ];
     }
 

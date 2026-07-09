@@ -26,7 +26,7 @@ class UploadInvoiceToGDriveJob implements ShouldQueue
     public function handle(GoogleDriveService $driveService): void
     {
         $invoice = Invoice::with([
-            'klienAr.karyawanAr',
+            'klienAr.karyawanAr.perusahaan',
             'klienAr.resto',
             'resto',
             'perusahaan',
@@ -135,7 +135,7 @@ class UploadInvoiceToGDriveJob implements ShouldQueue
 
             if ($regularInvoicesInPeriod->isNotEmpty()) {
                 $regularInvoicesInPeriod->load([
-                    'klienAr.karyawanAr',
+                    'klienAr.karyawanAr.perusahaan',
                     'perusahaan',
                     'karyawan.perusahaan',
                     'items',

@@ -156,6 +156,47 @@ class Invoice extends Model
             && $this->approval_status === 'REJECTED';
     }
 
+    public function resolveEntitasPenagih(): ?Perusahaan
+    {
+        return $this->resolveEntitasPenagihContext()['perusahaan'];
+    }
+
+    public function resolveEntitasPenagihSource(): ?string
+    {
+        return $this->resolveEntitasPenagihContext()['source'];
+    }
+
+    private function resolveEntitasPenagihContext(): array
+    {
+        $tipeKlien = strtoupper((string) $this->klienAr?->tipe_klien);
+
+        if ($tipeKlien === 'RESTO' && $this->klienAr?->karyawanAr?->perusahaan) {
+            return [
+                'perusahaan' => $this->klienAr->karyawanAr->perusahaan,
+                'source'     => 'PIC_AR',
+            ];
+        }
+
+        if ($this->karyawan?->perusahaan) {
+            return [
+                'perusahaan' => $this->karyawan->perusahaan,
+                'source'     => 'INVOICE_KARYAWAN',
+            ];
+        }
+
+        if ($this->perusahaan) {
+            return [
+                'perusahaan' => $this->perusahaan,
+                'source'     => 'INVOICE_PERUSAHAAN',
+            ];
+        }
+
+        return [
+            'perusahaan' => null,
+            'source'     => null,
+        ];
+    }
+
     public function resolveRestoName(): ?string
     {
         if (filled($this->resto?->nama_resto)) {

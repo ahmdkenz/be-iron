@@ -709,7 +709,7 @@ class InvoiceController extends Controller
         );
 
         $invoice->load([
-            'klienAr.karyawanAr',
+            'klienAr.karyawanAr.perusahaan',
             'klienAr.perusahaan',
             'perusahaan',
             'karyawan.perusahaan',
@@ -738,6 +738,22 @@ class InvoiceController extends Controller
                 ])
                 ->orderBy('tanggal_invoice', 'asc')
                 ->get();
+        }
+
+        if ($regularInvoicesInPeriod->isNotEmpty()) {
+            $regularInvoicesInPeriod->load([
+                'klienAr.karyawanAr.perusahaan',
+                'klienAr.perusahaan',
+                'klienAr.resto.investor',
+                'perusahaan',
+                'karyawan.perusahaan',
+                'resto',
+                'items.barang',
+                'pembayarans',
+                'createdBy.karyawan',
+                'submittedBy.karyawan',
+                'approvedBy.karyawan',
+            ]);
         }
 
         $signatureData = $this->buildSignatureData($invoice);
@@ -781,7 +797,7 @@ class InvoiceController extends Controller
 
         if ($regularInvoicesInPeriod->isNotEmpty()) {
             $regularInvoicesInPeriod->load([
-                'klienAr.karyawanAr',
+                'klienAr.karyawanAr.perusahaan',
                 'klienAr.perusahaan',
                 'klienAr.resto.investor',
                 'perusahaan',

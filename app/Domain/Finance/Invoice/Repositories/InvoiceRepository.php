@@ -49,7 +49,7 @@ class InvoiceRepository
     {
         return Invoice::with([
             'klienAr.perusahaan',
-            'klienAr.karyawanAr',
+            'klienAr.karyawanAr.perusahaan',
             'klienAr.resto.investor',
             'resto',
             'perusahaan',
@@ -67,7 +67,7 @@ class InvoiceRepository
     {
         return Invoice::with([
             'klienAr.perusahaan',
-            'klienAr.karyawanAr',
+            'klienAr.karyawanAr.perusahaan',
             'klienAr.resto.investor',
             'resto',
             'perusahaan',
@@ -97,7 +97,7 @@ class InvoiceRepository
     public function findForPrintById(int $id): ?Invoice
     {
         return Invoice::with([
-            'klienAr.karyawanAr',
+            'klienAr.karyawanAr.perusahaan',
             'klienAr.perusahaan',
             'klienAr.resto.investor',
             'perusahaan',
@@ -167,7 +167,7 @@ class InvoiceRepository
     {
         $today = now()->toDateString();
 
-        $rows = $this->applyFilters(Invoice::query()->with(['klienAr.perusahaan', 'klienAr.karyawanAr', 'klienAr.resto']), $filters)
+        $rows = $this->applyFilters(Invoice::query()->with(['klienAr.perusahaan', 'klienAr.karyawanAr.perusahaan', 'klienAr.resto']), $filters)
             ->selectRaw('
                 klien_ar_id,
                 COUNT(*) as total_invoice,

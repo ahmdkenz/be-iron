@@ -178,7 +178,7 @@ class InvoiceService
             }
 
             return $invoice->load([
-                'klienAr.karyawanAr',
+                'klienAr.karyawanAr.perusahaan',
                 'klienAr.resto.investor',
                 'perusahaan',
                 'karyawan',
@@ -429,7 +429,7 @@ class InvoiceService
             ]);
         }
 
-        return $invoice->fresh(['klienAr.karyawanAr', 'klienAr.resto.investor', 'perusahaan', 'karyawan', 'items.barang', 'pembayarans']);
+        return $invoice->fresh(['klienAr.karyawanAr.perusahaan', 'klienAr.resto.investor', 'perusahaan', 'karyawan', 'items.barang', 'pembayarans']);
     }
 
     public function changeStatus(Invoice $invoice, string $status): Invoice
