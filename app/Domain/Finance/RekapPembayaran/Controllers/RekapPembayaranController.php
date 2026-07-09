@@ -29,11 +29,18 @@ class RekapPembayaranController extends Controller
             'klien_ar_id'       => ['nullable', 'integer', 'exists:tb_klien_ar,id'],
             'metode_pembayaran' => ['nullable', 'in:TRANSFER,CASH,GIRO'],
             'segment'           => ['nullable', 'in:B2B,B2C,ALL'],
+            'page'              => ['nullable', 'integer', 'min:1'],
+            'per_page'          => ['nullable', 'integer', 'min:1', 'max:100'],
         ]);
 
         $report = $this->service->getReport(
             $request->only(['tanggal_dari', 'tanggal_sampai', 'klien_ar_id', 'metode_pembayaran', 'segment'])
         );
+
+        if ($perPage = $request->integer('per_page')) {
+            ['items' => $report['rows'], 'meta' => $report['meta']]
+                = $this->paginateArray($report['rows'], $request->integer('page', 1), $perPage);
+        }
 
         return $this->successResponse($report);
     }

@@ -209,15 +209,31 @@ class EndingBalanceKoreksiController extends Controller
     }
 
     /**
-     * Semua koreksi yang sudah APPROVED.
+     * Semua koreksi yang sudah APPROVED (paginated per segment).
      */
-    public function approved(): JsonResponse
+    public function approved(Request $request): JsonResponse
     {
-        $list = $this->service->approved();
+        $request->validate([
+            'segment'  => ['nullable', 'in:B2B,B2C'],
+            'page'     => ['nullable', 'integer', 'min:1'],
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
+        ]);
 
-        return $this->successResponse(
-            $list->map(fn($k) => $this->formatKoreksi($k))->values()->all()
+        $paginator = $this->service->approved(
+            $request->input('segment'),
+            $request->integer('per_page', 20),
+            $request->integer('page', 1),
         );
+
+        return $this->successResponse([
+            'rows' => $paginator->getCollection()->map(fn($k) => $this->formatKoreksi($k))->values()->all(),
+            'meta' => [
+                'current_page' => $paginator->currentPage(),
+                'last_page'    => $paginator->lastPage(),
+                'per_page'     => $paginator->perPage(),
+                'total'        => $paginator->total(),
+            ],
+        ]);
     }
 
     // ─── Private ──────────────────────────────────────────────────────────────

@@ -108,6 +108,7 @@ Route::prefix('rekonsiliasi-bank')->middleware('role:ADMIN|MANAGER|SUPERVISOR|AR
     Route::post('/upload',                           [BankStatementController::class, 'upload'])->middleware('role:ADMIN|MANAGER|SUPERVISOR');
     Route::get('/template/{bankType}',               [BankStatementController::class, 'downloadTemplate']);
     Route::get('/{bankStatement}',                   [BankStatementController::class, 'show']);
+    Route::get('/{bankStatement}/details',           [BankStatementController::class, 'paginatedDetails']);
     Route::delete('/{bankStatement}',                [BankStatementController::class, 'destroy']);
     Route::patch('/detail/{detail}/abaikan',         [BankStatementController::class, 'markDiabaikan']);
     Route::get('/detail/{detail}/kandidat',          [BankStatementController::class, 'kandidat']);

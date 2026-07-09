@@ -29,11 +29,29 @@ class AgingReportController extends Controller
             'perusahaan_id'  => ['nullable', 'integer', 'exists:tb_perusahaan,id'],
             'karyawan_ar_id' => ['nullable', 'integer', 'exists:tb_karyawan,id'],
             'segment'        => ['nullable', 'in:B2B,B2C,ALL'],
+            'bucket_filter'  => ['nullable', 'in:current,hari_1_30,hari_31_60,hari_61_90,hari_91_plus'],
+            'page'           => ['nullable', 'integer', 'min:1'],
+            'per_page'       => ['nullable', 'integer', 'min:1', 'max:100'],
         ]);
 
         $report = $this->service->getReport(
             $request->only(['as_of_date', 'klien_ar_id', 'perusahaan_id', 'karyawan_ar_id', 'segment'])
         );
+
+        // Quick-filter bucket (klik kartu summary) diterapkan di sini, bukan di
+        // service, karena summary tetap harus dihitung dari seluruh baris —
+        // hanya daftar klien yang ditampilkan yang dipersempit.
+        if ($bucket = $request->string('bucket_filter')->toString()) {
+            $report['rows'] = array_values(array_filter(
+                $report['rows'],
+                fn($row) => ($row[$bucket] ?? 0) > 0
+            ));
+        }
+
+        if ($perPage = $request->integer('per_page')) {
+            ['items' => $report['rows'], 'meta' => $report['meta']]
+                = $this->paginateArray($report['rows'], $request->integer('page', 1), $perPage);
+        }
 
         return $this->successResponse($report);
     }

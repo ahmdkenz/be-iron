@@ -208,12 +208,35 @@ class InvoiceController extends Controller
             'periode_bulan'  => ['nullable', 'integer', 'between:1,12'],
             'periode_tahun'  => ['nullable', 'integer', 'between:2000,2100'],
             'segment'        => ['nullable', 'in:B2B,B2C,ALL'],
+            'page'           => ['nullable', 'integer', 'min:1'],
+            'per_page'       => ['nullable', 'integer', 'min:1', 'max:100'],
         ]);
 
         $filters = $request->only(['klien_ar_id', 'periode_bulan', 'periode_tahun', 'segment']);
         ArFilterScope::apply($filters, $user);
 
-        return $this->successResponse($this->service->getRekapKlien($filters));
+        $rows = $this->service->getRekapKlien($filters);
+
+        // Tanpa per_page: kembalikan array polos seperti sebelumnya (dipakai
+        // ExportData yang butuh seluruh baris tanpa dipotong).
+        if (!$perPage = $request->integer('per_page')) {
+            return $this->successResponse($rows);
+        }
+
+        $summary = [
+            'total_klien'      => count($rows),
+            'total_tagihan'    => array_sum(array_column($rows, 'total_tagihan')),
+            'total_pembayaran' => array_sum(array_column($rows, 'total_pembayaran')),
+            'total_sisa'       => array_sum(array_column($rows, 'sisa_tagihan')),
+        ];
+
+        ['items' => $pagedRows, 'meta' => $meta] = $this->paginateArray($rows, $request->integer('page', 1), $perPage);
+
+        return $this->successResponse([
+            'summary' => $summary,
+            'rows'    => $pagedRows,
+            'meta'    => $meta,
+        ]);
     }
 
     public function store(StoreInvoiceRequest $request): JsonResponse

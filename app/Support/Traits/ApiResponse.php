@@ -58,4 +58,25 @@ trait ApiResponse
             ],
         ]);
     }
+
+    /**
+     * Paginasi array PHP yang sudah dimuat penuh di memori (mis. hasil laporan
+     * agregat). Dipakai saat query dasarnya sudah harus mengambil semua baris
+     * untuk menghitung summary, sehingga hanya bagian pengiriman ke frontend
+     * yang dipotong per halaman.
+     */
+    protected function paginateArray(array $items, int $page, int $perPage): array
+    {
+        $total = count($items);
+
+        return [
+            'items' => array_values(array_slice($items, ($page - 1) * $perPage, $perPage)),
+            'meta'  => [
+                'current_page' => $page,
+                'last_page'    => max(1, (int) ceil($total / $perPage)),
+                'per_page'     => $perPage,
+                'total'        => $total,
+            ],
+        ];
+    }
 }

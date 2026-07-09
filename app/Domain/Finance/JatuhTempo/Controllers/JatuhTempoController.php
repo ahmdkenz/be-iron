@@ -21,11 +21,18 @@ class JatuhTempoController extends Controller
             'karyawan_ar_id' => ['nullable', 'integer', 'exists:tb_karyawan,id'],
             'days'           => ['nullable', 'integer', 'min:1', 'max:365'],
             'filter_type'    => ['nullable', 'in:upcoming,overdue,all'],
+            'page'           => ['nullable', 'integer', 'min:1'],
+            'per_page'       => ['nullable', 'integer', 'min:1', 'max:100'],
         ]);
 
         $report = $this->service->getReport(
             $request->only(['klien_ar_id', 'karyawan_ar_id', 'days', 'filter_type'])
         );
+
+        if ($perPage = $request->integer('per_page')) {
+            ['items' => $report['rows'], 'meta' => $report['meta']]
+                = $this->paginateArray($report['rows'], $request->integer('page', 1), $perPage);
+        }
 
         return $this->successResponse($report);
     }

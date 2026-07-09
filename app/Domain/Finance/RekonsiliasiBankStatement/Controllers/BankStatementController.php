@@ -87,6 +87,24 @@ class BankStatementController extends Controller
         );
     }
 
+    public function paginatedDetails(Request $request, BankStatement $bankStatement): JsonResponse
+    {
+        $request->validate([
+            'page'     => ['nullable', 'integer', 'min:1'],
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
+            'status'   => ['nullable', 'string', 'in:SEMUA,MATCHED,UNMATCHED,POSSIBLE,DIABAIKAN'],
+        ]);
+
+        return $this->successResponse(
+            $this->service->paginateDetails(
+                $bankStatement,
+                $request->string('status') ?: null,
+                $request->integer('page', 1),
+                $request->integer('per_page', 25),
+            )
+        );
+    }
+
     public function destroy(BankStatement $bankStatement): JsonResponse
     {
         $bankStatement->details()->delete();

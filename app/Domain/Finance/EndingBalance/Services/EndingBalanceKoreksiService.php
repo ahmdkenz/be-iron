@@ -172,14 +172,21 @@ class EndingBalanceKoreksiService
     }
 
     /**
-     * List all approved corrections, newest first.
+     * List all approved corrections, newest first (paginated).
      */
-    public function approved(): \Illuminate\Database\Eloquent\Collection
+    public function approved(?string $segment = null, int $perPage = 20, int $page = 1): \Illuminate\Contracts\Pagination\LengthAwarePaginator
     {
+        $segmentTypes = match ($segment) {
+            'B2B'   => ['PT'],
+            'B2C'   => ['RESTO'],
+            default => null,
+        };
+
         return EndingBalanceKoreksi::with(['endingBalance.klienAr', 'submittedBy', 'spv', 'manager', 'invoice', 'items'])
             ->whereIn('status', ['PENDING_MANAGER', 'APPROVED'])
+            ->when($segmentTypes, fn($q) => $q->whereHas('klienAr', fn($q2) => $q2->whereIn('tipe_klien', $segmentTypes)))
             ->orderByDesc(DB::raw('COALESCE(manager_actioned_at, spv_actioned_at)'))
-            ->get();
+            ->paginate($perPage, ['*'], 'page', $page);
     }
 
     // ─── Private ──────────────────────────────────────────────────────────────

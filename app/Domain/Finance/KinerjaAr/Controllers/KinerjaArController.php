@@ -28,11 +28,18 @@ class KinerjaArController extends Controller
             'periode_akhir'  => ['nullable', 'date', 'after_or_equal:periode_awal'],
             'karyawan_ar_id' => ['nullable', 'integer', 'exists:tb_karyawan,id'],
             'segment'        => ['nullable', 'in:B2B,B2C,ALL'],
+            'page'           => ['nullable', 'integer', 'min:1'],
+            'per_page'       => ['nullable', 'integer', 'min:1', 'max:100'],
         ]);
 
         $report = $this->service->getReport(
             $request->only(['periode_awal', 'periode_akhir', 'karyawan_ar_id', 'segment'])
         );
+
+        if ($perPage = $request->integer('per_page')) {
+            ['items' => $report['rows'], 'meta' => $report['meta']]
+                = $this->paginateArray($report['rows'], $request->integer('page', 1), $perPage);
+        }
 
         return $this->successResponse($report);
     }

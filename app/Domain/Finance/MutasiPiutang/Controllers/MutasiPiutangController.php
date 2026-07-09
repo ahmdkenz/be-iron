@@ -29,12 +29,19 @@ class MutasiPiutangController extends Controller
             'periode_akhir' => ['nullable', 'date', 'after_or_equal:periode_awal'],
             'klien_ar_id'   => ['nullable', 'integer', 'exists:tb_klien_ar,id'],
             'segment'       => ['nullable', 'in:B2B,B2C,ALL'],
+            'page'          => ['nullable', 'integer', 'min:1'],
+            'per_page'      => ['nullable', 'integer', 'min:1', 'max:100'],
         ]);
 
         $filters = $request->only(['periode_awal', 'periode_akhir', 'klien_ar_id', 'segment']);
         ArFilterScope::apply($filters, $request->user());
 
         $report = $this->service->getReport($filters);
+
+        if ($perPage = $request->integer('per_page')) {
+            ['items' => $report['rows'], 'meta' => $report['meta']]
+                = $this->paginateArray($report['rows'], $request->integer('page', 1), $perPage);
+        }
 
         return $this->successResponse($report);
     }

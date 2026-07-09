@@ -133,84 +133,22 @@ class BankStatementService
     {
         $statement = BankStatement::with('uploader.karyawan')->findOrFail($bankStatementId);
 
-        $details = BankStatementDetail::with([
-                'pembayaranAr.invoice.klienAr',
-                'pembayaranAr.alokasiKelebihan.invoice.klienAr',
-                'pembayaranAr.alokasiKelebihan.createdBy.karyawan',
-                'matchedBy.karyawan',
-                'postedBy:id,username,karyawan_id',
-                'postedBy.karyawan:id,nama_karyawan',
-            ])
+        $details = BankStatementDetail::with($this->detailEagerLoads())
             ->where('bank_statement_id', $bankStatementId)
             ->orderBy('tanggal')
             ->orderBy('id')
             ->get()
-            ->map(function ($d) {
-                $pembayaran  = $d->pembayaranAr;
-                $invoice     = $pembayaran?->invoice;
-                $selisihBank = $pembayaran
-                    ? round($d->kredit - (float) $pembayaran->jumlah_pembayaran, 2)
-                    : null;
-
-                $kelebihanBayar = null;
-                if ($invoice) {
-                    $kelebihanFromInvoice = max(0, round((float) $invoice->total_pembayaran - (float) $invoice->total_tagihan, 2));
-                    $kelebihanFromBank    = max(0, round($d->kredit - (float) $pembayaran->jumlah_pembayaran, 2));
-                    $total                = max($kelebihanFromInvoice, $kelebihanFromBank);
-                    if ($total > 0) {
-                        $dialokasi = (float) $pembayaran->alokasiKelebihan->sum('jumlah_pembayaran');
-                        $pdm       = PendapatanDiMuka::where('sumber_pembayaran_ar_id', $pembayaran->id)->first();
-                        $kelebihanBayar = [
-                            'total'           => $total,
-                            'sudah_dialokasi' => round($dialokasi, 2),
-                            'sisa'            => max(0, round($total - $dialokasi, 2)),
-                            'riwayat'         => $pembayaran->alokasiKelebihan->map(fn($p) => [
-                                'id'         => $p->id,
-                                'jumlah'     => $p->jumlah_pembayaran,
-                                'no_invoice' => $p->invoice?->no_invoice,
-                                'klien'      => $p->invoice?->klienAr?->nama_klien,
-                                'keterangan' => $p->keterangan,
-                                'created_by' => $p->createdBy?->name,
-                                'tanggal'    => $p->tanggal_pembayaran?->format('d-m-Y'),
-                            ])->values(),
-                            'pdm'             => $pdm ? [
-                                'id'                 => $pdm->id,
-                                'jumlah'             => (float) $pdm->jumlah,
-                                'status'             => $pdm->status,
-                                'tanggal_pencatatan' => $pdm->tanggal_pencatatan?->format('d-m-Y'),
-                                'keterangan'         => $pdm->keterangan,
-                                'created_by'         => $pdm->createdBy?->name,
-                            ] : null,
-                        ];
-                    }
-                }
-
-                return [
-                    'id'            => $d->id,
-                    'tanggal'       => $d->tanggal?->format('d-m-Y'),
-                    'keterangan'    => $d->keterangan,
-                    'no_referensi'  => $d->no_referensi,
-                    'debit'         => $d->debit,
-                    'kredit'        => $d->kredit,
-                    'saldo'         => $d->saldo,
-                    'status_cocok'     => $d->status_cocok,
-                    'status_posting_2' => $d->status_posting_2 ?? 'PENDING',
-                    'posted_by'        => $d->postedBy?->name,
-                    'selisih_bank'     => $selisihBank,
-                    'matched_by'       => $d->matchedBy?->name,
-                    'kelebihan_bayar'  => $kelebihanBayar,
-                    'pembayaran'    => $pembayaran ? [
-                        'id'                 => $pembayaran->id,
-                        'no_referensi'       => $pembayaran->no_referensi,
-                        'tanggal_pembayaran' => $pembayaran->tanggal_pembayaran?->format('d-m-Y'),
-                        'jumlah_pembayaran'  => $pembayaran->jumlah_pembayaran,
-                        'metode_pembayaran'  => $pembayaran->metode_pembayaran,
-                        'klien'              => $invoice?->klienAr?->nama_klien,
-                    ] : null,
-                ];
-            })
+            ->map(fn($d) => $this->formatDetailRow($d))
             ->all();
 
+        return [
+            ...$this->getHeader($statement),
+            'details' => $details,
+        ];
+    }
+
+    public function getHeader(BankStatement $statement): array
+    {
         return [
             'id'               => $statement->id,
             'bank_type'        => $statement->bank_type,
@@ -223,7 +161,107 @@ class BankStatementService
             'jumlah_unmatched' => $statement->jumlah_unmatched,
             'uploaded_by'      => $statement->uploader?->name,
             'created_at'       => $statement->created_at?->setTimezone('Asia/Jakarta')->format('d-m-Y H:i'),
-            'details'          => $details,
+        ];
+    }
+
+    public function paginateDetails(BankStatement $statement, ?string $status, int $page, int $perPage): array
+    {
+        $query = BankStatementDetail::with($this->detailEagerLoads())
+            ->where('bank_statement_id', $statement->id);
+
+        if ($status && $status !== 'SEMUA') {
+            $query->where('status_cocok', $status);
+        }
+
+        $paginator = $query->orderBy('tanggal')->orderBy('id')->paginate($perPage, ['*'], 'page', $page);
+
+        return [
+            'header' => $this->getHeader($statement),
+            'rows'   => collect($paginator->items())->map(fn($d) => $this->formatDetailRow($d))->all(),
+            'meta'   => [
+                'current_page' => $paginator->currentPage(),
+                'per_page'     => $paginator->perPage(),
+                'total'        => $paginator->total(),
+                'last_page'    => $paginator->lastPage(),
+            ],
+        ];
+    }
+
+    private function detailEagerLoads(): array
+    {
+        return [
+            'pembayaranAr.invoice.klienAr',
+            'pembayaranAr.alokasiKelebihan.invoice.klienAr',
+            'pembayaranAr.alokasiKelebihan.createdBy.karyawan',
+            'matchedBy.karyawan',
+            'postedBy:id,username,karyawan_id',
+            'postedBy.karyawan:id,nama_karyawan',
+        ];
+    }
+
+    private function formatDetailRow(BankStatementDetail $d): array
+    {
+        $pembayaran  = $d->pembayaranAr;
+        $invoice     = $pembayaran?->invoice;
+        $selisihBank = $pembayaran
+            ? round($d->kredit - (float) $pembayaran->jumlah_pembayaran, 2)
+            : null;
+
+        $kelebihanBayar = null;
+        if ($invoice) {
+            $kelebihanFromInvoice = max(0, round((float) $invoice->total_pembayaran - (float) $invoice->total_tagihan, 2));
+            $kelebihanFromBank    = max(0, round($d->kredit - (float) $pembayaran->jumlah_pembayaran, 2));
+            $total                = max($kelebihanFromInvoice, $kelebihanFromBank);
+            if ($total > 0) {
+                $dialokasi = (float) $pembayaran->alokasiKelebihan->sum('jumlah_pembayaran');
+                $pdm       = PendapatanDiMuka::where('sumber_pembayaran_ar_id', $pembayaran->id)->first();
+                $kelebihanBayar = [
+                    'total'           => $total,
+                    'sudah_dialokasi' => round($dialokasi, 2),
+                    'sisa'            => max(0, round($total - $dialokasi, 2)),
+                    'riwayat'         => $pembayaran->alokasiKelebihan->map(fn($p) => [
+                        'id'         => $p->id,
+                        'jumlah'     => $p->jumlah_pembayaran,
+                        'no_invoice' => $p->invoice?->no_invoice,
+                        'klien'      => $p->invoice?->klienAr?->nama_klien,
+                        'keterangan' => $p->keterangan,
+                        'created_by' => $p->createdBy?->name,
+                        'tanggal'    => $p->tanggal_pembayaran?->format('d-m-Y'),
+                    ])->values(),
+                    'pdm'             => $pdm ? [
+                        'id'                 => $pdm->id,
+                        'jumlah'             => (float) $pdm->jumlah,
+                        'status'             => $pdm->status,
+                        'tanggal_pencatatan' => $pdm->tanggal_pencatatan?->format('d-m-Y'),
+                        'keterangan'         => $pdm->keterangan,
+                        'created_by'         => $pdm->createdBy?->name,
+                    ] : null,
+                ];
+            }
+        }
+
+        return [
+            'id'            => $d->id,
+            'tanggal'       => $d->tanggal?->format('d-m-Y'),
+            'keterangan'    => $d->keterangan,
+            'no_referensi'  => $d->no_referensi,
+            'debit'         => $d->debit,
+            'kredit'        => $d->kredit,
+            'saldo'         => $d->saldo,
+            'status_cocok'     => $d->status_cocok,
+            'status_posting_2' => $d->status_posting_2 ?? 'PENDING',
+            'posted_by'        => $d->postedBy?->name,
+            'selisih_bank'     => $selisihBank,
+            'matched_by'       => $d->matchedBy?->name,
+            'kelebihan_bayar'  => $kelebihanBayar,
+            'pembayaran'    => $pembayaran ? [
+                'id'                 => $pembayaran->id,
+                'no_referensi'       => $pembayaran->no_referensi,
+                'tanggal_pembayaran' => $pembayaran->tanggal_pembayaran?->format('d-m-Y'),
+                'jumlah_pembayaran'  => $pembayaran->jumlah_pembayaran,
+                'metode_pembayaran'  => $pembayaran->metode_pembayaran,
+                'klien'              => $invoice?->klienAr?->nama_klien,
+            ] : null,
         ];
     }
 
