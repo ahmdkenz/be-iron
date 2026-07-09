@@ -22,8 +22,6 @@ class PembayaranAr extends Model
         'keterangan',
         'sumber_pembayaran_ar_id',
         'dibuat_dari_rekonsiliasi',
-        'bukti_gdrive_file_id',
-        'bukti_gdrive_folder_id',
         'bukti_file_name',
         'bukti_file_size',
         'bukti_mime_type',

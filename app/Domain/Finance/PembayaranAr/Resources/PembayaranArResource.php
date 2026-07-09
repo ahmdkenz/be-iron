@@ -55,9 +55,7 @@ class PembayaranArResource extends JsonResource
                 ? URL::temporarySignedRoute(
                     'pembayaran.public-bukti', now()->addDays(30), ['pembayaran' => $this->id]
                 )
-                : ($this->bukti_gdrive_file_id
-                    ? 'https://drive.google.com/file/d/' . $this->bukti_gdrive_file_id . '/view'
-                    : null),
+                : null,
             'status_rekonsiliasi'   => $bankDetail?->status_cocok,
             'tanggal_rekonsiliasi'  => $bankDetail?->tanggal?->format('d-m-Y'),
             'no_ref_bank'           => $bankDetail?->no_referensi,

@@ -40,8 +40,6 @@ class Invoice extends Model
         'keterangan',
         'prepared_token',
         'approved_token',
-        'gdrive_file_id',
-        'gdrive_folder_id',
         'created_by',
         'updated_by',
     ];
