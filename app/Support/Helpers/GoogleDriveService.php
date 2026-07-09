@@ -31,37 +31,7 @@ class GoogleDriveService
      */
     public function findOrCreateClientFolder(string $rootFolderId, string $clientName): string
     {
-        $safeName = $this->sanitizeFolderName($clientName);
-
-        $query = sprintf(
-            "mimeType='application/vnd.google-apps.folder' and name='%s' and '%s' in parents and trashed=false",
-            addslashes($safeName),
-            $rootFolderId
-        );
-
-        $results = $this->drive->files->listFiles([
-            'q'      => $query,
-            'fields' => 'files(id, name)',
-        ]);
-
-        if (count($results->getFiles()) > 0) {
-            return $results->getFiles()[0]->getId();
-        }
-
-        $folderMeta = new DriveFile([
-            'name'     => $safeName,
-            'mimeType' => 'application/vnd.google-apps.folder',
-            'parents'  => [$rootFolderId],
-        ]);
-
-        $folder = $this->drive->files->create($folderMeta, ['fields' => 'id']);
-
-        Log::info('GoogleDriveService: folder klien dibuat', [
-            'nama_klien' => $safeName,
-            'folder_id'  => $folder->getId(),
-        ]);
-
-        return $folder->getId();
+        return $this->findOrCreateFolder($rootFolderId, $clientName);
     }
 
     /**
@@ -174,6 +144,8 @@ class GoogleDriveService
      */
     private function findOrCreateFolder(string $parentFolderId, string $folderName): string
     {
+        $folderName = $this->sanitizeFolderName($folderName);
+
         $query = sprintf(
             "mimeType='application/vnd.google-apps.folder' and name='%s' and '%s' in parents and trashed=false",
             addslashes($folderName),

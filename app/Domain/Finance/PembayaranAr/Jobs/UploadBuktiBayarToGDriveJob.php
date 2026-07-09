@@ -30,7 +30,7 @@ class UploadBuktiBayarToGDriveJob implements ShouldQueue
 
     public function handle(GoogleDriveService $driveService): void
     {
-        $pembayaran = PembayaranAr::with(['invoice.klienAr'])->find($this->pembayaranArId);
+        $pembayaran = PembayaranAr::with(['invoice.klienAr.resto', 'invoice.resto', 'invoice.items'])->find($this->pembayaranArId);
 
         if (!$pembayaran) {
             Log::warning('UploadBuktiBayarToGDriveJob: pembayaran tidak ditemukan', ['id' => $this->pembayaranArId]);
@@ -59,6 +59,19 @@ class UploadBuktiBayarToGDriveJob implements ShouldQueue
             // 2. Folder klien
             $clientFolderId = $driveService->findOrCreateClientFolder($typeFolderId, $clientName);
 
+            // 2b. Folder resto (khusus B2C)
+            if ($segment === 'B2C') {
+                $restoName = $invoice?->resolveRestoName();
+                if (filled($restoName)) {
+                    $clientFolderId = $driveService->findOrCreateSubFolder($clientFolderId, $restoName);
+                } else {
+                    Log::warning('UploadBuktiBayarToGDriveJob: nama resto tidak ditemukan untuk invoice B2C, skip folder resto', [
+                        'pembayaran_id' => $pembayaran->id,
+                        'invoice_id'    => $invoice->id ?? null,
+                    ]);
+                }
+            }
+
             // 3. Folder tahun (dari tanggal_invoice)
             $year         = Carbon::parse($invoice?->tanggal_invoice ?? now())->format('Y');
             $yearFolderId = $driveService->findOrCreateSubFolder($clientFolderId, $year);
@@ -82,7 +95,7 @@ class UploadBuktiBayarToGDriveJob implements ShouldQueue
 
             $pembayaran->updateQuietly([
                 'bukti_gdrive_file_id'  => $fileId,
-                'bukti_gdrive_folder_id' => $buktiFolderId,
+                'bukti_gdrive_folder_id' => $invoiceFolderId,
                 'bukti_file_name'       => $this->fileName,
                 'bukti_file_size'       => $this->fileSize,
                 'bukti_mime_type'       => $this->mimeType,

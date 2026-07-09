@@ -155,4 +155,19 @@ class Invoice extends Model
             && $this->status === 'DRAFT'
             && $this->approval_status === 'REJECTED';
     }
+
+    public function resolveRestoName(): ?string
+    {
+        if (filled($this->resto?->nama_resto)) {
+            return $this->resto->nama_resto;
+        }
+
+        if (filled($this->klienAr?->resto?->nama_resto)) {
+            return $this->klienAr->resto->nama_resto;
+        }
+
+        $itemRestoName = $this->items->first(fn ($item) => filled($item->nama_resto))?->nama_resto;
+
+        return filled($itemRestoName) ? $itemRestoName : null;
+    }
 }

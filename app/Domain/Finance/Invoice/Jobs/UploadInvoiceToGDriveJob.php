@@ -27,6 +27,8 @@ class UploadInvoiceToGDriveJob implements ShouldQueue
     {
         $invoice = Invoice::with([
             'klienAr.karyawanAr',
+            'klienAr.resto',
+            'resto',
             'perusahaan',
             'karyawan.perusahaan',
             'items',
@@ -64,6 +66,18 @@ class UploadInvoiceToGDriveJob implements ShouldQueue
             $clientName = $invoice->klienAr->nama_klien;
             $folderId   = $driveService->findOrCreateClientFolder($typeFolderId, $clientName);
 
+            if ($segment === 'B2C') {
+                $restoName = $invoice->resolveRestoName();
+                if (filled($restoName)) {
+                    $folderId = $driveService->findOrCreateSubFolder($folderId, $restoName);
+                } else {
+                    Log::warning('UploadInvoiceToGDriveJob: nama resto tidak ditemukan untuk invoice B2C, skip folder resto', [
+                        'invoice_id' => $invoice->id,
+                        'no_invoice' => $invoice->no_invoice,
+                    ]);
+                }
+            }
+
             $year     = Carbon::parse($invoice->tanggal_invoice)->format('Y');
             $folderId = $driveService->findOrCreateSubFolder($folderId, $year);
 
@@ -82,9 +96,11 @@ class UploadInvoiceToGDriveJob implements ShouldQueue
             }
 
             // updateQuietly agar tidak trigger event audit blameable
+            // gdrive_folder_id hanya diupdate saat file baru dibuat; saat update-in-place,
+            // file fisik tidak dipindahkan sehingga folder id lama tetap dipertahankan.
             $invoice->updateQuietly([
                 'gdrive_file_id'   => $fileId,
-                'gdrive_folder_id' => $folderId,
+                'gdrive_folder_id' => $invoice->gdrive_file_id ? $invoice->gdrive_folder_id : $folderId,
             ]);
 
             Log::info('UploadInvoiceToGDriveJob: upload berhasil', [
