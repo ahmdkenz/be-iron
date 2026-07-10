@@ -24,6 +24,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use PhpOffice\PhpSpreadsheet\Cell\DataType;
@@ -304,6 +305,13 @@ class InvoiceController extends Controller
             'keterangan'         => $p->keterangan,
             'created_by_name'    => $p->createdBy?->username,
             'created_at'         => $p->created_at?->toIso8601String(),
+            'bukti_file_name'    => $p->bukti_file_name,
+            'bukti_mime_type'    => $p->bukti_mime_type,
+            'bukti_url'          => $p->bukti_path
+                ? URL::temporarySignedRoute(
+                    'pembayaran.public-bukti', now()->addDays(30), ['pembayaran' => $p->id]
+                )
+                : null,
         ]));
     }
 
