@@ -74,15 +74,13 @@ class AuthController extends Controller
         $refreshCookie  = cookie('refresh_token', $refreshToken, self::REFRESH_TOKEN_TTL, '/api/v1/auth/refresh', null, $isProduction, true, false, 'Strict');
 
         return $this->successResponse([
-            'user'          => new UserResource($user),
-            'token'         => $accessToken,
-            'refresh_token' => $refreshToken,
+            'user' => new UserResource($user),
         ], 'Login berhasil')->withCookie($accessCookie)->withCookie($refreshCookie);
     }
 
     public function refresh(Request $request): JsonResponse
     {
-        $refreshToken = $request->input('refresh_token') ?? $request->cookie('refresh_token');
+        $refreshToken = $request->cookie('refresh_token');
 
         if (!$refreshToken) {
             return $this->errorResponse('Refresh token tidak ditemukan.', 401);
@@ -104,10 +102,7 @@ class AuthController extends Controller
         $accessCookie  = cookie('auth_token', $newAccessToken, 1440, '/api', null, $isProduction, true, false, 'Strict');
         $refreshCookie = cookie('refresh_token', $newRefreshToken, self::REFRESH_TOKEN_TTL, '/api/v1/auth/refresh', null, $isProduction, true, false, 'Strict');
 
-        return $this->successResponse([
-            'token'         => $newAccessToken,
-            'refresh_token' => $newRefreshToken,
-        ], 'Token diperbarui')->withCookie($accessCookie)->withCookie($refreshCookie);
+        return $this->successResponse(null, 'Token diperbarui')->withCookie($accessCookie)->withCookie($refreshCookie);
     }
 
     public function logout(Request $request): JsonResponse
