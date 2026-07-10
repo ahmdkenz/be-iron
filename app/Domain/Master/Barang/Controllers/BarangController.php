@@ -23,7 +23,8 @@ class BarangController extends Controller
 
     public function index(Request $request): JsonResponse
     {
-        $list = $this->service->paginate($request->only(['search', 'status']));
+        $perPage = (int) $request->input('per_page', 15);
+        $list    = $this->service->paginate($request->only(['search', 'status']), $perPage);
         return $this->paginatedResponse($list->through(fn($b) => new BarangResource($b)));
     }
 
