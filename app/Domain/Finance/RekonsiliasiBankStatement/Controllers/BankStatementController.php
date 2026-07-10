@@ -9,6 +9,7 @@ use App\Http\Controllers\Controller;
 use App\Models\BankStatement;
 use App\Models\BankStatementDetail;
 use App\Models\Invoice;
+use App\Support\Helpers\RoleHelper;
 use App\Support\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -192,6 +193,8 @@ class BankStatementController extends Controller
 
     public function unmatchDetail(BankStatementDetail $detail): JsonResponse
     {
+        $this->authorizeManageMatch($detail);
+
         try {
             $this->service->unmatch($detail);
 
@@ -221,6 +224,8 @@ class BankStatementController extends Controller
 
     public function applyKelebihanBayar(Request $request, BankStatementDetail $detail): JsonResponse
     {
+        $this->authorizeManageMatch($detail);
+
         $request->validate([
             'invoice_id' => ['required', 'integer', 'exists:tb_invoice,id'],
             'jumlah'     => ['required', 'numeric', 'min:0.01'],
@@ -349,5 +354,14 @@ class BankStatementController extends Controller
         } catch (\RuntimeException $e) {
             return $this->errorResponse($e->getMessage(), 500);
         }
+    }
+
+    private function authorizeManageMatch(BankStatementDetail $detail): void
+    {
+        abort_unless(
+            RoleHelper::canManageMatchedRecord(auth()->user(), $detail->matched_by),
+            403,
+            'Hanya PIC AR yang mencocokkan transaksi ini (atau Admin/Manager/Supervisor) yang dapat melakukan aksi ini.'
+        );
     }
 }

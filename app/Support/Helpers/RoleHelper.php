@@ -144,4 +144,15 @@ class RoleHelper
                 RoleEnum::SUPERVISOR,
             ]);
     }
+
+    // Returns true when the user may manage a record owned by $matchedByUserId:
+    // Admin/Manager/Supervisor may always manage it; otherwise only the user who owns it.
+    public static function canManageMatchedRecord(?User $user, ?int $matchedByUserId): bool
+    {
+        if (self::hasGlobalArAccess($user)) {
+            return true;
+        }
+
+        return $user !== null && $matchedByUserId !== null && (int) $user->id === (int) $matchedByUserId;
+    }
 }

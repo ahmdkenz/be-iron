@@ -10,6 +10,7 @@ use App\Models\BankStatementDetail;
 use App\Models\Invoice;
 use App\Models\PembayaranAr;
 use App\Models\PendapatanDiMuka;
+use App\Support\Helpers\RoleHelper;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 
@@ -252,6 +253,7 @@ class BankStatementService
             'posted_by'        => $d->postedBy?->name,
             'selisih_bank'     => $selisihBank,
             'matched_by'       => $d->matchedBy?->name,
+            'can_manage_match' => RoleHelper::canManageMatchedRecord(auth()->user(), $d->matched_by),
             'kelebihan_bayar'  => $kelebihanBayar,
             'pembayaran'    => $pembayaran ? [
                 'id'                 => $pembayaran->id,

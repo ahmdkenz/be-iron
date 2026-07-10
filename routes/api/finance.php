@@ -88,7 +88,7 @@ Route::get('/mutasi-piutang/export-excel', [MutasiPiutangController::class, 'exp
 // ─── Rekening Koran (Jurnal Umum Bank Statement) ──────────────────
 Route::get('/rekening-koran',                          [RekeningKoranController::class, 'index']);
 Route::get('/rekening-koran/pic-ar-list',              [RekeningKoranController::class, 'picArList']);
-Route::patch('/rekening-koran/{detail}/posting',       [RekeningKoranController::class, 'updatePosting']);
+Route::patch('/rekening-koran/{detail}/posting',       [RekeningKoranController::class, 'updatePosting'])->middleware('role:ADMIN|MANAGER|SUPERVISOR|AR');
 
 // ─── Jatuh Tempo ──────────────────────────────────────────────────
 Route::get('/jatuh-tempo', [JatuhTempoController::class, 'index']);
