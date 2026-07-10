@@ -165,7 +165,7 @@ class EndingBalanceKoreksiService
             return EndingBalanceKoreksi::newModelInstance()->newCollection();
         }
 
-        return EndingBalanceKoreksi::with(['endingBalance.klienAr', 'submittedBy', 'invoice', 'items'])
+        return EndingBalanceKoreksi::with(['endingBalance.klienAr.resto', 'klienAr.resto', 'submittedBy', 'invoice', 'items'])
             ->where('status', 'PENDING_MANAGER')
             ->orderBy('submitted_at')
             ->get();

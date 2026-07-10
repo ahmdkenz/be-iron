@@ -54,7 +54,7 @@ class EndingBalanceController extends Controller
     {
         $this->authorizeView();
 
-        $eb = EndingBalance::with(['klienAr.perusahaan', 'koreksi.submittedBy', 'koreksi.spv', 'koreksi.manager', 'koreksi.invoice', 'koreksi.items', 'lockedBy', 'createdBy'])
+        $eb = EndingBalance::with(['klienAr.perusahaan', 'klienAr.resto', 'koreksi.submittedBy', 'koreksi.spv', 'koreksi.manager', 'koreksi.invoice', 'koreksi.items', 'lockedBy', 'createdBy'])
             ->findOrFail($id);
 
         return $this->successResponse($this->formatEb($eb, detailed: true));
@@ -282,6 +282,7 @@ class EndingBalanceController extends Controller
             'klien_id'            => $eb->klien_ar_id,
             'kode_klien'          => $eb->klienAr?->kode_klien,
             'nama_klien'          => $eb->klienAr?->nama_klien,
+            'outlet'              => $eb->klienAr?->resto?->nama_resto,
             'perusahaan'          => $eb->klienAr?->perusahaan?->nama_singkatan_perusahaan,
             'periode_awal'        => $eb->periode_awal?->toDateString(),
             'periode_akhir'       => $eb->periode_akhir?->toDateString(),

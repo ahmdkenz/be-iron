@@ -19,7 +19,7 @@ class EndingBalanceService
     {
         $perPage = (int) ($filters['per_page'] ?? 15);
 
-        return EndingBalance::with(['klienAr.perusahaan', 'createdBy'])
+        return EndingBalance::with(['klienAr.perusahaan', 'klienAr.resto', 'createdBy'])
             ->when($filters['klien_ar_id'] ?? null, fn($q, $v) => $q->where('klien_ar_id', $v))
             ->when(isset($filters['klien_ids']), fn($q) => $q->whereIn('klien_ar_id', $filters['klien_ids']))
             ->when($filters['status'] ?? null, fn($q, $v) => $q->where('status', $v))

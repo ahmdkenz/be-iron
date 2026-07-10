@@ -274,6 +274,7 @@ class EndingBalanceKoreksiController extends Controller
             'tipe'                => $k->tipe,
             'no_dokumen'          => $k->no_dokumen,
             'nama_klien'          => $k->klienAr?->nama_klien ?? $k->endingBalance?->klienAr?->nama_klien,
+            'outlet'              => $k->klienAr?->resto?->nama_resto ?? $k->endingBalance?->klienAr?->resto?->nama_resto,
             'segment'             => match($tipeKlien) { 'PT' => 'B2B', 'RESTO' => 'B2C', default => 'B2B' },
             'nilai_koreksi'       => (float) $k->nilai_koreksi,
             'saldo_sebelum'       => (float) ($k->endingBalance?->saldo_akhir_sistem ?? 0),
