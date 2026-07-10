@@ -145,6 +145,13 @@ class RoleHelper
             ]);
     }
 
+    // Mengembalikan karyawan_ar_id yang membatasi user PIC AR (AR murni),
+    // atau null jika user punya akses AR tanpa batas (Admin/Manager/Supervisor).
+    public static function picArKaryawanIdFor(?User $user): ?int
+    {
+        return self::isArStaff($user) ? $user->karyawan?->id : null;
+    }
+
     // Returns true when the user may manage a record owned by $matchedByUserId:
     // Admin/Manager/Supervisor may always manage it; otherwise only the user who owns it.
     public static function canManageMatchedRecord(?User $user, ?int $matchedByUserId): bool

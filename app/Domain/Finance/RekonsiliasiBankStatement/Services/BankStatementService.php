@@ -529,6 +529,7 @@ class BankStatementService
         ?string $type = null,
         int $page = 1,
         int $perPage = 50,
+        ?int $picArKaryawanId = null,
     ): \Illuminate\Contracts\Pagination\LengthAwarePaginator {
         $query = Invoice::with('klienAr.resto')
             ->whereNotIn('status', ['LUNAS', 'DRAFT'])
@@ -539,6 +540,9 @@ class BankStatementService
                          ->where('approval_status', 'APPROVED');
                   });
             })
+            ->when($picArKaryawanId, fn($q, $v) =>
+                $q->whereHas('klienAr', fn($q2) => $q2->withTrashed()->where('karyawan_ar_id', $v))
+            )
             ->orderByDesc('tanggal_invoice');
 
         if ($type === 'ob') {

@@ -261,6 +261,7 @@ class BankStatementController extends Controller
             $request->string('type') ?: null,
             $request->integer('page', 1),
             $request->integer('per_page', 50),
+            RoleHelper::picArKaryawanIdFor(auth()->user()),
         );
 
         return $this->successResponse($list);
@@ -277,6 +278,7 @@ class BankStatementController extends Controller
 
         try {
             $invoice = Invoice::findOrFail($request->integer('invoice_id'));
+            $this->authorizeInvoiceOwnership($invoice);
             $updated = $this->service->matchWithNewPayment(
                 $detail,
                 $invoice,
@@ -354,6 +356,22 @@ class BankStatementController extends Controller
         } catch (\RuntimeException $e) {
             return $this->errorResponse($e->getMessage(), 500);
         }
+    }
+
+    private function authorizeInvoiceOwnership(Invoice $invoice): void
+    {
+        $karyawanId = RoleHelper::picArKaryawanIdFor(auth()->user());
+        if ($karyawanId === null) {
+            return; // Admin/Manager/Supervisor: tidak dibatasi
+        }
+
+        $klienKaryawanArId = $invoice->klienAr()->withTrashed()->value('karyawan_ar_id');
+
+        abort_unless(
+            $klienKaryawanArId !== null && (int) $klienKaryawanArId === $karyawanId,
+            403,
+            'Anda tidak memiliki akses untuk memproses invoice klien ini.'
+        );
     }
 
     private function authorizeManageMatch(BankStatementDetail $detail): void
