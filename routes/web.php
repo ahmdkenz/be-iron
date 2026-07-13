@@ -1,6 +1,7 @@
 <?php
 
 use App\Domain\Finance\Invoice\Controllers\InvoiceController;
+use App\Domain\Finance\PembayaranAp\Controllers\PembayaranApController;
 use App\Domain\Finance\PembayaranAr\Controllers\PembayaranArController;
 use App\Domain\Finance\Verification\Controllers\VerificationController;
 use Illuminate\Support\Facades\Route;
@@ -22,3 +23,7 @@ Route::get('/invoices/print/{token}', [InvoiceController::class, 'publicPrint'])
 Route::get('/pembayaran/bukti/{pembayaran}', [PembayaranArController::class, 'publicBukti'])
     ->middleware(['signed', 'throttle:30,1'])
     ->name('pembayaran.public-bukti');
+
+Route::get('/pembayaran-ap/bukti/{pembayaran}', [PembayaranApController::class, 'publicBukti'])
+    ->middleware(['signed', 'throttle:30,1'])
+    ->name('pembayaran-ap.public-bukti');

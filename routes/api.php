@@ -41,5 +41,7 @@ Route::prefix('v1')->group(function () {
             Route::group([], base_path('routes/api/finance.php'));
         });
 
+        Route::prefix('ap')->group(base_path('routes/api/ap.php'));
+
     });
 });

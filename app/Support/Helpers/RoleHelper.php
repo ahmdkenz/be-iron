@@ -152,6 +152,86 @@ class RoleHelper
         return self::isArStaff($user) ? $user->karyawan?->id : null;
     }
 
+    public static function hasGlobalApAccess(?User $user): bool
+    {
+        return self::hasAnyRole($user, [RoleEnum::ADMIN, RoleEnum::MANAGER, RoleEnum::SUPERVISOR]);
+    }
+
+    public static function canViewVendorAp(?User $user): bool
+    {
+        return self::hasAnyRole($user, [
+            RoleEnum::ADMIN,
+            RoleEnum::MANAGER,
+            RoleEnum::SUPERVISOR,
+            RoleEnum::AP,
+        ]);
+    }
+
+    public static function canOperateVendorAp(?User $user): bool
+    {
+        return self::hasAnyRole($user, [RoleEnum::ADMIN]);
+    }
+
+    public static function canViewTagihanAp(?User $user): bool
+    {
+        return self::hasAnyRole($user, [
+            RoleEnum::ADMIN,
+            RoleEnum::MANAGER,
+            RoleEnum::SUPERVISOR,
+            RoleEnum::AP,
+        ]);
+    }
+
+    public static function canOperateTagihanAp(?User $user): bool
+    {
+        return self::hasAnyRole($user, [RoleEnum::ADMIN, RoleEnum::AP]);
+    }
+
+    // Approval tagihan AP satu tahap — SUPERVISOR dan MANAGER setara wewenangnya.
+    public static function canApproveTagihanAp(?User $user): bool
+    {
+        return self::hasAnyRole($user, [RoleEnum::ADMIN, RoleEnum::MANAGER, RoleEnum::SUPERVISOR]);
+    }
+
+    public static function canViewPembayaranAp(?User $user): bool
+    {
+        return self::hasAnyRole($user, [
+            RoleEnum::ADMIN,
+            RoleEnum::MANAGER,
+            RoleEnum::SUPERVISOR,
+            RoleEnum::AP,
+        ]);
+    }
+
+    public static function canOperatePembayaranAp(?User $user): bool
+    {
+        return self::hasAnyRole($user, [RoleEnum::ADMIN, RoleEnum::AP]);
+    }
+
+    public static function canAccessApDashboard(?User $user): bool
+    {
+        return self::hasRole($user, RoleEnum::AP) || self::hasGlobalApAccess($user);
+    }
+
+    // Returns true when the user is a pure PIC AP (AP role but not Admin/Manager/Supervisor).
+    // Used to restrict data visibility to only their assigned vendors.
+    public static function isApStaff(?User $user): bool
+    {
+        return self::hasAnyRole($user, [RoleEnum::AP])
+            && !self::hasAnyRole($user, [
+                RoleEnum::ADMIN,
+                RoleEnum::MANAGER,
+                RoleEnum::SUPERVISOR,
+            ]);
+    }
+
+    // Mengembalikan karyawan_ap_id yang membatasi user PIC AP (AP murni),
+    // atau null jika user punya akses AP tanpa batas (Admin/Manager/Supervisor).
+    public static function picApKaryawanIdFor(?User $user): ?int
+    {
+        return self::isApStaff($user) ? $user->karyawan?->id : null;
+    }
+
     // Returns true when the user may manage a record owned by $matchedByUserId:
     // Admin/Manager/Supervisor may always manage it; otherwise only the user who owns it.
     public static function canManageMatchedRecord(?User $user, ?int $matchedByUserId): bool
