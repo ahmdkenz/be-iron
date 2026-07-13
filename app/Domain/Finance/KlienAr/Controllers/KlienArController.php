@@ -46,7 +46,7 @@ class KlienArController extends Controller
 
     public function all(Request $request): JsonResponse
     {
-        $filters = $request->only(['perusahaan_id', 'karyawan_ar_id']);
+        $filters = $request->only(['perusahaan_id', 'karyawan_ar_id', 'segment']);
         $this->applyPicArScope($filters);
 
         $list = $this->service->getAll($filters);
