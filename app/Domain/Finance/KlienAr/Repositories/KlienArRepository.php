@@ -39,6 +39,7 @@ class KlienArRepository
             ->when($filters['karyawan_ar_id'] ?? null, fn($q, $v) => $q->where('karyawan_ar_id', $v))
             ->when($filters['segment'] ?? null, fn($q, $v) => $q->whereIn('tipe_klien', $this->resolveSegmentTypes($v)))
             ->where('status', true)
+            ->orderBy('tipe_klien')
             ->orderBy('nama_klien')
             ->get();
     }
