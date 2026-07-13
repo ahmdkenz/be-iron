@@ -68,7 +68,7 @@ class PembayaranArService
 
         if ($buktiBayar) {
             try {
-                $this->storeBukti($pembayaran, $buktiBayar);
+                $this->storeBukti($pembayaran, $buktiBayar, $invoice->loadMissing(['klienAr.resto', 'resto', 'items']));
             } catch (\Throwable $e) {
                 Log::error('PembayaranArService: gagal menyimpan bukti bayar', [
                     'pembayaran_id' => $pembayaran->id,
@@ -80,10 +80,9 @@ class PembayaranArService
         return $pembayaran->load('createdBy');
     }
 
-    private function storeBukti(PembayaranAr $pembayaran, UploadedFile $file): void
+    private function storeBukti(PembayaranAr $pembayaran, UploadedFile $file, Invoice $invoice): void
     {
-        $ext  = $file->getClientOriginalExtension();
-        $path = "bukti-bayar/{$pembayaran->id}/" . Str::uuid()->toString() . ".{$ext}";
+        $path = $this->buildBuktiPath($pembayaran, $file, $invoice);
 
         Storage::disk('local')->put($path, file_get_contents($file->getRealPath()));
 
@@ -95,6 +94,41 @@ class PembayaranArService
             'bukti_mime_type'   => $file->getMimeType() ?? $file->getClientMimeType(),
             'bukti_uploaded_at' => now(),
         ]);
+    }
+
+    private function buildBuktiPath(PembayaranAr $pembayaran, UploadedFile $file, Invoice $invoice): string
+    {
+        $klienSegment = $this->sanitizePathSegment(
+            $invoice->klienAr
+                ? trim("{$invoice->klienAr->kode_klien} - {$invoice->klienAr->nama_klien}", ' -')
+                : null,
+            "Klien {$invoice->klien_ar_id}"
+        );
+
+        $kodeResto  = $invoice->resto?->kode_resto ?? $invoice->klienAr?->resto?->kode_resto;
+        $namaResto  = $invoice->resto?->nama_resto ?? $invoice->klienAr?->resto?->nama_resto ?? $invoice->resolveRestoName();
+        $restoLabel = $namaResto
+            ? trim(($kodeResto ? "{$kodeResto} - " : '') . $namaResto)
+            : null;
+        $restoSegment = $this->sanitizePathSegment($restoLabel, 'Tanpa Resto');
+
+        $periode = optional($invoice->tanggal_invoice)->format('Y/m') ?? now()->format('Y/m');
+
+        $invoiceSegment = $this->sanitizePathSegment($invoice->no_invoice, "invoice-{$invoice->id}");
+
+        $ext      = $file->getClientOriginalExtension();
+        $fileName = "pembayaran-{$pembayaran->id}-" . Str::uuid()->toString() . ($ext ? ".{$ext}" : '');
+
+        return "bukti-bayar/{$klienSegment}/{$restoSegment}/{$periode}/{$invoiceSegment}/{$fileName}";
+    }
+
+    private function sanitizePathSegment(?string $segment, string $fallback): string
+    {
+        $segment = str_replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], '-', (string) $segment);
+        $segment = preg_replace('/\s+/', ' ', $segment);
+        $segment = trim($segment, " .-");
+
+        return $segment !== '' ? $segment : $fallback;
     }
 
     public function delete(PembayaranAr $pembayaran): void
