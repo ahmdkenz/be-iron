@@ -31,7 +31,7 @@ class EndingBalanceKoreksiController extends Controller
         $eb = EndingBalance::findOrFail($ebId);
 
         $data = $request->validate([
-            'tipe'           => ['required', 'string', 'in:KOREKSI_SALDO,CREDIT_NOTE,DEBIT_NOTE,KOREKSI_QTY_HARGA'],
+            'tipe'           => ['required', 'string', 'in:KOREKSI_SALDO,CREDIT_NOTE,DEBIT_NOTE'],
             'alasan_koreksi' => ['required', 'string', 'max:1000'],
             'dokumen_url'    => ['nullable', 'string', 'max:500'],
             'invoice_id'     => ['nullable', 'integer', 'exists:tb_invoice,id'],
@@ -39,7 +39,7 @@ class EndingBalanceKoreksiController extends Controller
             // Untuk CREDIT_NOTE / DEBIT_NOTE / KOREKSI_SALDO
             'nilai_koreksi'  => ['nullable', 'numeric', 'not_in:0'],
 
-            // Untuk KOREKSI_QTY_HARGA
+            // Koreksi per-item opsional untuk CREDIT_NOTE / DEBIT_NOTE
             'items'                        => ['nullable', 'array', 'min:1'],
             'items.*.invoice_item_id'      => ['required_with:items', 'integer', 'exists:tb_invoice_item,id'],
             'items.*.qty_baru'             => ['required_with:items', 'numeric', 'min:0'],
@@ -48,10 +48,7 @@ class EndingBalanceKoreksiController extends Controller
 
         $tipe = $data['tipe'];
 
-        if ($tipe === 'KOREKSI_QTY_HARGA') {
-            abort_if(empty($data['items']), 422, 'Items wajib diisi untuk koreksi qty/harga.');
-            $this->validateKoreksiQtyHarga($eb, $data['invoice_id'], $data['items']);
-        } elseif (in_array($tipe, ['CREDIT_NOTE', 'DEBIT_NOTE'])) {
+        if (in_array($tipe, ['CREDIT_NOTE', 'DEBIT_NOTE'])) {
             abort_if(empty($data['invoice_id']), 422, 'Invoice wajib dipilih untuk ' . $tipe . '.');
             $this->validateInvoiceBelongToEb($eb, (int) $data['invoice_id']);
 

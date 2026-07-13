@@ -81,11 +81,6 @@ class EndingBalanceKoreksi extends Model
         return $this->tipe === 'DEBIT_NOTE';
     }
 
-    public function isKoreksiQtyHarga(): bool
-    {
-        return $this->tipe === 'KOREKSI_QTY_HARGA';
-    }
-
     public function isPendingSpv(): bool
     {
         return $this->status === 'PENDING_SPV';

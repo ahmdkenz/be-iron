@@ -21,10 +21,12 @@ class EndingBalanceKoreksiService
      * Submit a new correction request.
      *
      * Tipe koreksi:
-     *  - KOREKSI_SALDO     : penyesuaian nominal umum (hanya LOCKED EB, tanpa invoice)
-     *  - CREDIT_NOTE       : pengurangan tagihan per-invoice → nilai_koreksi < 0
-     *  - DEBIT_NOTE        : penambahan tagihan per-invoice → nilai_koreksi > 0
-     *  - KOREKSI_QTY_HARGA : koreksi qty/harga per item invoice → nilai_koreksi = SUM(selisih)
+     *  - KOREKSI_SALDO : penyesuaian nominal umum (hanya LOCKED EB, tanpa invoice)
+     *  - CREDIT_NOTE   : pengurangan tagihan per-invoice → nilai_koreksi < 0
+     *  - DEBIT_NOTE    : penambahan tagihan per-invoice → nilai_koreksi > 0
+     *
+     * CREDIT_NOTE/DEBIT_NOTE boleh opsional menyertakan koreksi qty/harga per item invoice,
+     * yang membuat nilai_koreksi dihitung otomatis dari SUM(selisih) item (lihat resolveNilaiKoreksi()).
      *
      * Semua tipe langsung masuk pending final approval (PENDING_MANAGER),
      * yang dapat diproses oleh Manager atau Supervisor (satu tahap).
@@ -64,7 +66,7 @@ class EndingBalanceKoreksiService
                 'updated_by'        => $userId,
             ]);
 
-            if (!empty($data['items']) && in_array($tipe, ['KOREKSI_QTY_HARGA', 'CREDIT_NOTE', 'DEBIT_NOTE'])) {
+            if (!empty($data['items']) && in_array($tipe, ['CREDIT_NOTE', 'DEBIT_NOTE'])) {
                 $this->createKoreksiItems($koreksi, $data['items']);
             }
 
@@ -193,14 +195,14 @@ class EndingBalanceKoreksiService
 
     /**
      * Hitung nilai_koreksi dari input:
-     * - KOREKSI_QTY_HARGA: SUM(selisih) dari semua items
+     * - CREDIT_NOTE/DEBIT_NOTE dengan items: SUM(selisih) dari semua items
      * - Lainnya: nilai dari field nilai_koreksi
      */
     private function resolveNilaiKoreksi(array $data): float
     {
         $tipe = $data['tipe'] ?? 'KOREKSI_SALDO';
 
-        if (!empty($data['items']) && in_array($tipe, ['KOREKSI_QTY_HARGA', 'CREDIT_NOTE', 'DEBIT_NOTE'])) {
+        if (!empty($data['items']) && in_array($tipe, ['CREDIT_NOTE', 'DEBIT_NOTE'])) {
             $total = 0.0;
             foreach ($data['items'] as $item) {
                 $invoiceItem  = InvoiceItem::findOrFail($item['invoice_item_id']);
@@ -215,7 +217,7 @@ class EndingBalanceKoreksiService
     }
 
     /**
-     * Simpan detail item untuk koreksi tipe KOREKSI_QTY_HARGA.
+     * Simpan detail item koreksi (opsional untuk CREDIT_NOTE/DEBIT_NOTE).
      */
     private function createKoreksiItems(EndingBalanceKoreksi $koreksi, array $items): void
     {
@@ -242,11 +244,9 @@ class EndingBalanceKoreksiService
     /**
      * Terapkan efek koreksi ke invoice saat disetujui Manager.
      *
-     * - CREDIT_NOTE       : tambah total_penyesuaian → outstanding berkurang
-     * - DEBIT_NOTE        : kurangi total_penyesuaian → outstanding bertambah (bisa negatif)
-     * - KOREKSI_QTY_HARGA : tambah total_penyesuaian dengan SUM(selisih); selisih negatif
-     *                        berarti harga turun → outstanding naik (total_penyesuaian berkurang)
-     * - KOREKSI_SALDO     : tidak menyentuh invoice
+     * - CREDIT_NOTE   : tambah total_penyesuaian → outstanding berkurang
+     * - DEBIT_NOTE    : kurangi total_penyesuaian → outstanding bertambah (bisa negatif)
+     * - KOREKSI_SALDO : tidak menyentuh invoice
      */
     private function applyPenyesuaian(EndingBalanceKoreksi $koreksi): void
     {
@@ -260,10 +260,9 @@ class EndingBalanceKoreksiService
         }
 
         $delta = match ($koreksi->tipe) {
-            'CREDIT_NOTE'       =>  abs((float) $koreksi->nilai_koreksi),
-            'DEBIT_NOTE'        => -abs((float) $koreksi->nilai_koreksi),
-            'KOREKSI_QTY_HARGA' => -((float) $koreksi->nilai_koreksi), // selisih positif=harga naik=outstanding berkurang, jadi delta penyesuaian negatif
-            default             => null,
+            'CREDIT_NOTE' =>  abs((float) $koreksi->nilai_koreksi),
+            'DEBIT_NOTE'  => -abs((float) $koreksi->nilai_koreksi),
+            default       => null,
         };
 
         if ($delta === null) {
