@@ -265,6 +265,10 @@
               <td class="dl-val">{{ \Carbon\Carbon::parse($invoice->tanggal_jatuh_tempo)->isoFormat('D MMMM YYYY') }}</td>
             </tr>
             @endif
+            <tr>
+              <td class="dl-lbl">No. Surat Jalan</td><td class="dl-colon">:</td>
+              <td class="dl-val">{{ $invoice->no_surat_jalan ?: '-' }}</td>
+            </tr>
 
             <tr>
               <td class="dl-lbl">Status</td><td class="dl-colon">:</td>
