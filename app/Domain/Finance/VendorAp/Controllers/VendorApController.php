@@ -25,7 +25,7 @@ class VendorApController extends Controller
         $this->authorizeView();
 
         $user    = auth()->user();
-        $filters = $request->only(['search', 'status', 'perusahaan_id', 'karyawan_ap_id', 'kategori', 'per_page']);
+        $filters = $request->only(['search', 'status', 'karyawan_ap_id', 'per_page']);
         ApFilterScope::apply($filters, $user);
 
         if ($request->boolean('all')) {

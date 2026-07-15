@@ -1,5 +1,6 @@
 <?php
 
+use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -11,6 +12,12 @@ return Application::configure(basePath: dirname(__DIR__))
         commands: __DIR__.'/../routes/console.php',
         health: '/up',
     )
+    ->withSchedule(function (Schedule $schedule): void {
+        // Tarik PO & Terima PO dari SHZ360 untuk staging AP. Butuh crontab asli
+        // di hosting (`* * * * * php artisan schedule:run`) — ini penggunaan
+        // scheduler pertama di project ini, belum ada infra cron sebelumnya.
+        $schedule->command('ap:sync-shz360-po')->everyFiveMinutes()->withoutOverlapping();
+    })
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->api(prepend: [
             \Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class,

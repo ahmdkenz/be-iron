@@ -16,14 +16,14 @@ class VendorApRepository
         }
 
         return $this->applyFilters(
-            VendorAp::with(['perusahaan', 'karyawanAp', 'createdBy', 'updatedBy']),
+            VendorAp::with(['karyawanAp', 'createdBy', 'updatedBy']),
             $filters
         )->latest()->paginate($perPage);
     }
 
     public function getAll(array $filters = []): Collection
     {
-        return $this->applyFilters(VendorAp::with(['perusahaan', 'karyawanAp']), $filters)
+        return $this->applyFilters(VendorAp::with(['karyawanAp']), $filters)
             ->where('status', true)
             ->orderBy('nama_vendor')
             ->get();
@@ -31,19 +31,19 @@ class VendorApRepository
 
     public function findById(int $id): ?VendorAp
     {
-        return VendorAp::with(['perusahaan', 'karyawanAp', 'createdBy', 'updatedBy'])->find($id);
+        return VendorAp::with(['karyawanAp', 'createdBy', 'updatedBy'])->find($id);
     }
 
     public function create(array $data): VendorAp
     {
         $vendor = VendorAp::create($data);
-        return $vendor->load(['perusahaan', 'karyawanAp', 'createdBy', 'updatedBy']);
+        return $vendor->load(['karyawanAp', 'createdBy', 'updatedBy']);
     }
 
     public function update(VendorAp $vendor, array $data): VendorAp
     {
         $vendor->update($data);
-        return $vendor->fresh(['perusahaan', 'karyawanAp', 'createdBy', 'updatedBy']);
+        return $vendor->fresh(['karyawanAp', 'createdBy', 'updatedBy']);
     }
 
     public function delete(VendorAp $vendor): bool
@@ -59,10 +59,8 @@ class VendorApRepository
                 ->orWhere('kode_vendor', 'like', "%{$v}%")
                 ->orWhere('no_npwp', 'like', "%{$v}%")
             ))
-            ->when($filters['perusahaan_id'] ?? null, fn($q, $v) => $q->where('perusahaan_id', $v))
             ->when($filters['karyawan_ap_id'] ?? null, fn($q, $v) => $q->where('karyawan_ap_id', $v))
             ->when($filters['pic_ap_karyawan_id'] ?? null, fn($q, $v) => $q->where('karyawan_ap_id', $v))
-            ->when($filters['kategori'] ?? null, fn($q, $v) => $q->where('kategori', $v))
             ->when(isset($filters['status']), fn($q) => $q->where('status', $filters['status']));
     }
 }

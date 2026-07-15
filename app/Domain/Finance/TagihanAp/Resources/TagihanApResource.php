@@ -34,6 +34,7 @@ class TagihanApResource extends JsonResource
             ] : null),
             'no_po'               => $this->no_po,
             'no_terima_barang'    => $this->no_terima_barang,
+            'source_system'       => $this->source_system,
             'subtotal'            => (float) $this->subtotal,
             'ppn_masukan'         => (float) $this->ppn_masukan,
             'pph23'               => (float) $this->pph23,

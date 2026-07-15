@@ -1,0 +1,215 @@
+<?php
+
+namespace App\Domain\Finance\ApShz360Sync\Controllers;
+
+use App\Domain\Finance\ApShz360Sync\Services\ApShz360ImportService;
+use App\Domain\Finance\ApShz360Sync\Services\ApShz360SyncService;
+use App\Http\Controllers\Controller;
+use App\Models\ApShz360ReceiptImport;
+use App\Models\ApShz360SyncRun;
+use App\Support\Helpers\RoleHelper;
+use App\Support\Traits\ApiResponse;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+
+class ApShz360ImportController extends Controller
+{
+    use ApiResponse;
+
+    public function __construct(
+        private readonly ApShz360ImportService $service,
+        private readonly ApShz360SyncService $syncService,
+    ) {}
+
+    public function index(Request $request): JsonResponse
+    {
+        $this->authorizeView();
+
+        $filters = $request->only(['import_status', 'kode_po', 'kode_receipt', 'need_mapping', 'per_page']);
+        $list = $this->service->paginate($filters);
+
+        return $this->paginatedResponse($list->through(fn (ApShz360ReceiptImport $r) => $this->toArray($r)));
+    }
+
+    public function show(int $id): JsonResponse
+    {
+        $this->authorizeView();
+
+        $receipt = $this->service->findOrFail($id);
+
+        return $this->successResponse($this->toArray($receipt, detail: true));
+    }
+
+    public function mapVendor(Request $request, int $id): JsonResponse
+    {
+        $this->authorizeOperate();
+
+        $payload = $request->validate([
+            'vendor_ap_id' => ['required', 'integer', 'exists:tb_vendor_ap,id'],
+        ]);
+
+        $receipt = $this->service->findOrFail($id);
+        $updated = $this->service->mapVendor($receipt, (int) $payload['vendor_ap_id']);
+
+        return $this->successResponse($this->toArray($updated, detail: true), 'Vendor berhasil dipetakan');
+    }
+
+    public function createVendor(Request $request, int $id): JsonResponse
+    {
+        $this->authorizeOperate();
+
+        $payload = $request->validate([
+            'karyawan_ap_id' => ['required', 'integer', 'exists:tb_karyawan,id'],
+        ]);
+
+        $receipt = $this->service->findOrFail($id);
+        $updated = $this->service->createVendorFromSupplier($receipt, $payload);
+
+        return $this->createdResponse($this->toArray($updated, detail: true), 'Vendor baru berhasil dibuat dan dipetakan');
+    }
+
+    public function convertToTagihan(Request $request, int $id): JsonResponse
+    {
+        $this->authorizeOperate();
+
+        $payload = $request->validate([
+            'no_tagihan' => ['nullable', 'string', 'max:50'],
+            'no_invoice_vendor' => ['nullable', 'string'],
+            'tanggal_tagihan' => ['nullable', 'date'],
+            'tanggal_jatuh_tempo' => ['nullable', 'date'],
+            'ppn_masukan' => ['nullable', 'numeric', 'min:0'],
+            'pph23' => ['nullable', 'numeric', 'min:0'],
+            'keterangan' => ['nullable', 'string'],
+        ]);
+
+        $receipt = $this->service->findOrFail($id);
+        $tagihan = $this->service->convertToTagihan($receipt, $payload);
+
+        return $this->createdResponse([
+            'tagihan_ap_id' => $tagihan->id,
+            'no_tagihan' => $tagihan->no_tagihan,
+        ], 'Tagihan AP berhasil dibuat dari staging SHZ360');
+    }
+
+    public function ignore(int $id): JsonResponse
+    {
+        $this->authorizeOperate();
+
+        $receipt = $this->service->findOrFail($id);
+        $updated = $this->service->ignore($receipt);
+
+        return $this->successResponse($this->toArray($updated, detail: true), 'Data staging diabaikan');
+    }
+
+    public function retrySync(): JsonResponse
+    {
+        $this->authorizeOperate();
+
+        $run = $this->syncService->runFullSync();
+
+        return $this->successResponse([
+            'id' => $run->id,
+            'status' => $run->status,
+            'po_fetched' => $run->po_fetched,
+            'po_upserted' => $run->po_upserted,
+            'receipt_fetched' => $run->receipt_fetched,
+            'receipt_upserted' => $run->receipt_upserted,
+            'message' => $run->message,
+        ], $run->status === 'success' ? 'Sync berhasil dijalankan ulang' : 'Sync gagal, lihat detail error');
+    }
+
+    public function lastSyncRun(): JsonResponse
+    {
+        $this->authorizeView();
+
+        $run = ApShz360SyncRun::latest('started_at')->first();
+        abort_if(! $run, 404, 'Belum pernah ada sync yang berjalan');
+
+        return $this->successResponse([
+            'id' => $run->id,
+            'status' => $run->status,
+            'started_at' => $run->started_at?->toIso8601String(),
+            'finished_at' => $run->finished_at?->toIso8601String(),
+            'po_fetched' => $run->po_fetched,
+            'po_upserted' => $run->po_upserted,
+            'receipt_fetched' => $run->receipt_fetched,
+            'receipt_upserted' => $run->receipt_upserted,
+            'message' => $run->message,
+            'error_count' => $run->errors()->count(),
+        ]);
+    }
+
+    private function toArray(ApShz360ReceiptImport $receipt, bool $detail = false): array
+    {
+        $poImport = $receipt->poImport;
+
+        $data = [
+            'id' => $receipt->id,
+            'kode_receipt' => $receipt->kode_receipt,
+            'tanggal_receipt' => $receipt->tanggal_receipt?->format('Y-m-d'),
+            'no_invoice' => $receipt->no_invoice,
+            'no_surat_jalan' => $receipt->no_surat_jalan,
+            'no_faktur_pajak' => $receipt->no_faktur_pajak,
+            'import_status' => $receipt->import_status,
+            'kode_po' => $poImport?->kode_po,
+            'vendor_ap_id' => $poImport?->vendor_ap_id,
+            'vendor_nama' => $poImport?->vendorAp?->nama_vendor,
+            'source_supplier_name' => $poImport?->raw_payload['supplier']['nama_supplier'] ?? null,
+            'source_supplier' => $this->extractSupplier($poImport?->raw_payload['supplier'] ?? null),
+            'need_mapping' => ! $poImport || ! $poImport->vendor_ap_id,
+            'total_diterima' => (float) $receipt->items()->sum('subtotal'),
+        ];
+
+        if ($detail) {
+            $data['items'] = $receipt->items->map(fn ($item) => [
+                'kode_barang' => $item->kode_barang,
+                'nama_barang' => $item->nama_barang,
+                'satuan' => $item->satuan,
+                'qty_diterima' => (float) $item->qty_diterima,
+                'qty_tolak' => (float) $item->qty_tolak,
+                'keterangan_tolak' => $item->keterangan_tolak,
+                'harga' => (float) $item->harga,
+                'subtotal' => (float) $item->subtotal,
+            ])->values();
+
+            $data['po_items'] = $poImport?->items->map(fn ($item) => [
+                'kode_barang' => $item->kode_barang,
+                'nama_barang' => $item->nama_barang,
+                'satuan' => $item->satuan,
+                'qty_po' => (float) $item->qty_po,
+                'harga' => (float) $item->harga,
+                'subtotal' => (float) $item->subtotal,
+            ])->values();
+
+            $data['tagihan_ap_id'] = $receipt->tagihanLink?->tagihan_ap_id;
+        }
+
+        return $data;
+    }
+
+    private function extractSupplier(?array $supplier): ?array
+    {
+        if (! $supplier) {
+            return null;
+        }
+
+        return [
+            'kode_supplier' => $supplier['kode_supplier'] ?? null,
+            'nama_supplier' => $supplier['nama_supplier'] ?? null,
+            'npwp' => $supplier['npwp'] ?? null,
+            'bank_nama' => $supplier['bank_nama'] ?? null,
+            'bank_no_rekening' => $supplier['bank_no_rekening'] ?? null,
+            'bank_atas_nama' => $supplier['bank_atas_nama'] ?? null,
+        ];
+    }
+
+    private function authorizeView(): void
+    {
+        abort_if(! RoleHelper::canViewApShz360Import(auth()->user()), 403, 'Tidak memiliki akses ke data staging SHZ360');
+    }
+
+    private function authorizeOperate(): void
+    {
+        abort_if(! RoleHelper::canOperateApShz360Import(auth()->user()), 403, 'Tidak memiliki akses untuk mengelola staging SHZ360');
+    }
+}

@@ -1,5 +1,6 @@
 <?php
 
+use App\Domain\Finance\ApShz360Sync\Controllers\ApShz360ImportController;
 use App\Domain\Finance\Dashboard\Controllers\DashboardApController;
 use App\Domain\Finance\PembayaranAp\Controllers\PembayaranApController;
 use App\Domain\Finance\TagihanAp\Controllers\TagihanApController;
@@ -44,3 +45,15 @@ Route::prefix('tagihan')->group(function () {
 Route::get('/pembayaran', [PembayaranApController::class, 'index']);
 Route::get('/pembayaran/cek-referensi', [PembayaranApController::class, 'cekReferensi']);
 Route::delete('/pembayaran/{pembayaran}', [PembayaranApController::class, 'destroy']);
+
+// ─── Import SHZ360 (staging PO/Terima PO -> Tagihan AP) ──────────
+Route::prefix('shz360')->group(function () {
+    Route::get('/sync/last-run', [ApShz360ImportController::class, 'lastSyncRun']);
+    Route::post('/sync/retry', [ApShz360ImportController::class, 'retrySync']);
+    Route::get('/imports', [ApShz360ImportController::class, 'index']);
+    Route::get('/imports/{id}', [ApShz360ImportController::class, 'show']);
+    Route::post('/imports/{id}/map-vendor', [ApShz360ImportController::class, 'mapVendor']);
+    Route::post('/imports/{id}/create-vendor', [ApShz360ImportController::class, 'createVendor']);
+    Route::post('/imports/{id}/convert-to-tagihan', [ApShz360ImportController::class, 'convertToTagihan']);
+    Route::post('/imports/{id}/ignore', [ApShz360ImportController::class, 'ignore']);
+});

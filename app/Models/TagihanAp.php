@@ -18,6 +18,9 @@ class TagihanAp extends Model
         'tanggal_tagihan',
         'tanggal_jatuh_tempo',
         'vendor_ap_id',
+        'source_system',
+        'ap_shz360_po_import_id',
+        'ap_shz360_receipt_import_id',
         'perusahaan_id',
         'karyawan_id',
         'no_po',
@@ -64,6 +67,16 @@ class TagihanAp extends Model
     public function vendorAp()
     {
         return $this->belongsTo(VendorAp::class, 'vendor_ap_id');
+    }
+
+    public function apShz360PoImport()
+    {
+        return $this->belongsTo(ApShz360PoImport::class, 'ap_shz360_po_import_id');
+    }
+
+    public function apShz360ReceiptImport()
+    {
+        return $this->belongsTo(ApShz360ReceiptImport::class, 'ap_shz360_receipt_import_id');
     }
 
     public function perusahaan()

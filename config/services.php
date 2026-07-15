@@ -35,4 +35,12 @@ return [
         ],
     ],
 
+    // Sync AP <- SHZ360 (tarik PO & Terima PO untuk staging). Token harus
+    // sama persis dengan IRON_INTEGRATION_TOKEN di .env public_html (SHZ360).
+    'shz360' => [
+        'base_url' => env('SHZ360_BASE_URL'),
+        'token' => env('SHZ360_INTEGRATION_TOKEN'),
+        'timeout' => env('SHZ360_TIMEOUT', 15),
+    ],
+
 ];

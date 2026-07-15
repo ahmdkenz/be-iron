@@ -16,18 +16,9 @@ class VendorApResource extends JsonResource
             'display_label'    => "{$this->nama_vendor} ({$this->kode_vendor})",
             'no_npwp'          => $this->no_npwp,
             'status_pkp'       => $this->status_pkp,
-            'kategori'         => $this->kategori,
-            'termin_hari'      => $this->termin_hari,
             'bank_nama'        => $this->bank_nama,
             'bank_no_rekening' => $this->bank_no_rekening,
             'bank_atas_nama'   => $this->bank_atas_nama,
-            'perusahaan_id'    => $this->perusahaan_id,
-            'perusahaan'       => $this->whenLoaded('perusahaan', fn() => $this->perusahaan ? [
-                'id'                        => $this->perusahaan->id,
-                'kode_perusahaan'           => $this->perusahaan->kode_perusahaan,
-                'nama_singkatan_perusahaan' => $this->perusahaan->nama_singkatan_perusahaan,
-                'nama_perusahaan'           => $this->perusahaan->nama_perusahaan,
-            ] : null),
             'karyawan_ap_id'   => $this->karyawan_ap_id,
             'karyawan_ap'      => $this->whenLoaded('karyawanAp', fn() => $this->karyawanAp ? [
                 'id'            => $this->karyawanAp->id,

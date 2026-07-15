@@ -33,11 +33,10 @@ class TagihanApService
         return $tagihan;
     }
 
-    public function generateNoTagihan(VendorAp $vendor, string $tanggal): string
+    public function generateNoTagihan(VendorAp $vendor, string $tanggal, ?string $namaSingkatanPerusahaan = null): string
     {
-        $vendor->loadMissing('perusahaan');
         $singkatan = strtoupper(preg_replace(
-            '/[^A-Za-z0-9]/', '', $vendor->perusahaan?->nama_singkatan_perusahaan ?? $vendor->kode_vendor
+            '/[^A-Za-z0-9]/', '', $namaSingkatanPerusahaan ?? $vendor->kode_vendor
         ));
         $date = \Carbon\Carbon::parse($tanggal);
         $now  = \Carbon\Carbon::now();
@@ -47,10 +46,11 @@ class TagihanApService
 
     public function create(TagihanApDTO $dto): TagihanAp
     {
-        $user = auth()->user()->loadMissing('karyawan');
+        $user = auth()->user()->loadMissing('karyawan.perusahaan');
         abort_if(!$user?->karyawan?->id, 422, 'User tidak terhubung dengan data karyawan');
+        abort_if(!$user->karyawan->perusahaan_id, 422, 'Karyawan tidak terhubung dengan entitas perusahaan');
 
-        $vendor = VendorAp::with('perusahaan')->findOrFail($dto->vendor_ap_id);
+        $vendor = VendorAp::findOrFail($dto->vendor_ap_id);
 
         return DB::transaction(function () use ($dto, $vendor, $user) {
             $subtotal = collect($dto->items)->sum(
@@ -59,12 +59,12 @@ class TagihanApService
             $totalTagihan = $subtotal + $dto->ppn_masukan - $dto->pph23;
 
             $tagihan = $this->repository->create([
-                'no_tagihan'          => $dto->no_tagihan ?? $this->generateNoTagihan($vendor, $dto->tanggal_tagihan),
+                'no_tagihan'          => $dto->no_tagihan ?? $this->generateNoTagihan($vendor, $dto->tanggal_tagihan, $user->karyawan->perusahaan?->nama_singkatan_perusahaan),
                 'no_invoice_vendor'   => $dto->no_invoice_vendor,
                 'tanggal_tagihan'     => $dto->tanggal_tagihan,
                 'tanggal_jatuh_tempo' => $dto->tanggal_jatuh_tempo,
                 'vendor_ap_id'        => $vendor->id,
-                'perusahaan_id'       => $vendor->perusahaan_id,
+                'perusahaan_id'       => $user->karyawan->perusahaan_id,
                 'karyawan_id'         => $user->karyawan->id,
                 'no_po'               => $dto->no_po,
                 'no_terima_barang'    => $dto->no_terima_barang,
@@ -122,7 +122,6 @@ class TagihanApService
             'tanggal_tagihan'     => $dto->tanggal_tagihan,
             'tanggal_jatuh_tempo' => $dto->tanggal_jatuh_tempo,
             'vendor_ap_id'        => $vendor->id,
-            'perusahaan_id'       => $vendor->perusahaan_id,
             'no_po'               => $dto->no_po,
             'no_terima_barang'    => $dto->no_terima_barang,
             'subtotal'            => $subtotal,

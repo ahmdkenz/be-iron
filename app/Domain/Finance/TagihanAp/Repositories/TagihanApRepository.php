@@ -33,7 +33,7 @@ class TagihanApRepository
     public function findById(int $id): ?TagihanAp
     {
         return TagihanAp::with([
-            'vendorAp.perusahaan',
+            'vendorAp',
             'vendorAp.karyawanAp',
             'perusahaan',
             'karyawan.perusahaan',

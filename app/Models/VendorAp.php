@@ -17,12 +17,9 @@ class VendorAp extends Model
         'nama_vendor',
         'no_npwp',
         'status_pkp',
-        'kategori',
-        'termin_hari',
         'bank_nama',
         'bank_no_rekening',
         'bank_atas_nama',
-        'perusahaan_id',
         'karyawan_ap_id',
         'status',
         'created_by',
@@ -31,14 +28,8 @@ class VendorAp extends Model
 
     protected $casts = [
         'status_pkp'   => 'boolean',
-        'termin_hari'  => 'integer',
         'status'       => 'boolean',
     ];
-
-    public function perusahaan()
-    {
-        return $this->belongsTo(Perusahaan::class, 'perusahaan_id');
-    }
 
     public function karyawanAp()
     {

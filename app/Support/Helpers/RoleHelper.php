@@ -208,6 +208,18 @@ class RoleHelper
         return self::hasAnyRole($user, [RoleEnum::ADMIN, RoleEnum::AP]);
     }
 
+    // Staging import SHZ360 — sama seperti Import Master Data AP: ADMIN/MANAGER/SUPERVISOR
+    // saja, staff AP tidak boleh mengelola sumber data mentahnya.
+    public static function canViewApShz360Import(?User $user): bool
+    {
+        return self::hasGlobalApAccess($user);
+    }
+
+    public static function canOperateApShz360Import(?User $user): bool
+    {
+        return self::hasGlobalApAccess($user);
+    }
+
     public static function canAccessApDashboard(?User $user): bool
     {
         return self::hasRole($user, RoleEnum::AP) || self::hasGlobalApAccess($user);
