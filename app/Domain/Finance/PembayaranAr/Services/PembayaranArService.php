@@ -7,6 +7,7 @@ use App\Domain\Finance\PendapatanDiMuka\Services\PendapatanDiMukaService;
 use App\Models\BankStatement;
 use App\Models\BankStatementDetail;
 use App\Models\Invoice;
+use App\Models\KlienAr;
 use App\Models\PembayaranAr;
 use App\Models\PembayaranArLog;
 use App\Models\PendapatanDiMuka;
@@ -131,6 +132,42 @@ class PembayaranArService
         return $segment !== '' ? $segment : $fallback;
     }
 
+    public function storeBuktiForPdm(PembayaranAr $pembayaran, UploadedFile $file, KlienAr $klienAr): void
+    {
+        $path = $this->buildBuktiPathForPdm($pembayaran, $file, $klienAr->loadMissing('resto'));
+
+        Storage::disk('local')->put($path, file_get_contents($file->getRealPath()));
+
+        $pembayaran->update([
+            'bukti_disk'        => 'local',
+            'bukti_path'        => $path,
+            'bukti_file_name'   => $file->getClientOriginalName(),
+            'bukti_file_size'   => $file->getSize(),
+            'bukti_mime_type'   => $file->getMimeType() ?? $file->getClientMimeType(),
+            'bukti_uploaded_at' => now(),
+        ]);
+    }
+
+    private function buildBuktiPathForPdm(PembayaranAr $pembayaran, UploadedFile $file, KlienAr $klienAr): string
+    {
+        $klienSegment = $this->sanitizePathSegment(
+            trim("{$klienAr->kode_klien} - {$klienAr->nama_klien}", ' -'),
+            "Klien {$klienAr->id}"
+        );
+
+        $restoLabel = $klienAr->resto?->nama_resto
+            ? trim(($klienAr->resto->kode_resto ? "{$klienAr->resto->kode_resto} - " : '') . $klienAr->resto->nama_resto)
+            : null;
+        $restoSegment = $this->sanitizePathSegment($restoLabel, 'Tanpa Resto');
+
+        $periode = optional($pembayaran->tanggal_pembayaran)->format('Y/m') ?? now()->format('Y/m');
+
+        $ext      = $file->getClientOriginalExtension();
+        $fileName = "pdm-{$pembayaran->id}-" . Str::uuid()->toString() . ($ext ? ".{$ext}" : '');
+
+        return "bukti-bayar/{$klienSegment}/{$restoSegment}/{$periode}/PDM/{$fileName}";
+    }
+
     public function delete(PembayaranAr $pembayaran): void
     {
         $pdm = PendapatanDiMuka::where('sumber_pembayaran_ar_id', $pembayaran->id)->first();
@@ -198,8 +235,11 @@ class PembayaranArService
                 ]);
             }
 
-            $invoice = Invoice::find($invoiceId);
-            $this->invoiceService->recalculate($invoice);
+            // invoice_id bisa null untuk pembayaran shell PDM tanpa invoice (Catat sebagai PDM).
+            $invoice = $invoiceId ? Invoice::find($invoiceId) : null;
+            if ($invoice) {
+                $this->invoiceService->recalculate($invoice);
+            }
 
             foreach ($affectedInvoices as $targetInvoice) {
                 if ($targetInvoice->id !== $invoiceId) {

@@ -118,6 +118,7 @@ Route::prefix('rekonsiliasi-bank')->middleware('role:ADMIN|MANAGER|SUPERVISOR|AR
     Route::post('/detail/{detail}/kelebihan',        [BankStatementController::class, 'applyKelebihanBayar']);
     Route::get('/detail/{detail}/invoice-candidates', [BankStatementController::class, 'invoiceCandidates']);
     Route::post('/detail/{detail}/catat-bayar',       [BankStatementController::class, 'catatBayar']);
+    Route::post('/detail/{detail}/catat-pdm',         [BankStatementController::class, 'catatPdm']);
 });
 
 // ─── Pendapatan di Muka ───────────────────────────────────────────

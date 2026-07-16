@@ -9,6 +9,8 @@ use App\Http\Controllers\Controller;
 use App\Models\BankStatement;
 use App\Models\BankStatementDetail;
 use App\Models\Invoice;
+use App\Models\KlienAr;
+use App\Models\PendapatanDiMuka;
 use App\Support\Helpers\RoleHelper;
 use App\Support\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
@@ -340,6 +342,44 @@ class BankStatementController extends Controller
         }
     }
 
+    public function catatPdm(Request $request, BankStatementDetail $detail): JsonResponse
+    {
+        $request->validate([
+            'klien_ar_id'      => ['required', 'integer', 'exists:tb_klien_ar,id'],
+            'keterangan'       => ['nullable', 'string', 'max:500'],
+            'bukti_pembayaran' => ['nullable', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:10240'],
+        ]);
+
+        try {
+            $klienAr = KlienAr::findOrFail($request->integer('klien_ar_id'));
+            $this->authorizeKlienArOwnership($klienAr);
+
+            $updated = $this->service->matchAsPdm(
+                $detail,
+                $klienAr,
+                $request->input('keterangan'),
+                $request->file('bukti_pembayaran'),
+            );
+
+            $pdm = PendapatanDiMuka::where('sumber_pembayaran_ar_id', $updated->pembayaran_ar_id)->first();
+
+            return $this->successResponse([
+                'id'           => $updated->id,
+                'status_cocok' => $updated->status_cocok,
+                'matched_by'   => auth()->user()?->name,
+                'pdm'          => $pdm ? [
+                    'id'                 => $pdm->id,
+                    'jumlah'             => (float) $pdm->jumlah,
+                    'status'             => $pdm->status,
+                    'tanggal_pencatatan' => $pdm->tanggal_pencatatan?->toDateString(),
+                    'klien'              => $klienAr->nama_klien,
+                ] : null,
+            ], 'Transaksi berhasil dicatat sebagai Pendapatan di Muka.');
+        } catch (\Symfony\Component\HttpKernel\Exception\HttpException $e) {
+            return $this->errorResponse($e->getMessage(), $e->getStatusCode());
+        }
+    }
+
     public function downloadTemplate(string $bankType): BinaryFileResponse|JsonResponse
     {
         $bankType = strtoupper($bankType);
@@ -371,6 +411,20 @@ class BankStatementController extends Controller
             $klienKaryawanArId !== null && (int) $klienKaryawanArId === $karyawanId,
             403,
             'Anda tidak memiliki akses untuk memproses invoice klien ini.'
+        );
+    }
+
+    private function authorizeKlienArOwnership(KlienAr $klienAr): void
+    {
+        $karyawanId = RoleHelper::picArKaryawanIdFor(auth()->user());
+        if ($karyawanId === null) {
+            return; // Admin/Manager/Supervisor: tidak dibatasi
+        }
+
+        abort_unless(
+            (int) $klienAr->karyawan_ar_id === $karyawanId,
+            403,
+            'Anda tidak memiliki akses untuk mencatat Pendapatan di Muka klien ini.'
         );
     }
 

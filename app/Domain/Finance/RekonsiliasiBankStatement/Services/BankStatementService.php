@@ -8,6 +8,7 @@ use App\Domain\Finance\RekonsiliasiBankStatement\Parsers\BankParserFactory;
 use App\Models\BankStatement;
 use App\Models\BankStatementDetail;
 use App\Models\Invoice;
+use App\Models\KlienAr;
 use App\Models\PembayaranAr;
 use App\Models\PendapatanDiMuka;
 use App\Support\Helpers\RoleHelper;
@@ -203,7 +204,9 @@ class BankStatementService
     {
         $pembayaran  = $d->pembayaranAr;
         $invoice     = $pembayaran?->invoice;
-        $selisihBank = $pembayaran
+        // Pembayaran shell "Catat sebagai PDM" (tanpa invoice) tidak punya nominal
+        // pembanding — seluruh kredit bank memang sengaja dicatat sebagai PDM.
+        $selisihBank = ($pembayaran && $invoice)
             ? round($d->kredit - (float) $pembayaran->jumlah_pembayaran, 2)
             : null;
 
@@ -240,6 +243,32 @@ class BankStatementService
             }
         }
 
+        // Transaksi dicatat langsung sebagai PDM tanpa invoice: seluruh nominal
+        // kredit bank sudah menjadi PDM saat dicocokkan, jadi "sisa" selalu 0.
+        $pdmTanpaInvoice = null;
+        if ($pembayaran && !$invoice) {
+            $pdmTanpaInvoice = PendapatanDiMuka::with('klienAr')
+                ->where('sumber_pembayaran_ar_id', $pembayaran->id)
+                ->first();
+
+            if ($pdmTanpaInvoice) {
+                $kelebihanBayar = [
+                    'total'           => (float) $pdmTanpaInvoice->jumlah,
+                    'sudah_dialokasi' => 0.0,
+                    'sisa'            => 0.0,
+                    'riwayat'         => [],
+                    'pdm'             => [
+                        'id'                 => $pdmTanpaInvoice->id,
+                        'jumlah'             => (float) $pdmTanpaInvoice->jumlah,
+                        'status'             => $pdmTanpaInvoice->status,
+                        'tanggal_pencatatan' => $pdmTanpaInvoice->tanggal_pencatatan?->format('d-m-Y'),
+                        'keterangan'         => $pdmTanpaInvoice->keterangan,
+                        'created_by'         => $pdmTanpaInvoice->createdBy?->name,
+                    ],
+                ];
+            }
+        }
+
         return [
             'id'            => $d->id,
             'tanggal'       => $d->tanggal?->format('d-m-Y'),
@@ -261,7 +290,7 @@ class BankStatementService
                 'tanggal_pembayaran' => $pembayaran->tanggal_pembayaran?->format('d-m-Y'),
                 'jumlah_pembayaran'  => $pembayaran->jumlah_pembayaran,
                 'metode_pembayaran'  => $pembayaran->metode_pembayaran,
-                'klien'              => $invoice?->klienAr?->nama_klien,
+                'klien'              => $invoice?->klienAr?->nama_klien ?? $pdmTanpaInvoice?->klienAr?->nama_klien,
             ] : null,
         ];
     }
@@ -609,6 +638,51 @@ class BankStatementService
             ];
 
             $pembayaran = $this->pembayaranArService->create($invoice, $paymentData, $buktiBayar);
+
+            return $this->manualMatch($detail, $pembayaran->id);
+        });
+    }
+
+    public function matchAsPdm(
+        BankStatementDetail $detail,
+        KlienAr $klienAr,
+        ?string $keterangan,
+        ?UploadedFile $buktiBayar = null,
+    ): BankStatementDetail {
+        abort_if($detail->status_cocok === 'MATCHED', 422, 'Transaksi ini sudah dicocokkan.');
+        abort_if($detail->kredit <= 0, 422, 'Hanya transaksi kredit yang dapat dicatat sebagai Pendapatan di Muka.');
+
+        return DB::transaction(function () use ($detail, $klienAr, $keterangan, $buktiBayar) {
+            // Pembayaran "shell" tanpa invoice — hanya sebagai sumber (sumber_pembayaran_ar_id)
+            // bagi PendapatanDiMuka, meniru pola kelebihan bayar (matchWithNewPayment/applyKelebihan).
+            $pembayaran = PembayaranAr::create([
+                'invoice_id'               => null,
+                'tanggal_pembayaran'       => $detail->tanggal,
+                'jumlah_pembayaran'        => 0,
+                'metode_pembayaran'        => 'TRANSFER',
+                'no_referensi'             => $detail->no_referensi ?: null,
+                'keterangan'               => $keterangan,
+                'dibuat_dari_rekonsiliasi' => true,
+                'created_by'               => auth()->id(),
+            ]);
+
+            $klienAr->loadMissing('resto');
+
+            PendapatanDiMuka::create([
+                'sumber_pembayaran_ar_id'  => $pembayaran->id,
+                'bank_statement_detail_id' => $detail->id,
+                'investor_id'              => $klienAr->resto?->investor_id,
+                'klien_ar_id'              => $klienAr->id,
+                'jumlah'                   => $detail->kredit,
+                'tanggal_pencatatan'       => $detail->tanggal,
+                'keterangan'               => $keterangan,
+                'status'                   => 'AKTIF',
+                'created_by'               => auth()->id(),
+            ]);
+
+            if ($buktiBayar) {
+                $this->pembayaranArService->storeBuktiForPdm($pembayaran, $buktiBayar, $klienAr);
+            }
 
             return $this->manualMatch($detail, $pembayaran->id);
         });
