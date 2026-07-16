@@ -2,11 +2,13 @@
 
 namespace App\Domain\Finance\ApShz360Sync\Services;
 
+use App\Domain\Finance\ApShz360Sync\Support\VendorNameMatcher;
 use App\Domain\Finance\TagihanAp\DTO\TagihanApDTO;
 use App\Domain\Finance\TagihanAp\Services\TagihanApService;
 use App\Domain\Finance\VendorAp\DTO\VendorApDTO;
 use App\Domain\Finance\VendorAp\Services\VendorApService;
 use App\Models\ApImportTagihanLink;
+use App\Models\ApShz360PoImport;
 use App\Models\ApShz360ReceiptImport;
 use App\Models\ApSourceVendorMap;
 use App\Models\TagihanAp;
@@ -72,19 +74,73 @@ class ApShz360ImportService
                 'import_status' => $poImport->import_status === 'NEED_MAPPING' ? 'READY_FOR_AP' : $poImport->import_status,
             ]);
 
+            $normalizedName = null;
+
             if ($poImport->source_supplier_id) {
                 ApSourceVendorMap::where('source_system', 'SHZ360')
                     ->where('source_supplier_id', $poImport->source_supplier_id)
                     ->update(['vendor_ap_id' => $vendor->id, 'status' => 'MAPPED']);
+
+                $normalizedName = VendorNameMatcher::normalize(
+                    ApSourceVendorMap::where('source_system', 'SHZ360')
+                        ->where('source_supplier_id', $poImport->source_supplier_id)
+                        ->value('source_supplier_name')
+                );
             }
 
             // Penerimaan lain di bawah PO yang sama & masih baru ikut siap dikonversi.
             ApShz360ReceiptImport::where('po_import_id', $poImport->id)
                 ->where('import_status', 'NEW')
                 ->update(['import_status' => 'READY_FOR_AP']);
+
+            // Baris lain (PO/supplier_id berbeda) dengan nama supplier SHZ360 yang sama
+            // ikut terselesaikan, supaya tidak perlu dipetakan berulang per supplier_id.
+            if ($normalizedName) {
+                $this->cascadeVendorByName($normalizedName, $vendor->id);
+            }
         });
 
         return $this->findOrFail($receipt->id);
+    }
+
+    /**
+     * Terapkan vendor_ap_id ke semua ApSourceVendorMap/ApShz360PoImport/ApShz360ReceiptImport
+     * lain yang masih belum dipetakan tapi nama supplier SHZ360-nya (ternormalisasi) sama
+     * dengan yang baru saja dipetakan. Dipakai oleh mapVendor() dan command backfill retroaktif.
+     */
+    public function cascadeVendorByName(string $normalizedName, int $vendorApId): array
+    {
+        $maps = ApSourceVendorMap::where('source_system', 'SHZ360')
+            ->whereNull('vendor_ap_id')
+            ->whereRaw('UPPER(TRIM(source_supplier_name)) = ?', [$normalizedName])
+            ->get();
+
+        if ($maps->isEmpty()) {
+            return ['maps' => 0, 'po' => 0, 'receipts' => 0];
+        }
+
+        foreach ($maps as $map) {
+            $map->update(['vendor_ap_id' => $vendorApId, 'status' => 'MAPPED']);
+        }
+
+        $poImports = ApShz360PoImport::whereIn('source_supplier_id', $maps->pluck('source_supplier_id'))
+            ->whereNull('vendor_ap_id')
+            ->get();
+
+        $receiptCount = 0;
+
+        foreach ($poImports as $po) {
+            $po->update([
+                'vendor_ap_id' => $vendorApId,
+                'import_status' => $po->import_status === 'NEED_MAPPING' ? 'READY_FOR_AP' : $po->import_status,
+            ]);
+
+            $receiptCount += ApShz360ReceiptImport::where('po_import_id', $po->id)
+                ->where('import_status', 'NEW')
+                ->update(['import_status' => 'READY_FOR_AP']);
+        }
+
+        return ['maps' => $maps->count(), 'po' => $poImports->count(), 'receipts' => $receiptCount];
     }
 
     /**

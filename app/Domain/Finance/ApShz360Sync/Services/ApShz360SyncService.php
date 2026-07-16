@@ -2,6 +2,7 @@
 
 namespace App\Domain\Finance\ApShz360Sync\Services;
 
+use App\Domain\Finance\ApShz360Sync\Support\VendorNameMatcher;
 use App\Models\ApShz360PoImport;
 use App\Models\ApShz360PoImportItem;
 use App\Models\ApShz360ReceiptImport;
@@ -206,7 +207,7 @@ class ApShz360SyncService
             return null;
         }
 
-        return ApSourceVendorMap::updateOrCreate(
+        $map = ApSourceVendorMap::updateOrCreate(
             ['source_system' => 'SHZ360', 'source_supplier_id' => $supplier['source_supplier_id']],
             [
                 'source_supplier_code' => $supplier['kode_supplier'] ?? null,
@@ -215,6 +216,23 @@ class ApShz360SyncService
                 'last_synced_at' => now(),
             ]
         );
+
+        // Supplier_id baru dari SHZ360 tapi namanya sudah pernah dipetakan sebelumnya
+        // (di supplier_id lain) langsung ikut ke-resolve, tanpa perlu mapping manual lagi.
+        if (! $map->vendor_ap_id && $map->source_supplier_name) {
+            $normalized = VendorNameMatcher::normalize($map->source_supplier_name);
+
+            $knownVendorApId = ApSourceVendorMap::where('source_system', 'SHZ360')
+                ->whereNotNull('vendor_ap_id')
+                ->whereRaw('UPPER(TRIM(source_supplier_name)) = ?', [$normalized])
+                ->value('vendor_ap_id');
+
+            if ($knownVendorApId) {
+                $map->update(['vendor_ap_id' => $knownVendorApId, 'status' => 'MAPPED']);
+            }
+        }
+
+        return $map;
     }
 
     private function hash(array $row): string

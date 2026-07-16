@@ -4,9 +4,11 @@ namespace App\Domain\Finance\ApShz360Sync\Controllers;
 
 use App\Domain\Finance\ApShz360Sync\Services\ApShz360ImportService;
 use App\Domain\Finance\ApShz360Sync\Services\ApShz360SyncService;
+use App\Domain\Finance\ApShz360Sync\Support\VendorNameMatcher;
 use App\Http\Controllers\Controller;
 use App\Models\ApShz360ReceiptImport;
 use App\Models\ApShz360SyncRun;
+use App\Models\VendorAp;
 use App\Support\Helpers\RoleHelper;
 use App\Support\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
@@ -160,6 +162,10 @@ class ApShz360ImportController extends Controller
             'total_diterima' => (float) $receipt->items()->sum('subtotal'),
         ];
 
+        if ($data['need_mapping']) {
+            $data['suggested_vendor_ap'] = $this->findSuggestedVendor($data['source_supplier_name']);
+        }
+
         if ($detail) {
             $data['items'] = $receipt->items->map(fn ($item) => [
                 'kode_barang' => $item->kode_barang,
@@ -185,6 +191,30 @@ class ApShz360ImportController extends Controller
         }
 
         return $data;
+    }
+
+    private function findSuggestedVendor(?string $sourceSupplierName): ?array
+    {
+        $normalized = VendorNameMatcher::normalize($sourceSupplierName);
+
+        if (! $normalized) {
+            return null;
+        }
+
+        $vendor = VendorAp::with('karyawanAp')
+            ->whereRaw('UPPER(TRIM(nama_vendor)) = ?', [$normalized])
+            ->first();
+
+        if (! $vendor) {
+            return null;
+        }
+
+        return [
+            'id' => $vendor->id,
+            'nama_vendor' => $vendor->nama_vendor,
+            'kode_vendor' => $vendor->kode_vendor,
+            'karyawan_ap_nama' => $vendor->karyawanAp?->nama_karyawan,
+        ];
     }
 
     private function extractSupplier(?array $supplier): ?array
