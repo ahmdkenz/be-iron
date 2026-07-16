@@ -22,11 +22,6 @@ class TagihanApResource extends JsonResource
                 'nama_vendor' => $this->vendorAp->nama_vendor,
             ] : null),
             'perusahaan_id'       => $this->perusahaan_id,
-            'perusahaan'          => $this->whenLoaded('perusahaan', fn() => $this->perusahaan ? [
-                'id'                        => $this->perusahaan->id,
-                'nama_singkatan_perusahaan' => $this->perusahaan->nama_singkatan_perusahaan,
-                'nama_perusahaan'           => $this->perusahaan->nama_perusahaan,
-            ] : null),
             'karyawan_id'         => $this->karyawan_id,
             'karyawan'            => $this->whenLoaded('karyawan', fn() => $this->karyawan ? [
                 'id'            => $this->karyawan->id,

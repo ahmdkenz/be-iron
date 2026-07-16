@@ -15,7 +15,7 @@ class TagihanApRepository
             $perPage = max(1, (int) $filters['per_page']);
         }
 
-        $relations = $with ?? ['vendorAp', 'perusahaan'];
+        $relations = $with ?? ['vendorAp'];
 
         return $this->applyFilters(TagihanAp::with($relations), $filters)
             ->latest('tanggal_tagihan')
@@ -25,7 +25,7 @@ class TagihanApRepository
     public function getAll(array $filters = []): Collection
     {
         return $this->applyFilters(
-            TagihanAp::with(['vendorAp', 'perusahaan', 'createdBy']),
+            TagihanAp::with(['vendorAp', 'createdBy']),
             $filters
         )->latest('tanggal_tagihan')->get();
     }
@@ -35,7 +35,6 @@ class TagihanApRepository
         return TagihanAp::with([
             'vendorAp',
             'vendorAp.karyawanAp',
-            'perusahaan',
             'karyawan.perusahaan',
             'items.barang',
             'pembayarans.createdBy',
