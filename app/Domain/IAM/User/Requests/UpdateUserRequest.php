@@ -18,7 +18,7 @@ class UpdateUserRequest extends FormRequest
 
         return [
             'username'    => ['sometimes', 'required', 'string', 'min:3', 'max:50', Rule::unique('tb_users', 'username')->ignore($userId)],
-            'email'       => ['sometimes', 'required', 'email', Rule::unique('tb_users', 'email')->ignore($userId)],
+            'email'       => ['sometimes', 'nullable', Rule::unique('tb_users', 'email')->ignore($userId)],
             'password'    => ['nullable', 'string', 'min:8'],
             'karyawan_id' => ['nullable', 'integer', 'exists:tb_karyawan,id'],
             'role_id'     => ['sometimes', 'required', 'integer', 'exists:tb_role,id'],

@@ -6,7 +6,7 @@ class UserDTO
 {
     public function __construct(
         public readonly string $username,
-        public readonly string $email,
+        public readonly ?string $email,
         public readonly ?string $password,
         public readonly ?int $karyawan_id,
         public readonly ?int $role_id,
@@ -18,7 +18,7 @@ class UserDTO
     {
         return new self(
             username:    $data['username'],
-            email:       $data['email'],
+            email:       $data['email'] ?? null,
             password:    $data['password'] ?? null,
             karyawan_id: $data['karyawan_id'] ?? null,
             role_id:     $data['role_id'] ?? null,

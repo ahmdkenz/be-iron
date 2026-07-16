@@ -15,7 +15,7 @@ class StoreUserRequest extends FormRequest
     {
         return [
             'username'    => ['required', 'string', 'min:3', 'max:50', 'unique:tb_users,username'],
-            'email'       => ['required', 'email', 'unique:tb_users,email'],
+            'email'       => ['nullable', 'unique:tb_users,email'],
             'password'    => ['required', 'string', 'min:8'],
             'karyawan_id' => ['nullable', 'integer', 'exists:tb_karyawan,id'],
             'role_id'     => ['required', 'integer', 'exists:tb_role,id'],

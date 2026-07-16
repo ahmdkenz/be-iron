@@ -48,11 +48,12 @@ class UserService
     {
         $data = array_filter([
             'username'    => $dto->username,
-            'email'       => $dto->email,
             'karyawan_id' => $dto->karyawan_id,
             'no_hp'       => $dto->no_hp,
             'status'      => $dto->status,
         ], fn($v) => $v !== null);
+
+        $data['email'] = $dto->email;
 
         if ($dto->password) {
             $data['password'] = Hash::make($dto->password);
