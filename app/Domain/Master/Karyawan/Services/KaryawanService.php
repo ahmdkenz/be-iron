@@ -11,9 +11,9 @@ class KaryawanService
 {
     public function __construct(private readonly KaryawanRepository $repository) {}
 
-    public function getAll(array $filters = []): LengthAwarePaginator
+    public function getAll(array $filters = [], int $perPage = 15): LengthAwarePaginator
     {
-        return $this->repository->paginate($filters);
+        return $this->repository->paginate($filters, $perPage);
     }
 
     public function findOrFail(int $id): Karyawan

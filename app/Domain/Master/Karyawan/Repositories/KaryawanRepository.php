@@ -9,12 +9,15 @@ class KaryawanRepository
 {
     public function paginate(array $filters = [], int $perPage = 15): LengthAwarePaginator
     {
+        if ($perPage <= 0) $perPage = PHP_INT_MAX;
+
         return Karyawan::with(['perusahaan', 'createdBy', 'updatedBy'])
             ->when($filters['search'] ?? null, fn($q, $v) => $q->where(fn($q) => $q
                 ->where('nik', 'like', "%{$v}%")
                 ->orWhere('nama_karyawan', 'like', "%{$v}%")
             ))
             ->when(isset($filters['status']), fn($q) => $q->where('status', $filters['status']))
+            ->when($filters['role'] ?? null, fn($q, $v) => $q->whereHas('user', fn($q) => $q->role($v)))
             ->latest()
             ->paginate($perPage);
     }

@@ -21,7 +21,8 @@ class KaryawanController extends Controller
 
     public function index(Request $request): JsonResponse
     {
-        $list = $this->service->getAll($request->only(['search', 'status']));
+        $perPage = $request->boolean('all') ? 0 : (int) $request->input('per_page', 15);
+        $list = $this->service->getAll($request->only(['search', 'status', 'role']), $perPage);
 
         return $this->paginatedResponse(
             $list->through(fn($k) => new KaryawanResource($k))
