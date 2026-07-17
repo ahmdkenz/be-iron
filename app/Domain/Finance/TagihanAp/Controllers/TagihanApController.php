@@ -9,7 +9,6 @@ use App\Domain\Finance\TagihanAp\Resources\TagihanApResource;
 use App\Domain\Finance\TagihanAp\Services\TagihanApService;
 use App\Http\Controllers\Controller;
 use App\Models\TagihanAp;
-use App\Models\VendorAp;
 use App\Support\Helpers\ApFilterScope;
 use App\Support\Helpers\RoleHelper;
 use App\Support\Traits\ApiResponse;
@@ -62,11 +61,8 @@ class TagihanApController extends Controller
             'tanggal'      => ['required', 'date'],
         ]);
 
-        $vendor = VendorAp::findOrFail((int) $payload['vendor_ap_id']);
-        $karyawan = auth()->user()->loadMissing('karyawan.perusahaan')->karyawan;
-
         return $this->successResponse([
-            'no_tagihan' => $this->service->generateNoTagihan($vendor, $payload['tanggal'], $karyawan?->perusahaan?->nama_singkatan_perusahaan),
+            'no_tagihan' => $this->service->generateNoTagihan($payload['tanggal']),
         ]);
     }
 

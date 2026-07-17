@@ -4,7 +4,6 @@ namespace App\Domain\Finance\TagihanAp\Services;
 
 use App\Domain\Finance\TagihanAp\DTO\TagihanApDTO;
 use App\Domain\Finance\TagihanAp\Repositories\TagihanApRepository;
-use App\Models\ApImportTagihanLink;
 use App\Models\Karyawan;
 use App\Models\TagihanAp;
 use App\Models\TagihanApApprovalLog;
@@ -34,15 +33,12 @@ class TagihanApService
         return $tagihan;
     }
 
-    public function generateNoTagihan(VendorAp $vendor, string $tanggal, ?string $namaSingkatanPerusahaan = null): string
+    public function generateNoTagihan(string $tanggal): string
     {
-        $singkatan = strtoupper(preg_replace(
-            '/[^A-Za-z0-9]/', '', $namaSingkatanPerusahaan ?? $vendor->kode_vendor
-        ));
         $date = \Carbon\Carbon::parse($tanggal);
         $now  = \Carbon\Carbon::now();
 
-        return 'AP-' . $singkatan . '-' . $date->format('dmY') . $now->format('Hisv');
+        return 'AP-' . $date->format('dmY') . $now->format('Hisv');
     }
 
     public function create(TagihanApDTO $dto): TagihanAp
@@ -60,7 +56,7 @@ class TagihanApService
             $totalTagihan = $subtotal + $dto->ppn_masukan - $dto->pph23;
 
             $tagihan = $this->repository->create([
-                'no_tagihan'          => $dto->no_tagihan ?? $this->generateNoTagihan($vendor, $dto->tanggal_tagihan, $user->karyawan->perusahaan?->nama_singkatan_perusahaan),
+                'no_tagihan'          => $dto->no_tagihan ?? $this->generateNoTagihan($dto->tanggal_tagihan),
                 'no_invoice_vendor'   => $dto->no_invoice_vendor,
                 'tanggal_tagihan'     => $dto->tanggal_tagihan,
                 'tanggal_jatuh_tempo' => $dto->tanggal_jatuh_tempo,
@@ -192,9 +188,17 @@ class TagihanApService
     }
 
     /**
-     * tb_tagihan_ap_item, tb_tagihan_ap_approval_logs, tb_pembayaran_ap, dan
-     * tb_ap_import_tagihan_links semuanya CASCADE ke tagihan ini — tanpa guard
-     * di sini, hapus akan diam-diam menghapus permanen seluruh riwayat pembayaran.
+     * tb_tagihan_ap_item, tb_tagihan_ap_approval_logs, dan tb_pembayaran_ap
+     * semuanya CASCADE ke tagihan ini — tanpa guard di sini, hapus akan
+     * diam-diam menghapus permanen seluruh riwayat pembayaran.
+     *
+     * tb_ap_import_tagihan_links juga CASCADE, tapi SENGAJA tidak diblokir di
+     * sini: TagihanApObserver::deleted() akan memanggil
+     * ApShz360ImportService::revertReceiptAfterTagihanDeleted() setelah baris
+     * ini benar-benar terhapus, supaya staging SHZ360 terkait kembali ke
+     * status READY_FOR_AP ("siap dijadikan tagihan") — sama seperti
+     * VendorApService::delete() yang membiarkan revertMappingAfterVendorDeleted()
+     * berjalan.
      */
     public function delete(TagihanAp $tagihan): void
     {
@@ -202,12 +206,6 @@ class TagihanApService
             $tagihan->pembayarans()->exists(),
             422,
             'Tagihan tidak dapat dihapus karena memiliki riwayat pembayaran'
-        );
-
-        abort_if(
-            ApImportTagihanLink::where('tagihan_ap_id', $tagihan->id)->exists(),
-            422,
-            'Tagihan tidak dapat dihapus karena masih tertaut dengan data import SHZ360'
         );
 
         DB::transaction(fn () => $this->repository->delete($tagihan));
@@ -225,7 +223,7 @@ class TagihanApService
                 $this->delete($tagihan);
                 $deleted++;
             } catch (\Throwable) {
-                // skip jika gagal (memiliki pembayaran/import link, dll)
+                // skip jika gagal (mis. sudah memiliki riwayat pembayaran)
             }
         }
         return $deleted;
