@@ -188,8 +188,10 @@ class TagihanApService
             'Tagihan yang sudah ada pembayaran tidak dapat dihapus'
         );
 
-        $tagihan->items()->delete();
-        $tagihan->delete();
+        DB::transaction(function () use ($tagihan) {
+            $tagihan->items()->delete();
+            $tagihan->delete();
+        });
     }
 
     public function bulkDelete(array $ids): int

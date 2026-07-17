@@ -8,6 +8,7 @@ use App\Domain\Finance\VendorAp\Repositories\VendorApRepository;
 use App\Models\VendorAp;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 class VendorApService
@@ -103,7 +104,7 @@ class VendorApService
             422,
             'Vendor tidak dapat dihapus karena memiliki data tagihan'
         );
-        $this->repository->delete($vendor);
+        DB::transaction(fn () => $this->repository->delete($vendor));
     }
 
     public function bulkDelete(array $ids): int

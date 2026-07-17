@@ -244,4 +244,50 @@ class ApShz360ImportService
             return $tagihan->fresh();
         });
     }
+
+    /**
+     * Kebalikan dari convertToTagihan(): dipanggil saat Tagihan hasil konversi
+     * SHZ360 dihapus, supaya staging bisa dikonversi ulang alih-alih nyangkut
+     * permanen di CONVERTED (link lama tidak ikut terhapus karena TagihanAp
+     * soft delete, tidak memicu cascadeOnDelete di DB).
+     */
+    public function revertReceiptAfterTagihanDeleted(int $receiptImportId): void
+    {
+        DB::transaction(function () use ($receiptImportId) {
+            ApImportTagihanLink::where('receipt_import_id', $receiptImportId)->delete();
+
+            ApShz360ReceiptImport::where('id', $receiptImportId)
+                ->where('import_status', 'CONVERTED')
+                ->update(['import_status' => 'READY_FOR_AP']);
+        });
+    }
+
+    /**
+     * Kebalikan dari mapVendor(): dipanggil saat Vendor yang sudah dipetakan
+     * ke staging dihapus, supaya PO/receipt terkait balik butuh dipetakan
+     * ulang alih-alih nyangkut menunjuk vendor yang sudah tidak ada (soft
+     * delete tidak memicu nullOnDelete di DB). Reset ApSourceVendorMap juga
+     * wajib, kalau tidak sync berikutnya akan mengisi ulang vendor_ap_id
+     * dari situ.
+     */
+    public function revertMappingAfterVendorDeleted(int $vendorApId): void
+    {
+        DB::transaction(function () use ($vendorApId) {
+            $poIds = ApShz360PoImport::where('vendor_ap_id', $vendorApId)
+                ->where('import_status', 'READY_FOR_AP')
+                ->pluck('id');
+
+            if ($poIds->isNotEmpty()) {
+                ApShz360PoImport::whereIn('id', $poIds)
+                    ->update(['vendor_ap_id' => null, 'import_status' => 'NEED_MAPPING']);
+
+                ApShz360ReceiptImport::whereIn('po_import_id', $poIds)
+                    ->where('import_status', 'READY_FOR_AP')
+                    ->update(['import_status' => 'NEW']);
+            }
+
+            ApSourceVendorMap::where('vendor_ap_id', $vendorApId)
+                ->update(['vendor_ap_id' => null, 'status' => 'NEED_MAPPING']);
+        });
+    }
 }
