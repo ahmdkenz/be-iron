@@ -29,6 +29,7 @@ Route::prefix('tagihan')->group(function () {
     Route::delete('/bulk', [TagihanApController::class, 'bulkDestroy']);
     Route::get('/{id}/pembayaran', [TagihanApController::class, 'pembayaran']);
     Route::get('/{id}/approval-logs', [TagihanApController::class, 'approvalLogs']);
+    Route::get('/{id}/print', [TagihanApController::class, 'print']);
     Route::get('/{id}', [TagihanApController::class, 'show']);
     Route::put('/{id}', [TagihanApController::class, 'update']);
     Route::delete('/{id}', [TagihanApController::class, 'destroy']);

@@ -4,6 +4,7 @@ namespace App\Support\Helpers;
 
 use App\Models\EndingBalanceKoreksi;
 use App\Models\Invoice;
+use App\Models\TagihanAp;
 use Carbon\Carbon;
 use Endroid\QrCode\QrCode;
 use Endroid\QrCode\Writer\SvgWriter;
@@ -85,6 +86,25 @@ class SignatureBarcodeHelper
             "Grand Total: {$grandTotal}",
             "Sisa Bayar: {$sisaBayar}",
             "Status: Di Ajukan",
+        ];
+
+        return implode("\n", $lines);
+    }
+
+    public static function buildTagihanApPreparedPayload(TagihanAp $tagihan, string $preparedByName): string
+    {
+        $tanggal      = Carbon::parse($tagihan->tanggal_tagihan)->format('d-m-Y');
+        $totalTagihan = 'Rp ' . number_format((float) $tagihan->total_tagihan, 0, ',', '.');
+        $sisaTagihan  = 'Rp ' . number_format((float) $tagihan->sisa_tagihan, 0, ',', '.');
+
+        $lines = [
+            "Disiapkan Oleh: {$preparedByName}",
+            "No Tagihan: {$tagihan->no_tagihan}",
+            "Vendor: " . ($tagihan->vendorAp?->nama_vendor ?? '-'),
+            "Tanggal: {$tanggal}",
+            "Total Tagihan: {$totalTagihan}",
+            "Sisa Tagihan: {$sisaTagihan}",
+            "Status: {$tagihan->status}",
         ];
 
         return implode("\n", $lines);

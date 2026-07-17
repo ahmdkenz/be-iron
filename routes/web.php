@@ -3,6 +3,7 @@
 use App\Domain\Finance\Invoice\Controllers\InvoiceController;
 use App\Domain\Finance\PembayaranAp\Controllers\PembayaranApController;
 use App\Domain\Finance\PembayaranAr\Controllers\PembayaranArController;
+use App\Domain\Finance\TagihanAp\Controllers\TagihanApController;
 use App\Domain\Finance\Verification\Controllers\VerificationController;
 use Illuminate\Support\Facades\Route;
 
@@ -19,6 +20,10 @@ Route::get('/verify/approved/{token}', [VerificationController::class, 'approved
 Route::get('/invoices/print/{token}', [InvoiceController::class, 'publicPrint'])
     ->middleware(['signed', 'throttle:30,1'])
     ->name('invoice.public-print');
+
+Route::get('/tagihan-ap/print/{token}', [TagihanApController::class, 'publicPrint'])
+    ->middleware(['signed', 'throttle:30,1'])
+    ->name('tagihan-ap.public-print');
 
 Route::get('/pembayaran/bukti/{pembayaran}', [PembayaranArController::class, 'publicBukti'])
     ->middleware(['signed', 'throttle:30,1'])

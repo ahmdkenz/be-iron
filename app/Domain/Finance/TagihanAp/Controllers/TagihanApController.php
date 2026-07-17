@@ -11,9 +11,12 @@ use App\Http\Controllers\Controller;
 use App\Models\TagihanAp;
 use App\Support\Helpers\ApFilterScope;
 use App\Support\Helpers\RoleHelper;
+use App\Support\Helpers\SignatureBarcodeHelper;
 use App\Support\Traits\ApiResponse;
+use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 
 class TagihanApController extends Controller
 {
@@ -80,6 +83,65 @@ class TagihanApController extends Controller
 
         $tagihan = $this->service->findOrFail($id);
         return $this->successResponse(new TagihanApResource($tagihan));
+    }
+
+    public function print(Request $request, int $id): Response|string
+    {
+        $this->authorizeView();
+
+        $tagihan = $this->service->findForPrintOrFail($id);
+        $signatureData = $this->buildSignatureData($tagihan);
+
+        $filename = 'Tagihan-AP-' . str_replace(['/', '\\', ' '], '-', $tagihan->no_tagihan) . '.pdf';
+
+        if ($request->has('html')) {
+            return view('finance.tagihan-ap-print', compact('tagihan', 'signatureData'))->render();
+        }
+
+        return Pdf::loadView('finance.tagihan-ap-print', compact('tagihan', 'signatureData'))
+            ->setPaper('a4', 'portrait')
+            ->setOptions([
+                'isHtml5ParserEnabled' => true,
+                'isRemoteEnabled'      => false,
+                'defaultFont'          => 'Arial',
+                'dpi'                  => 96,
+            ])
+            ->stream($filename);
+    }
+
+    public function publicPrint(string $token): Response
+    {
+        $tagihan = TagihanAp::with(['vendorAp', 'perusahaan', 'karyawan.perusahaan', 'items', 'pembayarans', 'createdBy.karyawan', 'submittedBy.karyawan', 'approvedBy.karyawan'])
+            ->where('prepared_token', $token)
+            ->firstOrFail();
+        $signatureData = $this->buildSignatureData($tagihan);
+
+        $filename = 'Tagihan-AP-' . str_replace(['/', '\\', ' '], '-', $tagihan->no_tagihan) . '.pdf';
+
+        return Pdf::loadView('finance.tagihan-ap-print', compact('tagihan', 'signatureData'))
+            ->setPaper('a4', 'portrait')
+            ->setOptions([
+                'isHtml5ParserEnabled' => true,
+                'isRemoteEnabled'      => false,
+                'defaultFont'          => 'Arial',
+                'dpi'                  => 96,
+            ])
+            ->stream($filename);
+    }
+
+    private function buildSignatureData(TagihanAp $tagihan): array
+    {
+        $preparedByUser = $tagihan->submittedBy ?: $tagihan->createdBy;
+        $preparedByName = $preparedByUser?->karyawan?->nama_karyawan
+            ?? $preparedByUser?->username
+            ?? '___________________';
+
+        $preparedPayload = SignatureBarcodeHelper::buildTagihanApPreparedPayload($tagihan, $preparedByName);
+
+        return [
+            'prepared_by_name' => $preparedByName,
+            'prepared_qr_src'  => SignatureBarcodeHelper::generateDataUri($preparedPayload, 250),
+        ];
     }
 
     public function update(UpdateTagihanApRequest $request, int $id): JsonResponse

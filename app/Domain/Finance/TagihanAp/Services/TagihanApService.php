@@ -33,6 +33,24 @@ class TagihanApService
         return $tagihan;
     }
 
+    public function findForPrintOrFail(int $id): TagihanAp
+    {
+        $tagihan = TagihanAp::with([
+            'vendorAp',
+            'perusahaan',
+            'karyawan.perusahaan',
+            'items',
+            'pembayarans',
+            'createdBy.karyawan',
+            'submittedBy.karyawan',
+            'approvedBy.karyawan',
+        ])->find($id);
+
+        abort_if(!$tagihan, 404, 'Tagihan tidak ditemukan');
+
+        return $tagihan;
+    }
+
     public function generateNoTagihan(string $tanggal): string
     {
         $date = \Carbon\Carbon::parse($tanggal);
