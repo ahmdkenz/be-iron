@@ -187,12 +187,6 @@ class RoleHelper
         return self::hasAnyRole($user, [RoleEnum::ADMIN, RoleEnum::AP]);
     }
 
-    // Approval tagihan AP satu tahap — SUPERVISOR dan MANAGER setara wewenangnya.
-    public static function canApproveTagihanAp(?User $user): bool
-    {
-        return self::hasAnyRole($user, [RoleEnum::ADMIN, RoleEnum::MANAGER, RoleEnum::SUPERVISOR]);
-    }
-
     public static function canViewPembayaranAp(?User $user): bool
     {
         return self::hasAnyRole($user, [

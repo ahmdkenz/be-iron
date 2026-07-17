@@ -24,7 +24,6 @@ Route::prefix('vendors')->group(function () {
 Route::prefix('tagihan')->group(function () {
     Route::get('/', [TagihanApController::class, 'index']);
     Route::get('/summary', [TagihanApController::class, 'summary']);
-    Route::get('/approval', [TagihanApController::class, 'approvalQueue']);
     Route::get('/preview-no', [TagihanApController::class, 'previewNo']);
     Route::post('/', [TagihanApController::class, 'store']);
     Route::delete('/bulk', [TagihanApController::class, 'bulkDestroy']);
@@ -33,9 +32,6 @@ Route::prefix('tagihan')->group(function () {
     Route::get('/{id}', [TagihanApController::class, 'show']);
     Route::put('/{id}', [TagihanApController::class, 'update']);
     Route::delete('/{id}', [TagihanApController::class, 'destroy']);
-    Route::patch('/{id}/approve', [TagihanApController::class, 'approve'])->middleware('role:ADMIN|MANAGER|SUPERVISOR');
-    Route::patch('/{id}/reject', [TagihanApController::class, 'reject'])->middleware('role:ADMIN|MANAGER|SUPERVISOR');
-    Route::patch('/{id}/resubmit', [TagihanApController::class, 'resubmit']);
 
     // Pembayaran per Tagihan
     Route::post('/{id}/pembayaran', [PembayaranApController::class, 'store']);

@@ -19,9 +19,6 @@ class DashboardApService
         $approved = (clone $base)->where('approval_status', 'APPROVED');
         $today    = Carbon::today();
 
-        // "Outstanding" hanya mengacu ke tagihan yang SUDAH disetujui (kewajiban
-        // terkonfirmasi) — tagihan yang masih PENDING/REJECTED dihitung terpisah
-        // di menunggu_approval_total/count, bukan ikut jadi hutang outstanding.
         $totalOutstanding      = (float) (clone $approved)->where('sisa_tagihan', '>', 0)->sum('sisa_tagihan');
         $outstandingLastMonth  = $this->outstandingAsOf($filters, $today->copy()->startOfMonth()->subDay());
         $outstandingTrendPct   = $this->percentChange($totalOutstanding, $outstandingLastMonth);
@@ -32,10 +29,6 @@ class DashboardApService
             ->whereBetween('tanggal_jatuh_tempo', [$today->toDateString(), $sevenDays->toDateString()]);
         $jatuhTempo7      = (float) (clone $jatuhTempoQuery)->sum('sisa_tagihan');
         $jatuhTempo7Count = (clone $jatuhTempoQuery)->count();
-
-        $pendingQuery      = (clone $base)->where('approval_status', 'PENDING');
-        $pendingTotal      = (float) (clone $pendingQuery)->sum('total_tagihan');
-        $pendingCount      = (clone $pendingQuery)->count();
 
         $overdueRows = (clone $approved)
             ->where('sisa_tagihan', '>', 0)
@@ -93,19 +86,6 @@ class DashboardApService
                 'sisa_tagihan'        => (float) $t->sisa_tagihan,
             ]);
 
-        $approvalQueue = (clone $pendingQuery)
-            ->with('vendorAp:id,kode_vendor,nama_vendor')
-            ->orderBy('submitted_at')
-            ->limit(6)
-            ->get()
-            ->map(fn($t) => [
-                'id'           => $t->id,
-                'no_tagihan'   => $t->no_tagihan,
-                'nama_vendor'  => $t->vendorAp?->nama_vendor,
-                'submitted_at' => $t->submitted_at?->toIso8601String(),
-                'total_tagihan'=> (float) $t->total_tagihan,
-            ]);
-
         $bulanLalu = $today->copy()->subMonthNoOverflow();
 
         $bulanIni = (float) PembayaranAp::whereHas('tagihanAp', fn($q) => $this->applyScopeToTagihan($q, $filters))
@@ -129,8 +109,6 @@ class DashboardApService
             'total_outstanding_trend_pct' => $outstandingTrendPct,
             'jatuh_tempo_7_hari'     => $jatuhTempo7,
             'jatuh_tempo_7_hari_count' => $jatuhTempo7Count,
-            'menunggu_approval_total' => $pendingTotal,
-            'menunggu_approval_count' => $pendingCount,
             'pembayaran_bulan_ini'   => $bulanIni,
             'pembayaran_bulan_lalu'  => $bulanLaluTotal,
             'pembayaran_trend_pct'   => $pembayaranTrendPct,
@@ -138,7 +116,6 @@ class DashboardApService
             'overdue_buckets_pct'    => $bucketsPct,
             'top_vendors'            => $topVendors,
             'due_soon'               => $dueSoon,
-            'approval_queue'         => $approvalQueue,
             'trend'                  => $trend,
             'status_breakdown'       => $statusBreakdown,
         ];

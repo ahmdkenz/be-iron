@@ -53,23 +53,6 @@ class TagihanApController extends Controller
         return $this->successResponse($this->service->getSummary($filters));
     }
 
-    public function approvalQueue(Request $request): JsonResponse
-    {
-        $this->authorizeApprove();
-
-        $user    = auth()->user();
-        $filters = $request->only(['search', 'vendor_ap_id', 'per_page']);
-        $filters['approval_status']    = 'PENDING';
-        $filters['is_opening_balance'] = false;
-        ApFilterScope::apply($filters, $user);
-
-        $list = $this->service->paginate($filters);
-
-        return $this->paginatedResponse(
-            $list->through(fn($t) => new TagihanApResource($t))
-        );
-    }
-
     public function previewNo(Request $request): JsonResponse
     {
         $this->authorizeOperate();
@@ -110,36 +93,6 @@ class TagihanApController extends Controller
         $tagihan = $this->service->findOrFail($id);
         $updated = $this->service->update($tagihan, TagihanApDTO::fromRequest($request->validated()));
         return $this->successResponse(new TagihanApResource($updated), 'Tagihan berhasil diperbarui');
-    }
-
-    public function resubmit(Request $request, int $id): JsonResponse
-    {
-        $this->authorizeOperate();
-
-        $payload = $request->validate(['note' => ['nullable', 'string']]);
-        $tagihan = $this->service->findOrFail($id);
-        $updated = $this->service->resubmit($tagihan, $payload['note'] ?? null);
-        return $this->successResponse(new TagihanApResource($updated), 'Tagihan berhasil diajukan ulang');
-    }
-
-    public function approve(Request $request, int $id): JsonResponse
-    {
-        $this->authorizeApprove();
-
-        $payload = $request->validate(['note' => ['nullable', 'string']]);
-        $tagihan = $this->service->findOrFail($id);
-        $updated = $this->service->approve($tagihan, $payload['note'] ?? null);
-        return $this->successResponse(new TagihanApResource($updated), 'Tagihan berhasil disetujui');
-    }
-
-    public function reject(Request $request, int $id): JsonResponse
-    {
-        $this->authorizeApprove();
-
-        $payload = $request->validate(['note' => ['required', 'string']]);
-        $tagihan = $this->service->findOrFail($id);
-        $updated = $this->service->reject($tagihan, $payload['note']);
-        return $this->successResponse(new TagihanApResource($updated), 'Tagihan berhasil ditolak');
     }
 
     public function approvalLogs(int $id): JsonResponse
@@ -214,10 +167,5 @@ class TagihanApController extends Controller
     private function authorizeOperate(): void
     {
         abort_if(!RoleHelper::canOperateTagihanAp(auth()->user()), 403, 'Tidak memiliki akses untuk mengelola tagihan');
-    }
-
-    private function authorizeApprove(): void
-    {
-        abort_if(!RoleHelper::canApproveTagihanAp(auth()->user()), 403, 'Tidak memiliki akses untuk menyetujui tagihan');
     }
 }

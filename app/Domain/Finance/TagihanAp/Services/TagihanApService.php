@@ -74,12 +74,15 @@ class TagihanApService
                 'total_tagihan'       => $totalTagihan,
                 'total_pembayaran'    => 0,
                 'sisa_tagihan'        => $totalTagihan,
-                'status'              => 'DRAFT',
-                'approval_status'     => 'PENDING',
+                'status'              => 'DITERIMA',
+                'approval_status'     => 'APPROVED',
                 'submitted_at'        => now(),
                 'submitted_by'        => auth()->id(),
+                'approved_at'         => now(),
+                'approved_by'         => auth()->id(),
                 'keterangan'          => $dto->keterangan,
                 'prepared_token'      => Str::uuid()->toString(),
+                'approved_token'      => Str::uuid()->toString(),
                 'created_by'          => auth()->id(),
             ]);
 
@@ -97,7 +100,7 @@ class TagihanApService
                 ]);
             }
 
-            $this->createApprovalLog($tagihan, 'SUBMITTED');
+            $this->createApprovalLog($tagihan, 'APPROVED', 'Otomatis disetujui — approval dihilangkan');
 
             return $this->findOrFail($tagihan->id);
         });
@@ -106,9 +109,9 @@ class TagihanApService
     public function update(TagihanAp $tagihan, TagihanApDTO $dto): TagihanAp
     {
         abort_if(
-            !($tagihan->status === 'DRAFT' && in_array($tagihan->approval_status, ['PENDING', 'REJECTED'])),
+            (float) $tagihan->total_pembayaran !== 0.0,
             422,
-            'Tagihan hanya dapat diedit selama menunggu atau ditolak persetujuan'
+            'Tagihan yang sudah ada pembayaran tidak dapat diedit'
         );
 
         $vendor = VendorAp::findOrFail($dto->vendor_ap_id);
@@ -151,75 +154,6 @@ class TagihanApService
         return $this->findOrFail($tagihan->id);
     }
 
-    public function resubmit(TagihanAp $tagihan, ?string $note = null): TagihanAp
-    {
-        abort_if(
-            !($tagihan->status === 'DRAFT' && $tagihan->approval_status === 'REJECTED'),
-            422,
-            'Tagihan hanya dapat diajukan ulang jika status approval ditolak'
-        );
-
-        return DB::transaction(function () use ($tagihan, $note) {
-            $tagihan->update([
-                'approval_status' => 'PENDING',
-                'submitted_at'    => now(),
-                'submitted_by'    => auth()->id(),
-                'approved_at'     => null,
-                'approved_by'     => null,
-                'rejected_at'     => null,
-                'rejected_by'     => null,
-                'updated_by'      => auth()->id(),
-            ]);
-
-            $this->createApprovalLog($tagihan, 'RESUBMITTED', $note);
-
-            return $this->findOrFail($tagihan->id);
-        });
-    }
-
-    public function approve(TagihanAp $tagihan, ?string $note = null): TagihanAp
-    {
-        $this->ensurePending($tagihan);
-
-        return DB::transaction(function () use ($tagihan, $note) {
-            $tagihan->update([
-                'status'          => 'DITERIMA',
-                'approval_status' => 'APPROVED',
-                'approved_at'     => now(),
-                'approved_by'     => auth()->id(),
-                'rejected_at'     => null,
-                'rejected_by'     => null,
-                'approved_token'  => Str::uuid()->toString(),
-                'updated_by'      => auth()->id(),
-            ]);
-
-            $this->createApprovalLog($tagihan, 'APPROVED', $note);
-
-            return $this->findOrFail($tagihan->id);
-        });
-    }
-
-    public function reject(TagihanAp $tagihan, string $note): TagihanAp
-    {
-        $this->ensurePending($tagihan);
-
-        return DB::transaction(function () use ($tagihan, $note) {
-            $tagihan->update([
-                'status'          => 'DRAFT',
-                'approval_status' => 'REJECTED',
-                'approved_at'     => null,
-                'approved_by'     => null,
-                'rejected_at'     => now(),
-                'rejected_by'     => auth()->id(),
-                'updated_by'      => auth()->id(),
-            ]);
-
-            $this->createApprovalLog($tagihan, 'REJECTED', $note);
-
-            return $this->findOrFail($tagihan->id);
-        });
-    }
-
     public function recalculate(TagihanAp $tagihan): void
     {
         $totalPembayaran  = $tagihan->pembayarans()->sum('jumlah_pembayaran');
@@ -249,9 +183,9 @@ class TagihanApService
     public function delete(TagihanAp $tagihan): void
     {
         abort_if(
-            $tagihan->status !== 'DRAFT',
+            (float) $tagihan->total_pembayaran !== 0.0,
             422,
-            'Hanya tagihan berstatus DRAFT yang dapat dihapus'
+            'Tagihan yang sudah ada pembayaran tidak dapat dihapus'
         );
 
         $tagihan->items()->delete();
@@ -263,7 +197,7 @@ class TagihanApService
         $deleted = 0;
         foreach ($ids as $id) {
             $tagihan = $this->repository->findById((int) $id);
-            if (!$tagihan || $tagihan->status !== 'DRAFT') {
+            if (!$tagihan || (float) $tagihan->total_pembayaran !== 0.0) {
                 continue;
             }
             try {
@@ -274,15 +208,6 @@ class TagihanApService
             }
         }
         return $deleted;
-    }
-
-    private function ensurePending(TagihanAp $tagihan): void
-    {
-        abort_if(
-            !($tagihan->status === 'DRAFT' && $tagihan->approval_status === 'PENDING'),
-            422,
-            'Tagihan tidak berada pada status menunggu persetujuan'
-        );
     }
 
     private function createApprovalLog(TagihanAp $tagihan, string $action, ?string $note = null): void
