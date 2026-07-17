@@ -55,7 +55,7 @@ class ApShz360ImportService
 
     public function findOrFail(int $id): ApShz360ReceiptImport
     {
-        $receipt = ApShz360ReceiptImport::with(['poImport.items', 'items', 'tagihanLink.tagihanAp'])->find($id);
+        $receipt = ApShz360ReceiptImport::with(['poImport.items', 'items.poImportItem', 'tagihanLink.tagihanAp'])->find($id);
         abort_if(! $receipt, 404, 'Data staging tidak ditemukan');
 
         return $receipt;
@@ -201,8 +201,13 @@ class ApShz360ImportService
             'kode_barang' => $item->kode_barang,
             'nama_barang' => $item->nama_barang,
             'qty' => (float) $item->qty_diterima,
+            'qty_po' => $item->poImportItem?->qty_po !== null ? (float) $item->poImportItem->qty_po : null,
             'satuan' => $item->satuan,
             'harga_satuan' => (float) $item->harga,
+            'ppn' => $item->poImportItem?->ppn !== null ? (float) $item->poImportItem->ppn : null,
+            'status_detail_terima_po' => $item->status_detail_terima_po,
+            'qty_tolak' => (float) $item->qty_tolak,
+            'keterangan_tolak' => $item->keterangan_tolak,
             'keterangan' => 'Import SHZ360 — ' . $receipt->kode_receipt,
         ])->values()->all();
 

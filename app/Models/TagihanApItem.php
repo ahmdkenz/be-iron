@@ -14,15 +14,23 @@ class TagihanApItem extends Model
         'kode_barang',
         'nama_barang',
         'qty',
+        'qty_po',
         'satuan',
         'harga_satuan',
+        'ppn',
+        'status_detail_terima_po',
+        'qty_tolak',
+        'keterangan_tolak',
         'subtotal',
         'keterangan',
     ];
 
     protected $casts = [
         'qty'          => 'decimal:3',
+        'qty_po'       => 'decimal:4',
         'harga_satuan' => 'decimal:2',
+        'ppn'          => 'decimal:2',
+        'qty_tolak'    => 'decimal:4',
         'subtotal'     => 'decimal:2',
     ];
 

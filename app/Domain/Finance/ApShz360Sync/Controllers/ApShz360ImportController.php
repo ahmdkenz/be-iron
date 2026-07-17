@@ -179,10 +179,13 @@ class ApShz360ImportController extends Controller
                 'kode_barang' => $item->kode_barang,
                 'nama_barang' => $item->nama_barang,
                 'satuan' => $item->satuan,
+                'status_detail_terima_po' => $item->status_detail_terima_po,
+                'qty_po' => $item->poImportItem?->qty_po !== null ? (float) $item->poImportItem->qty_po : null,
                 'qty_diterima' => (float) $item->qty_diterima,
                 'qty_tolak' => (float) $item->qty_tolak,
                 'keterangan_tolak' => $item->keterangan_tolak,
                 'harga' => (float) $item->harga,
+                'ppn' => $item->poImportItem?->ppn !== null ? (float) $item->poImportItem->ppn : null,
                 'subtotal' => (float) $item->subtotal,
             ])->values();
 
