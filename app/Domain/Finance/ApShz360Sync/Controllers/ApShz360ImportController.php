@@ -62,6 +62,7 @@ class ApShz360ImportController extends Controller
 
         $payload = $request->validate([
             'karyawan_ap_id' => ['required', 'integer', 'exists:tb_karyawan,id'],
+            'kode_vendor'    => ['nullable', 'string', 'max:20'],
         ]);
 
         $receipt = $this->service->findOrFail($id);

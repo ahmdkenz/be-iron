@@ -3,6 +3,7 @@
 namespace App\Domain\Finance\VendorAp\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class UpdateVendorApRequest extends FormRequest
 {
@@ -11,6 +12,7 @@ class UpdateVendorApRequest extends FormRequest
     public function rules(): array
     {
         return [
+            'kode_vendor'      => ['required', 'string', 'max:20', Rule::unique('tb_vendor_ap', 'kode_vendor')->ignore($this->route('id'))],
             'nama_vendor'      => ['required', 'string', 'max:255'],
             'no_npwp'          => ['nullable', 'string', 'max:30'],
             'status_pkp'       => ['nullable', 'boolean'],
@@ -19,6 +21,13 @@ class UpdateVendorApRequest extends FormRequest
             'bank_atas_nama'   => ['nullable', 'string', 'max:255'],
             'karyawan_ap_id'   => ['required', 'integer', 'exists:tb_karyawan,id'],
             'status'           => ['nullable', 'boolean'],
+        ];
+    }
+
+    public function attributes(): array
+    {
+        return [
+            'kode_vendor' => 'Kode Supplier',
         ];
     }
 }

@@ -5,6 +5,7 @@ namespace App\Domain\Finance\VendorAp\DTO;
 class VendorApDTO
 {
     public function __construct(
+        public readonly string $kode_vendor,
         public readonly string $nama_vendor,
         public readonly ?string $no_npwp,
         public readonly bool $status_pkp,
@@ -18,6 +19,7 @@ class VendorApDTO
     public static function fromRequest(array $data): self
     {
         return new self(
+            kode_vendor:       trim($data['kode_vendor']),
             nama_vendor:       $data['nama_vendor'],
             no_npwp:           $data['no_npwp'] ?? null,
             status_pkp:        isset($data['status_pkp']) ? (bool) $data['status_pkp'] : false,

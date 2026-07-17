@@ -2,25 +2,17 @@
 
 namespace App\Domain\Finance\VendorAp\Services;
 
+use App\Domain\Finance\ApShz360Sync\Support\VendorNameMatcher;
 use App\Domain\Finance\VendorAp\DTO\VendorApDTO;
 use App\Domain\Finance\VendorAp\Repositories\VendorApRepository;
 use App\Models\VendorAp;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Validation\ValidationException;
 
 class VendorApService
 {
     public function __construct(private readonly VendorApRepository $repository) {}
-
-    public function generateKodeVendor(): string
-    {
-        $count = VendorAp::withTrashed()
-            ->where('kode_vendor', 'like', 'VN%')
-            ->count();
-        $seq = str_pad($count + 1, 3, '0', STR_PAD_LEFT);
-
-        return "VN{$seq}";
-    }
 
     public function paginate(array $filters = []): LengthAwarePaginator
     {
@@ -41,8 +33,10 @@ class VendorApService
 
     public function create(VendorApDTO $dto): VendorAp
     {
+        $this->assertNoDuplicate($dto->kode_vendor, $dto->nama_vendor);
+
         return $this->repository->create([
-            'kode_vendor'      => $this->generateKodeVendor(),
+            'kode_vendor'      => trim($dto->kode_vendor),
             'nama_vendor'      => $dto->nama_vendor,
             'no_npwp'          => $dto->no_npwp,
             'status_pkp'       => $dto->status_pkp,
@@ -57,9 +51,10 @@ class VendorApService
 
     public function update(VendorAp $vendor, VendorApDTO $dto): VendorAp
     {
+        $this->assertNoDuplicate($dto->kode_vendor, $dto->nama_vendor, $vendor->id);
+
         return $this->repository->update($vendor, [
-            // Kode vendor historis tetap stabil, tidak berubah saat edit.
-            'kode_vendor'      => $vendor->kode_vendor,
+            'kode_vendor'      => trim($dto->kode_vendor),
             'nama_vendor'      => $dto->nama_vendor,
             'no_npwp'          => $dto->no_npwp,
             'status_pkp'       => $dto->status_pkp,
@@ -70,6 +65,35 @@ class VendorApService
             'status'           => $dto->status,
             'updated_by'       => auth()->id(),
         ]);
+    }
+
+    /**
+     * Cek Kode Supplier & nama vendor (ternormalisasi) supaya vendor yang sama
+     * tidak tercatat dobel — lihat kasus "Tambar Bawang" yang dulu punya 2 kode.
+     */
+    private function assertNoDuplicate(string $kodeVendor, string $namaVendor, ?int $ignoreId = null): void
+    {
+        $kodeQuery = VendorAp::withTrashed()->where('kode_vendor', trim($kodeVendor));
+        if ($ignoreId) {
+            $kodeQuery->where('id', '!=', $ignoreId);
+        }
+        if ($kodeQuery->exists()) {
+            throw ValidationException::withMessages([
+                'kode_vendor' => 'Kode Supplier ini sudah dipakai vendor lain.',
+            ]);
+        }
+
+        $normalizedName = VendorNameMatcher::normalize($namaVendor);
+        $namaQuery = VendorAp::withTrashed()->whereRaw('UPPER(TRIM(nama_vendor)) = ?', [$normalizedName]);
+        if ($ignoreId) {
+            $namaQuery->where('id', '!=', $ignoreId);
+        }
+        $existing = $namaQuery->first();
+        if ($existing) {
+            throw ValidationException::withMessages([
+                'nama_vendor' => "Nama vendor ini sudah terdaftar (Kode Supplier: {$existing->kode_vendor}).",
+            ]);
+        }
     }
 
     public function delete(VendorAp $vendor): void

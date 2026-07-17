@@ -159,7 +159,11 @@ class ApShz360ImportService
         $supplier = $poImport->raw_payload['supplier'] ?? null;
         abort_if(empty($supplier['nama_supplier']), 422, 'Data supplier dari SHZ360 tidak lengkap, tidak bisa membuat vendor otomatis');
 
+        $kodeVendor = trim($payload['kode_vendor'] ?? ($supplier['kode_supplier'] ?? ''));
+        abort_if($kodeVendor === '', 422, 'Kode Supplier wajib diisi untuk membuat vendor baru dari data SHZ360.');
+
         $dto = new VendorApDTO(
+            kode_vendor: $kodeVendor,
             nama_vendor: $supplier['nama_supplier'],
             no_npwp: $supplier['npwp'] ?? null,
             status_pkp: false,
