@@ -169,7 +169,12 @@ class RoleHelper
 
     public static function canOperateVendorAp(?User $user): bool
     {
-        return self::hasAnyRole($user, [RoleEnum::ADMIN]);
+        return self::hasAnyRole($user, [
+            RoleEnum::ADMIN,
+            RoleEnum::MANAGER,
+            RoleEnum::SUPERVISOR,
+            RoleEnum::AP,
+        ]);
     }
 
     public static function canViewTagihanAp(?User $user): bool

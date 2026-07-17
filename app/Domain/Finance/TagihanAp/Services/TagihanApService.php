@@ -4,6 +4,7 @@ namespace App\Domain\Finance\TagihanAp\Services;
 
 use App\Domain\Finance\TagihanAp\DTO\TagihanApDTO;
 use App\Domain\Finance\TagihanAp\Repositories\TagihanApRepository;
+use App\Models\ApImportTagihanLink;
 use App\Models\Karyawan;
 use App\Models\TagihanAp;
 use App\Models\TagihanApApprovalLog;
@@ -180,33 +181,41 @@ class TagihanApService
         ]);
     }
 
+    /**
+     * tb_tagihan_ap_item, tb_tagihan_ap_approval_logs, tb_pembayaran_ap, dan
+     * tb_ap_import_tagihan_links semuanya CASCADE ke tagihan ini — tanpa guard
+     * di sini, hapus akan diam-diam menghapus permanen seluruh riwayat pembayaran.
+     */
     public function delete(TagihanAp $tagihan): void
     {
         abort_if(
-            (float) $tagihan->total_pembayaran !== 0.0,
+            $tagihan->pembayarans()->exists(),
             422,
-            'Tagihan yang sudah ada pembayaran tidak dapat dihapus'
+            'Tagihan tidak dapat dihapus karena memiliki riwayat pembayaran'
         );
 
-        DB::transaction(function () use ($tagihan) {
-            $tagihan->items()->delete();
-            $tagihan->delete();
-        });
+        abort_if(
+            ApImportTagihanLink::where('tagihan_ap_id', $tagihan->id)->exists(),
+            422,
+            'Tagihan tidak dapat dihapus karena masih tertaut dengan data import SHZ360'
+        );
+
+        DB::transaction(fn () => $this->repository->delete($tagihan));
     }
 
     public function bulkDelete(array $ids): int
     {
         $deleted = 0;
         foreach ($ids as $id) {
-            $tagihan = $this->repository->findById((int) $id);
-            if (!$tagihan || (float) $tagihan->total_pembayaran !== 0.0) {
-                continue;
-            }
             try {
+                $tagihan = $this->repository->findById((int) $id);
+                if (!$tagihan) {
+                    continue;
+                }
                 $this->delete($tagihan);
                 $deleted++;
             } catch (\Throwable) {
-                // skip jika gagal (misalnya cascade constraint)
+                // skip jika gagal (memiliki pembayaran/import link, dll)
             }
         }
         return $deleted;

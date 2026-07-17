@@ -74,7 +74,7 @@ class VendorApService
      */
     private function assertNoDuplicate(string $kodeVendor, string $namaVendor, ?int $ignoreId = null): void
     {
-        $kodeQuery = VendorAp::withTrashed()->where('kode_vendor', trim($kodeVendor));
+        $kodeQuery = VendorAp::where('kode_vendor', trim($kodeVendor));
         if ($ignoreId) {
             $kodeQuery->where('id', '!=', $ignoreId);
         }
@@ -85,7 +85,7 @@ class VendorApService
         }
 
         $normalizedName = VendorNameMatcher::normalize($namaVendor);
-        $namaQuery = VendorAp::withTrashed()->whereRaw('UPPER(TRIM(nama_vendor)) = ?', [$normalizedName]);
+        $namaQuery = VendorAp::whereRaw('UPPER(TRIM(nama_vendor)) = ?', [$normalizedName]);
         if ($ignoreId) {
             $namaQuery->where('id', '!=', $ignoreId);
         }
@@ -124,4 +124,5 @@ class VendorApService
         }
         return $deleted;
     }
+
 }

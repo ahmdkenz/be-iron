@@ -3,12 +3,11 @@
 namespace App\Models;
 
 use App\Support\Traits\BlameableTrait;
-use App\Support\Traits\SoftDeletesTrait;
 use Illuminate\Database\Eloquent\Model;
 
 class TagihanAp extends Model
 {
-    use SoftDeletesTrait, BlameableTrait;
+    use BlameableTrait;
 
     protected $table = 'tb_tagihan_ap';
 

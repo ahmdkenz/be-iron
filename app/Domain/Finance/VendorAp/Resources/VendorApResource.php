@@ -32,6 +32,7 @@ class VendorApResource extends JsonResource
             'updated_by_name' => $this->whenLoaded('updatedBy', fn() => $this->updatedBy?->username),
             'created_at'      => $this->created_at?->setTimezone('Asia/Jakarta')->format('d-m-Y H:i'),
             'updated_at'      => $this->updated_at?->setTimezone('Asia/Jakarta')->format('d-m-Y H:i'),
+            'deleted_at'      => $this->deleted_at?->setTimezone('Asia/Jakarta')->format('d-m-Y H:i'),
         ];
     }
 }

@@ -71,6 +71,11 @@ class TagihanApRepository
         ];
     }
 
+    public function delete(TagihanAp $tagihan): bool
+    {
+        return (bool) $tagihan->delete();
+    }
+
     private function applyFilters(Builder $query, array $filters): Builder
     {
         return $query

@@ -53,6 +53,7 @@ class TagihanApResource extends JsonResource
             'created_by_name'     => $this->whenLoaded('createdBy', fn() => $this->createdBy?->username),
             'created_at'          => $this->created_at?->setTimezone('Asia/Jakarta')->format('d-m-Y H:i'),
             'updated_at'          => $this->updated_at?->setTimezone('Asia/Jakarta')->format('d-m-Y H:i'),
+            'deleted_at'          => $this->deleted_at?->setTimezone('Asia/Jakarta')->format('d-m-Y H:i'),
         ];
     }
 }
