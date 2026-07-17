@@ -168,6 +168,13 @@ class ApShz360ImportController extends Controller
         }
 
         if ($detail) {
+            $data['tanggal_po'] = $poImport?->tanggal_po?->format('Y-m-d');
+            $data['status_po'] = $poImport?->status_po;
+            $data['po_subtotal'] = (float) ($poImport?->subtotal ?? 0);
+            $data['po_ongkir'] = (float) ($poImport?->ongkir ?? 0);
+            $data['po_diskon'] = (float) ($poImport?->diskon ?? 0);
+            $data['po_grand_total'] = (float) ($poImport?->grand_total ?? 0);
+
             $data['items'] = $receipt->items->map(fn ($item) => [
                 'kode_barang' => $item->kode_barang,
                 'nama_barang' => $item->nama_barang,
