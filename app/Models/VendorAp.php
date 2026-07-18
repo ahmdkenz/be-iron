@@ -15,7 +15,6 @@ class VendorAp extends Model
         'kode_vendor',
         'nama_vendor',
         'no_npwp',
-        'status_pkp',
         'bank_nama',
         'bank_no_rekening',
         'bank_atas_nama',
@@ -26,8 +25,7 @@ class VendorAp extends Model
     ];
 
     protected $casts = [
-        'status_pkp'   => 'boolean',
-        'status'       => 'boolean',
+        'status' => 'boolean',
     ];
 
     public function karyawanAp()

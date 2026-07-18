@@ -243,15 +243,11 @@
               <td class="dl-lbl">Kode Vendor</td><td class="dl-colon">:</td>
               <td class="dl-val">{{ $tagihan->vendorAp->kode_vendor ?? '-' }}</td>
             </tr>
-            <tr>
+            <tr class="dl-row-divider">
               <td class="dl-lbl">No. NPWP</td><td class="dl-colon">:</td>
               <td class="dl-val">{{ $tagihan->vendorAp->no_npwp ?: '-' }}</td>
             </tr>
             <tr>
-              <td class="dl-lbl">Status PKP</td><td class="dl-colon">:</td>
-              <td class="dl-val">{{ $tagihan->vendorAp->status_pkp ? 'PKP' : 'Non-PKP' }}</td>
-            </tr>
-            <tr class="dl-row-divider">
               <td class="dl-lbl">PIC AP</td><td class="dl-colon">:</td>
               <td class="dl-val">{{ $tagihan->karyawan->nama_karyawan ?? '-' }}</td>
             </tr>

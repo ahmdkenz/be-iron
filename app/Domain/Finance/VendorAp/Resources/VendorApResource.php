@@ -15,7 +15,6 @@ class VendorApResource extends JsonResource
             'nama_vendor'      => $this->nama_vendor,
             'display_label'    => "{$this->nama_vendor} ({$this->kode_vendor})",
             'no_npwp'          => $this->no_npwp,
-            'status_pkp'       => $this->status_pkp,
             'bank_nama'        => $this->bank_nama,
             'bank_no_rekening' => $this->bank_no_rekening,
             'bank_atas_nama'   => $this->bank_atas_nama,

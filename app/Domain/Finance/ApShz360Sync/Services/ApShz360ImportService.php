@@ -166,7 +166,6 @@ class ApShz360ImportService
             kode_vendor: $kodeVendor,
             nama_vendor: $supplier['nama_supplier'],
             no_npwp: $supplier['npwp'] ?? null,
-            status_pkp: false,
             bank_nama: $supplier['bank_nama'] ?? null,
             bank_no_rekening: $supplier['bank_no_rekening'] ?? null,
             bank_atas_nama: $supplier['bank_atas_nama'] ?? null,
