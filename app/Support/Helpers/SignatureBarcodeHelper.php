@@ -184,11 +184,17 @@ class SignatureBarcodeHelper
     ): string {
         $tanggal      = Carbon::parse($pembayaran->tanggal_pembayaran)->format('d-m-Y');
         $totalBayar   = 'Rp ' . number_format((float) $pembayaran->jumlah_pembayaran, 0, ',', '.');
+        $kategori     = match ($pembayaran->kategori_voucher) {
+            'BB'    => 'Bahan Baku',
+            'NBB'   => 'Non Bahan Baku',
+            default => 'Belum Dikategorikan',
+        };
 
         $lines = [
             "Dibuat Oleh: {$preparedByName}",
             "No Payment Voucher: {$noVoucher}",
             "Tanggal: {$tanggal}",
+            "Kategori: {$kategori}",
             "Total Pembayaran: {$totalBayar}",
             "Jumlah Tagihan: {$tagihanCount}",
             "Jumlah Vendor: {$vendorCount}",

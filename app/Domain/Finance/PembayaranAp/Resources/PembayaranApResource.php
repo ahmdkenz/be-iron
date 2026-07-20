@@ -49,6 +49,12 @@ class PembayaranApResource extends JsonResource
             'tanggal_pembayaran'       => $this->tanggal_pembayaran?->format('d-m-Y'),
             'jumlah_pembayaran'        => (float) $this->jumlah_pembayaran,
             'metode_pembayaran'        => $this->metode_pembayaran,
+            'kategori_voucher'         => $this->kategori_voucher,
+            'kategori_voucher_label'   => match ($this->kategori_voucher) {
+                'BB'    => 'Bahan Baku',
+                'NBB'   => 'Non Bahan Baku',
+                default => 'Belum Dikategorikan',
+            },
             'no_referensi'             => $this->no_referensi,
             'keterangan'               => $this->keterangan,
             'bukti_file_name'          => $this->bukti_file_name,

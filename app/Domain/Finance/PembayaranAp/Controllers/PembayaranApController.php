@@ -47,6 +47,7 @@ class PembayaranApController extends Controller
                 $q->whereHas('items', fn($q) => $q->where('vendor_ap_id', $v))
             )
             ->when($request->metode_pembayaran, fn($q, $v) => $q->where('metode_pembayaran', $v))
+            ->when($request->kategori_voucher, fn($q, $v) => $q->where('kategori_voucher', $v))
             ->when($request->tanggal_dari, fn($q, $v) => $q->whereDate('tanggal_pembayaran', '>=', $v))
             ->when($request->tanggal_sampai, fn($q, $v) => $q->whereDate('tanggal_pembayaran', '<=', $v));
 

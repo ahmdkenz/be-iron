@@ -192,6 +192,10 @@
               <td class="dl-lbl">Metode</td><td class="dl-colon">:</td>
               <td class="dl-val">{{ $pembayaran->metode_pembayaran }}</td>
             </tr>
+            <tr>
+              <td class="dl-lbl">Kategori</td><td class="dl-colon">:</td>
+              <td class="dl-val">{{ match($pembayaran->kategori_voucher) { 'BB' => 'Bahan Baku', 'NBB' => 'Non Bahan Baku', default => 'Belum Dikategorikan' } }}</td>
+            </tr>
           </table>
         </td>
         <td class="info-col">

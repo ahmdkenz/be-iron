@@ -92,6 +92,7 @@ class PembayaranApService
                 'tanggal_pembayaran'       => $data['tanggal_pembayaran'],
                 'jumlah_pembayaran'        => $totalVoucher,
                 'metode_pembayaran'        => $data['metode_pembayaran'],
+                'kategori_voucher'         => $data['kategori_voucher'] ?? null,
                 'no_referensi'             => $data['no_referensi'] ?? null,
                 'keterangan'               => $data['keterangan'] ?? null,
                 'dibuat_dari_rekonsiliasi' => $data['dibuat_dari_rekonsiliasi'] ?? false,

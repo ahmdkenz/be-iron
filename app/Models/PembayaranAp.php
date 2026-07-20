@@ -17,6 +17,7 @@ class PembayaranAp extends Model
         'tanggal_pembayaran',
         'jumlah_pembayaran',
         'metode_pembayaran',
+        'kategori_voucher',
         'no_referensi',
         'keterangan',
         'sumber_pembayaran_ap_id',

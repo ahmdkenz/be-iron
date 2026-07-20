@@ -12,13 +12,14 @@ use Tests\TestCase;
  */
 class SignatureBarcodeHelperPembayaranApTest extends TestCase
 {
-    private function makePembayaran(): PembayaranAp
+    private function makePembayaran(?string $kategoriVoucher = 'BB'): PembayaranAp
     {
         $pembayaran = new PembayaranAp();
         $pembayaran->forceFill([
             'id'                  => 1,
             'tanggal_pembayaran'  => '2026-07-20',
             'jumlah_pembayaran'   => 15750000,
+            'kategori_voucher'    => $kategoriVoucher,
         ]);
 
         return $pembayaran;
@@ -39,10 +40,26 @@ class SignatureBarcodeHelperPembayaranApTest extends TestCase
         $this->assertStringContainsString('Dibuat Oleh: Ahmad Nur Hafidz', $payload);
         $this->assertStringContainsString('No Payment Voucher: VP-000123', $payload);
         $this->assertStringContainsString('Tanggal: 20-07-2026', $payload);
+        $this->assertStringContainsString('Kategori: Bahan Baku', $payload);
         $this->assertStringContainsString('Total Pembayaran: Rp 15.750.000', $payload);
         $this->assertStringContainsString('Jumlah Tagihan: 3', $payload);
         $this->assertStringContainsString('Jumlah Vendor: 2', $payload);
         $this->assertStringContainsString('Status: Dibuat', $payload);
+    }
+
+    public function test_payload_menampilkan_belum_dikategorikan_untuk_voucher_lama(): void
+    {
+        $pembayaran = $this->makePembayaran(null);
+
+        $payload = SignatureBarcodeHelper::buildPembayaranApPreparedPayload(
+            $pembayaran,
+            'Ahmad Nur Hafidz',
+            'VP-000123',
+            3,
+            2,
+        );
+
+        $this->assertStringContainsString('Kategori: Belum Dikategorikan', $payload);
     }
 
     public function test_generate_data_uri_menghasilkan_svg_qr(): void

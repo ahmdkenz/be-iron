@@ -14,6 +14,7 @@ class StorePembayaranApVoucherRequest extends FormRequest
         return [
             'tanggal_pembayaran'        => ['required', 'date'],
             'metode_pembayaran'         => ['required', 'in:TRANSFER,CASH,GIRO'],
+            'kategori_voucher'          => ['required', 'in:BB,NBB'],
             'no_referensi'              => [
                 'nullable',
                 'string',
@@ -33,6 +34,8 @@ class StorePembayaranApVoucherRequest extends FormRequest
     {
         return [
             'no_referensi.unique'            => 'Nomor referensi ini sudah digunakan pada pembayaran lain.',
+            'kategori_voucher.required'       => 'Kategori voucher wajib dipilih.',
+            'kategori_voucher.in'             => 'Kategori voucher harus Bahan Baku atau Non Bahan Baku.',
             'alokasi.required'                => 'Voucher harus mencakup minimal 1 tagihan.',
             'alokasi.min'                      => 'Voucher harus mencakup minimal 1 tagihan.',
             'alokasi.*.tagihan_ap_id.required' => 'Tagihan wajib dipilih untuk setiap baris alokasi.',
