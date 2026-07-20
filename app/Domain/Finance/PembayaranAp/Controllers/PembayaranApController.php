@@ -5,20 +5,25 @@ namespace App\Domain\Finance\PembayaranAp\Controllers;
 use App\Domain\Finance\PembayaranAp\Requests\StorePembayaranApRequest;
 use App\Domain\Finance\PembayaranAp\Requests\StorePembayaranApVoucherRequest;
 use App\Domain\Finance\PembayaranAp\Resources\PembayaranApResource;
+use App\Domain\Finance\PembayaranAp\Services\PembayaranApExportService;
 use App\Domain\Finance\PembayaranAp\Services\PembayaranApService;
 use App\Domain\Finance\TagihanAp\Services\TagihanApService;
 use App\Http\Controllers\Controller;
 use App\Models\PembayaranAp;
+use App\Models\User;
 use App\Support\Helpers\RoleHelper;
 use App\Support\Helpers\SignatureBarcodeHelper;
 use App\Support\Helpers\Terbilang;
 use App\Support\Traits\ApiResponse;
 use Barryvdh\DomPDF\Facade\Pdf;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx as XlsxWriter;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class PembayaranApController extends Controller
@@ -28,21 +33,76 @@ class PembayaranApController extends Controller
     public function __construct(
         private readonly PembayaranApService $service,
         private readonly TagihanApService $tagihanApService,
+        private readonly PembayaranApExportService $exportService,
     ) {}
 
     public function index(Request $request): JsonResponse
     {
         $this->authorizeView();
 
-        $user = auth()->user()->load('karyawan');
-
-        $query = PembayaranAp::with([
+        $query = $this->scopedQuery($request)->with([
             'items.tagihanAp.vendorAp',
             'items.tagihanAp.perusahaan',
             'items.tagihanAp.karyawan',
             'items.vendorAp',
             'createdBy.karyawan',
-        ])
+        ]);
+
+        $totalJumlah = (clone $query)->sum('jumlah_pembayaran');
+        $list        = $query->latest('tanggal_pembayaran')->paginate($request->per_page ?? 20);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Success',
+            'data'    => $list->through(fn($p) => new PembayaranApResource($p))->items(),
+            'meta'    => [
+                'current_page' => $list->currentPage(),
+                'last_page'    => $list->lastPage(),
+                'per_page'     => $list->perPage(),
+                'total'        => $list->total(),
+                'total_jumlah' => $totalJumlah,
+            ],
+        ]);
+    }
+
+    public function exportExcel(Request $request): BinaryFileResponse|JsonResponse
+    {
+        $this->authorizeView();
+
+        if (!class_exists('ZipArchive')) {
+            return $this->errorResponse('Ekstensi PHP "zip" tidak aktif. Aktifkan extension=zip pada php.ini lalu restart server.', 500);
+        }
+
+        $vouchers = $this->scopedQuery($request)
+            ->with([
+                'items.tagihanAp.items',
+                'items.tagihanAp.vendorAp',
+                'items.tagihanAp.perusahaan',
+                'items.tagihanAp.karyawan',
+                'items.vendorAp',
+                'createdBy.karyawan',
+            ])
+            ->latest('tanggal_pembayaran')
+            ->get();
+
+        $spreadsheet = $this->exportService->build($vouchers);
+
+        $temp = tempnam(sys_get_temp_dir(), 'pv_') . '.xlsx';
+        (new XlsxWriter($spreadsheet))->save($temp);
+
+        return response()
+            ->download($temp, 'payment-voucher-ap-' . now()->format('Ymd-His') . '.xlsx', [
+                'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            ])
+            ->deleteFileAfterSend(true);
+    }
+
+    private function scopedQuery(Request $request): Builder
+    {
+        /** @var User $user */
+        $user = auth()->user()->load('karyawan');
+
+        $query = PembayaranAp::query()
             ->when($request->vendor_ap_id, fn($q, $v) =>
                 $q->whereHas('items', fn($q) => $q->where('vendor_ap_id', $v))
             )
@@ -63,21 +123,7 @@ class PembayaranApController extends Controller
             );
         }
 
-        $totalJumlah = (clone $query)->sum('jumlah_pembayaran');
-        $list        = $query->latest('tanggal_pembayaran')->paginate($request->per_page ?? 20);
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Success',
-            'data'    => $list->through(fn($p) => new PembayaranApResource($p))->items(),
-            'meta'    => [
-                'current_page' => $list->currentPage(),
-                'last_page'    => $list->lastPage(),
-                'per_page'     => $list->perPage(),
-                'total'        => $list->total(),
-                'total_jumlah' => $totalJumlah,
-            ],
-        ]);
+        return $query;
     }
 
     public function store(StorePembayaranApRequest $request, int $tagihanId): JsonResponse

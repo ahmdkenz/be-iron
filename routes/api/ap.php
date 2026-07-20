@@ -42,6 +42,7 @@ Route::prefix('tagihan')->group(function () {
 
 // ─── Pembayaran AP ──────────────────────────────────────────────
 Route::get('/pembayaran', [PembayaranApController::class, 'index']);
+Route::get('/pembayaran/export-excel', [PembayaranApController::class, 'exportExcel']);
 Route::get('/pembayaran/cek-referensi', [PembayaranApController::class, 'cekReferensi']);
 Route::post('/pembayaran/voucher', [PembayaranApController::class, 'storeVoucher']);
 Route::get('/pembayaran/{id}/print', [PembayaranApController::class, 'print']);
