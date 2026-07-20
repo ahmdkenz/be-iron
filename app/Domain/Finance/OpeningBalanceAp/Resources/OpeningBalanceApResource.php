@@ -4,6 +4,7 @@ namespace App\Domain\Finance\OpeningBalanceAp\Resources;
 
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
+use Illuminate\Support\Facades\URL;
 
 class OpeningBalanceApResource extends JsonResource
 {
@@ -50,6 +51,10 @@ class OpeningBalanceApResource extends JsonResource
             'rejected_at'         => $this->rejected_at?->toIso8601String(),
             'rejected_by_name'    => $this->whenLoaded('rejectedBy', fn() => $this->rejectedBy?->username),
             'keterangan'          => $this->keterangan,
+            'can_print'           => $this->approval_status === 'APPROVED',
+            'share_url'           => $this->prepared_token
+                ? URL::temporarySignedRoute('tagihan-ap.public-print', now()->addDays(30), ['token' => $this->prepared_token])
+                : null,
             'created_by'          => $this->created_by,
             'created_by_name'     => $this->whenLoaded('createdBy', fn() => $this->createdBy?->username),
             'created_at'          => $this->created_at?->setTimezone('Asia/Jakarta')->format('d-m-Y H:i'),

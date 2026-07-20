@@ -145,4 +145,49 @@ class SignatureBarcodeHelper
 
         return implode("\n", $lines);
     }
+
+    public static function buildOpeningBalanceApPreparedPayload(TagihanAp $tagihan, string $preparedByName): string
+    {
+        $periode      = Carbon::parse($tagihan->tanggal_tagihan)->format('d-m-Y');
+        $totalTagihan = 'Rp ' . number_format((float) $tagihan->total_tagihan, 0, ',', '.');
+        $sisaTagihan  = 'Rp ' . number_format((float) $tagihan->sisa_tagihan, 0, ',', '.');
+
+        $lines = [
+            "Diajukan Oleh: {$preparedByName}",
+            "No Opening Balance: {$tagihan->no_tagihan}",
+            "Vendor: " . ($tagihan->vendorAp?->nama_vendor ?? '-'),
+            "Periode: {$periode}",
+        ];
+
+        $obDetails = $tagihan->openingBalanceApDetails ?? collect();
+        foreach ($obDetails as $detail) {
+            foreach ($detail->items as $item) {
+                $qty = rtrim(rtrim(number_format((float) $item->qty, 4, '.', ''), '0'), '.');
+                $lines[] = "Nama Barang: {$item->nama_barang} | QTY: {$qty} | Satuan: {$item->satuan}";
+            }
+        }
+
+        $lines[] = "Total Saldo Awal: {$totalTagihan}";
+        $lines[] = "Sisa Hutang: {$sisaTagihan}";
+        $lines[] = "Status: Di Ajukan";
+
+        return implode("\n", $lines);
+    }
+
+    public static function buildOpeningBalanceApApprovedPayload(TagihanAp $tagihan, string $approvedByName): string
+    {
+        $tglFormatted = $tagihan->approved_at ? Carbon::parse($tagihan->approved_at)->format('d-m-Y') : '-';
+        $totalTagihan = 'Rp ' . number_format((float) $tagihan->total_tagihan, 0, ',', '.');
+
+        $lines = [
+            "Disetujui Oleh: {$approvedByName}",
+            "No Opening Balance: {$tagihan->no_tagihan}",
+            "Vendor: " . ($tagihan->vendorAp?->nama_vendor ?? '-'),
+            "Total Saldo Awal: {$totalTagihan}",
+            "Tanggal Disetujui: {$tglFormatted}",
+            "Status: {$tagihan->approval_status}",
+        ];
+
+        return implode("\n", $lines);
+    }
 }

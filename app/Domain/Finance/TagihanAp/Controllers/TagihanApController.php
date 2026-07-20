@@ -154,15 +154,15 @@ class TagihanApController extends Controller
         $this->authorizeView();
 
         $tagihan = $this->service->findForPrintOrFail($id);
-        $signatureData = $this->buildSignatureData($tagihan);
+        $viewData = $this->buildPrintViewData($tagihan);
 
         $filename = 'Tagihan-AP-' . str_replace(['/', '\\', ' '], '-', $tagihan->no_tagihan) . '.pdf';
 
         if ($request->has('html')) {
-            return view('finance.tagihan-ap-print', compact('tagihan', 'signatureData'))->render();
+            return view('finance.tagihan-ap-print', $viewData)->render();
         }
 
-        return Pdf::loadView('finance.tagihan-ap-print', compact('tagihan', 'signatureData'))
+        return Pdf::loadView('finance.tagihan-ap-print', $viewData)
             ->setPaper('a4', 'portrait')
             ->setOptions([
                 'isHtml5ParserEnabled' => true,
@@ -175,14 +175,18 @@ class TagihanApController extends Controller
 
     public function publicPrint(string $token): Response
     {
-        $tagihan = TagihanAp::with(['vendorAp', 'perusahaan', 'karyawan.perusahaan', 'items', 'pembayarans', 'createdBy.karyawan', 'submittedBy.karyawan', 'approvedBy.karyawan'])
+        $tagihan = TagihanAp::with([
+            'vendorAp', 'perusahaan', 'karyawan.perusahaan', 'items', 'pembayarans',
+            'createdBy.karyawan', 'submittedBy.karyawan', 'approvedBy.karyawan',
+            'openingBalanceApDetails.items',
+        ])
             ->where('prepared_token', $token)
             ->firstOrFail();
-        $signatureData = $this->buildSignatureData($tagihan);
+        $viewData = $this->buildPrintViewData($tagihan);
 
         $filename = 'Tagihan-AP-' . str_replace(['/', '\\', ' '], '-', $tagihan->no_tagihan) . '.pdf';
 
-        return Pdf::loadView('finance.tagihan-ap-print', compact('tagihan', 'signatureData'))
+        return Pdf::loadView('finance.tagihan-ap-print', $viewData)
             ->setPaper('a4', 'portrait')
             ->setOptions([
                 'isHtml5ParserEnabled' => true,
@@ -193,6 +197,44 @@ class TagihanApController extends Controller
             ->stream($filename);
     }
 
+    private function buildPrintViewData(TagihanAp $tagihan): array
+    {
+        abort_if(
+            $tagihan->is_opening_balance && $tagihan->approval_status !== 'APPROVED',
+            422,
+            'Opening balance AP belum disetujui, dokumen belum dapat dicetak'
+        );
+
+        $signatureData = $this->buildSignatureData($tagihan);
+
+        $tagihanBerjalanInPeriod = collect();
+        if ($tagihan->is_opening_balance && $tagihan->vendor_ap_id && $tagihan->tanggal_tagihan) {
+            $bulanAwal  = \Carbon\Carbon::parse($tagihan->tanggal_tagihan)->startOfMonth();
+            $bulanAkhir = \Carbon\Carbon::parse($tagihan->tanggal_tagihan)->endOfMonth();
+
+            $tagihanBerjalanInPeriod = TagihanAp::query()
+                ->where('vendor_ap_id', $tagihan->vendor_ap_id)
+                ->where('perusahaan_id', $tagihan->perusahaan_id)
+                ->where('is_opening_balance', false)
+                ->whereBetween('tanggal_tagihan', [$bulanAwal->toDateString(), $bulanAkhir->toDateString()])
+                ->orderBy('tanggal_tagihan', 'asc')
+                ->get();
+        }
+
+        if ($tagihanBerjalanInPeriod->isNotEmpty()) {
+            $tagihanBerjalanInPeriod->load([
+                'vendorAp', 'perusahaan', 'karyawan.perusahaan', 'items.barang',
+                'createdBy.karyawan', 'submittedBy.karyawan',
+            ]);
+        }
+
+        $tagihanBerjalanSignatureData = $tagihanBerjalanInPeriod
+            ->mapWithKeys(fn ($t) => [$t->id => $this->buildSignatureData($t)])
+            ->all();
+
+        return compact('tagihan', 'signatureData', 'tagihanBerjalanInPeriod', 'tagihanBerjalanSignatureData');
+    }
+
     private function buildSignatureData(TagihanAp $tagihan): array
     {
         $preparedByUser = $tagihan->submittedBy ?: $tagihan->createdBy;
@@ -200,12 +242,27 @@ class TagihanApController extends Controller
             ?? $preparedByUser?->username
             ?? '___________________';
 
-        $preparedPayload = SignatureBarcodeHelper::buildTagihanApPreparedPayload($tagihan, $preparedByName);
+        $preparedPayload = $tagihan->is_opening_balance
+            ? SignatureBarcodeHelper::buildOpeningBalanceApPreparedPayload($tagihan, $preparedByName)
+            : SignatureBarcodeHelper::buildTagihanApPreparedPayload($tagihan, $preparedByName);
 
-        return [
+        $signatureData = [
             'prepared_by_name' => $preparedByName,
             'prepared_qr_src'  => SignatureBarcodeHelper::generateDataUri($preparedPayload, 250),
         ];
+
+        if ($tagihan->is_opening_balance && $tagihan->approvedBy) {
+            $approvedByName = $tagihan->approvedBy->karyawan?->nama_karyawan
+                ?? $tagihan->approvedBy->username
+                ?? '___________________';
+
+            $approvedPayload = SignatureBarcodeHelper::buildOpeningBalanceApApprovedPayload($tagihan, $approvedByName);
+
+            $signatureData['approved_by_name'] = $approvedByName;
+            $signatureData['approved_qr_src']  = SignatureBarcodeHelper::generateDataUri($approvedPayload, 250);
+        }
+
+        return $signatureData;
     }
 
     public function update(UpdateTagihanApRequest $request, int $id): JsonResponse

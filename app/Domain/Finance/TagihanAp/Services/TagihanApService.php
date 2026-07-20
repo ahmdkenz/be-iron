@@ -44,6 +44,7 @@ class TagihanApService
             'createdBy.karyawan',
             'submittedBy.karyawan',
             'approvedBy.karyawan',
+            'openingBalanceApDetails.items',
         ])->find($id);
 
         abort_if(!$tagihan, 404, 'Tagihan tidak ditemukan');

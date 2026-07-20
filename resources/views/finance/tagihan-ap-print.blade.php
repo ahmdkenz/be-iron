@@ -23,6 +23,12 @@
     $fsBadge   = $htmlMode ? '13px' : '9px';
     $padBadge  = $htmlMode ? '4px 8px' : '2px 6px';
 
+    $fsObTitle = $htmlMode ? '14px' : '10px';
+    $fsObTh    = $htmlMode ? '14px' : '10px';
+    $fsObTd    = $htmlMode ? '15px' : '10px';
+    $padObCell = $htmlMode ? '10px 8px' : '5px';
+    $fsObGrand = $htmlMode ? '16px' : '11px';
+
     $fsTerbilangLbl = $htmlMode ? '14px' : '10px';
     $fsTerbilangVal = $htmlMode ? '16px' : '11px';
     $fsNoteLbl      = $htmlMode ? '14px' : '10px';
@@ -96,6 +102,7 @@
     .badge-DITERIMA { color: #1d4ed8; border-color: #bfdbfe; background: #eff6ff; }
     .badge-SEBAGIAN { color: #c2410c; border-color: #fed7aa; background: #fff7ed; }
     .badge-LUNAS { color: #15803d; border-color: #bbf7d0; background: #f0fdf4; }
+    .badge-OB { color: #b71c1c; border-color: #fecaca; background: #fef2f2; }
 
     /* Items Table */
     .items-table { margin-bottom: 30px; }
@@ -110,6 +117,19 @@
     .col-sat { width: 8%; }
     .col-harga { width: 20%; }
     .col-sub { width: 22%; }
+
+    /* Opening Balance Detail Table */
+    .ob-section-title { font-size: {{ $fsObTitle }}; font-weight: bold; text-transform: uppercase; color: #b71c1c; letter-spacing: 1px; margin-bottom: 8px; margin-top: 4px; }
+    .ob-detail-table { margin-bottom: 30px; width: 100%; }
+    .ob-detail-table th { background: #faa18fa8; padding: {{ $padObCell }}; border-top: 1px solid #ccc; border-bottom: 1px solid #ccc; font-size: {{ $fsObTh }}; font-weight: bold; text-transform: uppercase; color: #111; }
+    .ob-detail-table td { padding: {{ $padObCell }}; border-bottom: 1px solid #eee; font-size: {{ $fsObTd }}; vertical-align: top; }
+    .ob-detail-no { width: 5%; }
+    .ob-detail-invoice { width: 18%; }
+    .ob-detail-date { width: 14%; }
+    .ob-detail-desc { width: 28%; }
+    .ob-detail-jumlah { width: 17%; }
+    .ob-detail-sisa { width: 18%; }
+    .ob-grand-row td { background: #fef2f2; border-top: 2px solid #b71c1c; border-bottom: 2px solid #b71c1c; font-weight: bold; color: #b71c1c; font-size: {{ $fsObGrand }}; padding: {{ $padObCell }}; }
 
     /* Summary Section */
     .summary-left { width: 55%; padding-right: 30px; }
@@ -153,12 +173,23 @@
   <div class="toolbar-left">
     <div class="toolbar-icon">AP</div>
     <div>
-      <div class="toolbar-title">Tagihan AP {{ $tagihan->no_tagihan }}</div>
+      <div class="toolbar-title">{{ $tagihan->is_opening_balance ? 'Opening Balance AP ' : 'Tagihan AP ' }}{{ $tagihan->no_tagihan }}</div>
       <div class="toolbar-sub">{{ $tagihan->vendorAp->nama_vendor ?? '-' }} &bull; {{ \Carbon\Carbon::parse($tagihan->tanggal_tagihan)->isoFormat('D MMM YYYY') }}</div>
     </div>
   </div>
 </div>
 @endif
+
+@php
+  $logoPath = public_path('images/sma/logo_sma.jpeg');
+  if ($htmlMode) {
+      $logoUrl = asset('images/sma/logo_sma.jpeg');
+  } else {
+      $logoUrl = file_exists($logoPath) ? 'data:image/jpeg;base64,'.base64_encode(file_get_contents($logoPath)) : '';
+  }
+@endphp
+
+@if($tagihan->is_opening_balance)
 
 <div class="print-container">
 
@@ -166,14 +197,6 @@
   <table>
     <tr>
       <td style="width: 20%; vertical-align: middle;">
-        @php
-          $logoPath = public_path('images/sma/logo_sma.jpeg');
-          if ($htmlMode) {
-              $logoUrl = asset('images/sma/logo_sma.jpeg');
-          } else {
-              $logoUrl = file_exists($logoPath) ? 'data:image/jpeg;base64,'.base64_encode(file_get_contents($logoPath)) : '';
-          }
-        @endphp
         @if($logoUrl)
         <img src="{{ $logoUrl }}" style="max-width:80px; max-height:80px;" alt="Logo SMA">
         @endif
@@ -192,25 +215,21 @@
   <div class="divider-thick"></div>
   <div class="divider-thin"></div>
 
-  <div class="doc-title">Tagihan (AP Voucher)</div>
+  <div class="doc-title">Saldo Awal AP (Opening Balance)</div>
 
   <!-- Info Box -->
   <div class="info-container">
-    <div class="info-header">Informasi Tagihan</div>
+    <div class="info-header">Informasi Opening Balance</div>
     <table>
       <tr>
         <td class="info-col info-col-left">
           <table class="dl-table">
             <tr>
-              <td class="dl-lbl">No. Tagihan</td><td class="dl-colon">:</td>
+              <td class="dl-lbl">No. OB</td><td class="dl-colon">:</td>
               <td class="dl-val">{{ $tagihan->no_tagihan }}</td>
             </tr>
             <tr>
-              <td class="dl-lbl">No. Invoice Vendor</td><td class="dl-colon">:</td>
-              <td class="dl-val">{{ $tagihan->no_invoice_vendor ?: '-' }}</td>
-            </tr>
-            <tr>
-              <td class="dl-lbl">Tgl. Tagihan</td><td class="dl-colon">:</td>
+              <td class="dl-lbl">Tgl. OB</td><td class="dl-colon">:</td>
               <td class="dl-val">{{ \Carbon\Carbon::parse($tagihan->tanggal_tagihan)->isoFormat('D MMMM YYYY') }}</td>
             </tr>
             @if($tagihan->tanggal_jatuh_tempo)
@@ -220,16 +239,11 @@
             </tr>
             @endif
             <tr>
-              <td class="dl-lbl">No. PO</td><td class="dl-colon">:</td>
-              <td class="dl-val">{{ $tagihan->no_po ?: '-' }}</td>
-            </tr>
-            <tr>
-              <td class="dl-lbl">No. Terima Barang</td><td class="dl-colon">:</td>
-              <td class="dl-val">{{ $tagihan->no_terima_barang ?: '-' }}</td>
-            </tr>
-            <tr>
               <td class="dl-lbl">Status</td><td class="dl-colon">:</td>
-              <td class="dl-val"><span class="badge badge-{{ $tagihan->status }}">{{ $tagihan->status }}</span></td>
+              <td class="dl-val">
+                <span class="badge badge-{{ $tagihan->status }}">{{ $tagihan->status }}</span>
+                <span class="badge badge-OB" style="margin-left:4px;">OB</span>
+              </td>
             </tr>
           </table>
         </td>
@@ -261,55 +275,138 @@
     </table>
   </div>
 
-  <!-- Item Tagihan -->
-  <table class="items-table">
+  {{-- ======== Rincian Invoice/Tagihan Asal ======== --}}
+  <div class="ob-section-title">Rincian Invoice/Tagihan Asal</div>
+
+  @php
+    $obDetails  = $tagihan->openingBalanceApDetails ?? collect();
+    $obSubtotal = $obDetails->isNotEmpty()
+        ? (float) $obDetails->sum('sisa_tagihan_asal')
+        : (float) $tagihan->subtotal;
+  @endphp
+
+  @if($obDetails->isEmpty())
+  {{-- Lump-sum tanpa detail --}}
+  <table class="ob-detail-table">
     <thead>
       <tr>
-        <th class="col-no text-center">No</th>
-        <th class="col-kode text-left">Kode Barang</th>
-        <th class="col-desc text-left">Nama Barang</th>
-        <th class="col-qty text-center">Qty</th>
-        <th class="col-sat text-center">Satuan</th>
-        <th class="col-harga text-right">Harga Satuan</th>
-        <th class="col-sub text-right">Subtotal</th>
+        <th class="ob-detail-no text-center">No</th>
+        <th class="ob-detail-desc text-left" colspan="3">Keterangan</th>
+        <th class="ob-detail-sisa text-right">Saldo Awal</th>
       </tr>
     </thead>
     <tbody>
-      @forelse($tagihan->items as $i => $item)
       <tr>
-        <td class="col-no text-center" style="color:#777;">{{ $i + 1 }}</td>
-        <td class="col-kode" style="color:#555; font-size:14px;">{{ $item->kode_barang ?: '-' }}</td>
-        <td class="col-desc">
-          <span class="font-bold" style="color:#111;">{{ $item->nama_barang }}</span>
-          @if($item->keterangan)<span class="item-desc">{{ $item->keterangan }}</span>@endif
+        <td class="ob-detail-no text-center" style="color:#777;">1</td>
+        <td colspan="3">
+          <span class="font-bold">{{ $tagihan->keterangan ?: 'Opening Balance' }}</span>
         </td>
-        <td class="col-qty text-center">{{ rtrim(rtrim(number_format((float)$item->qty, 4, '.', ''), '0'), '.') }}</td>
-        <td class="col-sat text-center" style="color:#555;">{{ $item->satuan }}</td>
-        <td class="col-harga text-right">Rp {{ number_format((float)$item->harga_satuan, 0, ',', '.') }}</td>
-        <td class="col-sub text-right font-bold">Rp {{ number_format((float)$item->subtotal, 0, ',', '.') }}</td>
+        <td class="text-right font-bold">Rp {{ number_format((float)$tagihan->subtotal, 0, ',', '.') }}</td>
+      </tr>
+    </tbody>
+  </table>
+
+  @else
+  {{-- Detail per invoice/tagihan asal --}}
+  <table class="ob-detail-table">
+    <thead>
+      <tr>
+        <th class="ob-detail-no text-center">No</th>
+        <th class="ob-detail-invoice text-left">No. Invoice/Tagihan Asal</th>
+        <th class="ob-detail-date text-center">Tanggal</th>
+        <th class="ob-detail-desc text-left">Deskripsi</th>
+        <th class="ob-detail-jumlah text-right">Jumlah Tagihan</th>
+        <th class="ob-detail-sisa text-right">Sisa Tagihan</th>
+      </tr>
+    </thead>
+    <tbody>
+      @foreach($obDetails as $di => $detail)
+      <tr>
+        <td class="ob-detail-no text-center" style="color:#777;">{{ $di + 1 }}</td>
+        <td class="ob-detail-invoice font-bold" style="color:#b71c1c;">{{ $detail->no_invoice_asal }}</td>
+        <td class="ob-detail-date text-center" style="color:#555;">{{ \Carbon\Carbon::parse($detail->tanggal_invoice_asal)->isoFormat('D MMM YYYY') }}</td>
+        <td class="ob-detail-desc">
+          <span>{{ $detail->deskripsi }}</span>
+          @if($detail->keterangan)<span class="item-desc">{{ $detail->keterangan }}</span>@endif
+        </td>
+        <td class="ob-detail-jumlah text-right" style="color:#555;">Rp {{ number_format((float)$detail->jumlah_tagihan_asal, 0, ',', '.') }}</td>
+        <td class="ob-detail-sisa text-right font-bold">Rp {{ number_format((float)$detail->sisa_tagihan_asal, 0, ',', '.') }}</td>
+      </tr>
+      @endforeach
+    </tbody>
+    <tfoot>
+      <tr class="ob-grand-row">
+        <td colspan="5" class="text-right">Saldo Awal</td>
+        <td class="text-right">Rp {{ number_format($obSubtotal, 0, ',', '.') }}</td>
+      </tr>
+    </tfoot>
+  </table>
+  @endif
+
+  {{-- ======== Tagihan Bulan Berjalan ======== --}}
+  @php
+    $totalTagihanPeriode = (float) $tagihanBerjalanInPeriod->sum('total_tagihan');
+    $totalSisaPeriode    = (float) $tagihanBerjalanInPeriod->sum('sisa_tagihan');
+  @endphp
+
+  <div class="ob-section-title" style="margin-top: 18px;">Tagihan Bulan Berjalan</div>
+
+  <table class="ob-detail-table">
+    <thead>
+      <tr>
+        <th class="ob-detail-no text-center">No</th>
+        <th class="ob-detail-invoice text-left">No. Tagihan</th>
+        <th class="ob-detail-invoice text-left">No. Invoice Vendor</th>
+        <th class="ob-detail-date text-center">Tanggal</th>
+        <th class="ob-detail-jumlah text-right">Total Tagihan</th>
+        <th class="ob-detail-sisa text-right">Sisa Tagihan</th>
+      </tr>
+    </thead>
+    <tbody>
+      @forelse($tagihanBerjalanInPeriod as $ti => $tb)
+      <tr>
+        <td class="ob-detail-no text-center" style="color:#777;">{{ $ti + 1 }}</td>
+        <td class="ob-detail-invoice font-bold" style="color:#b71c1c;">{{ $tb->no_tagihan }}</td>
+        <td class="ob-detail-invoice" style="color:#555;">{{ $tb->no_invoice_vendor ?: '-' }}</td>
+        <td class="ob-detail-date text-center" style="color:#555;">{{ \Carbon\Carbon::parse($tb->tanggal_tagihan)->isoFormat('D MMM YYYY') }}</td>
+        <td class="ob-detail-jumlah text-right" style="color:#555;">Rp {{ number_format((float)$tb->total_tagihan, 0, ',', '.') }}</td>
+        <td class="ob-detail-sisa text-right font-bold">Rp {{ number_format((float)$tb->sisa_tagihan, 0, ',', '.') }}</td>
       </tr>
       @empty
       <tr>
-        <td colspan="7" class="text-center" style="padding: 24px; color: #777; font-style: italic;">
-          Tidak ada data barang untuk tagihan ini.
+        <td colspan="6" class="text-center" style="padding:20px; color:#777; font-style:italic;">
+          Tidak ada tagihan reguler dalam periode ini.
         </td>
       </tr>
       @endforelse
     </tbody>
+    @if($tagihanBerjalanInPeriod->isNotEmpty())
+    <tfoot>
+      <tr class="ob-grand-row">
+        <td colspan="4" class="text-right">TOTAL TAGIHAN BULAN BERJALAN</td>
+        <td class="text-right">Rp {{ number_format($totalTagihanPeriode, 0, ',', '.') }}</td>
+        <td class="text-right">Rp {{ number_format($totalSisaPeriode, 0, ',', '.') }}</td>
+      </tr>
+    </tfoot>
+    @endif
   </table>
 
   <!-- Summary -->
+  @php
+    $obGrandTotal = $obSubtotal + $totalTagihanPeriode;
+    $obSisaBayar  = max(0, $obGrandTotal - (float)$tagihan->total_pembayaran - (float)$tagihan->total_penyesuaian);
+  @endphp
   <table>
     <tr>
       <td class="summary-left">
         <div class="terbilang-box">
           <div class="terbilang-lbl">Terbilang</div>
-          <div class="terbilang-val">"{{ \App\Support\Helpers\Terbilang::convert((int) $tagihan->total_tagihan) }} Rupiah"</div>
+          <div class="terbilang-val">"{{ \App\Support\Helpers\Terbilang::convert((int) $obGrandTotal) }} Rupiah"</div>
         </div>
 
         @if($tagihan->keterangan)
         <div class="note-box">
-          <div class="note-lbl">Catatan Tagihan</div>
+          <div class="note-lbl">Catatan</div>
           <div class="note-val">{{ $tagihan->keterangan }}</div>
         </div>
         @endif
@@ -317,23 +414,17 @@
       <td class="summary-right">
         <table class="totals-table">
           <tr>
-            <td class="totals-lbl">Subtotal</td>
-            <td class="totals-val">Rp {{ number_format((float)$tagihan->subtotal, 0, ',', '.') }}</td>
+            <td class="totals-lbl">Saldo Awal</td>
+            <td class="totals-val">Rp {{ number_format($obSubtotal, 0, ',', '.') }}</td>
           </tr>
           <tr>
-            <td class="totals-lbl">PPN Masukan</td>
-            <td class="totals-val">Rp {{ number_format((float)$tagihan->ppn_masukan, 0, ',', '.') }}</td>
+            <td class="totals-lbl">Tagihan Bulan Berjalan</td>
+            <td class="totals-val">Rp {{ number_format($totalTagihanPeriode, 0, ',', '.') }}</td>
           </tr>
-          @if((float)$tagihan->pph23 > 0)
-          <tr>
-            <td class="totals-lbl">PPh 23</td>
-            <td class="totals-val">- Rp {{ number_format((float)$tagihan->pph23, 0, ',', '.') }}</td>
-          </tr>
-          @endif
 
           <tr class="totals-grand">
-            <td class="totals-lbl">TOTAL TAGIHAN</td>
-            <td class="totals-val">Rp {{ number_format((float)$tagihan->total_tagihan, 0, ',', '.') }}</td>
+            <td class="totals-lbl">GRAND TOTAL</td>
+            <td class="totals-val">Rp {{ number_format($obGrandTotal, 0, ',', '.') }}</td>
           </tr>
 
           @if((float)$tagihan->total_pembayaran > 0)
@@ -351,8 +442,8 @@
           @endif
 
           <tr class="totals-sisa">
-            <td class="totals-lbl">SISA TAGIHAN</td>
-            <td class="totals-val">Rp {{ number_format((float)$tagihan->sisa_tagihan, 0, ',', '.') }}</td>
+            <td class="totals-lbl">SISA HUTANG</td>
+            <td class="totals-val">Rp {{ number_format($obSisaBayar, 0, ',', '.') }}</td>
           </tr>
         </table>
       </td>
@@ -362,7 +453,7 @@
   <!-- Signatures -->
   <table class="signatures">
     <tr>
-      <td class="sig-col">
+      <td class="sig-col" style="width: 33.33%;">
         <div class="sig-title">Disiapkan Oleh</div>
         @if(!empty($signatureData['prepared_qr_src']))
         <div class="sig-barcode-wrap">
@@ -374,7 +465,20 @@
         <div class="sig-name">{{ $signatureData['prepared_by_name'] ?? '___________________' }}</div>
         <div class="sig-role">Staff AP</div>
       </td>
-      <td class="sig-col">
+      <td class="sig-col" style="width: 33.33%;">
+        <div class="sig-title">Disetujui Oleh</div>
+        @if(!empty($signatureData['approved_qr_src']))
+        <div class="sig-barcode-wrap">
+          <div class="sig-barcode"><img src="{{ $signatureData['approved_qr_src'] }}" alt="QR verifikasi penyetuju dokumen"></div>
+        </div>
+        <div class="sig-name">{{ $signatureData['approved_by_name'] ?? '___________________' }}</div>
+        @else
+        <div class="sig-placeholder"></div>
+        <div class="sig-name">___________________</div>
+        @endif
+        <div class="sig-role">Manager/Supervisor</div>
+      </td>
+      <td class="sig-col" style="width: 33.33%;">
         <div class="sig-title">Diterima Oleh</div>
         <div class="sig-placeholder"></div>
         <div class="sig-name">___________________</div>
@@ -389,6 +493,21 @@
   </div>
 
 </div>
+
+{{-- ======== HALAMAN 2+: Tagihan AP Bulan Berjalan (Voucher AP lengkap) ======== --}}
+@foreach($tagihanBerjalanInPeriod as $tb)
+  <div style="page-break-before: always;"></div>
+  @include('finance.partials.tagihan-ap-document', [
+    'tagihan' => $tb,
+    'signatureData' => $tagihanBerjalanSignatureData[$tb->id] ?? [],
+  ])
+@endforeach
+
+@else
+
+@include('finance.partials.tagihan-ap-document', ['tagihan' => $tagihan, 'signatureData' => $signatureData])
+
+@endif
 
 </body>
 </html>
