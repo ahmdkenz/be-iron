@@ -95,6 +95,15 @@ class OpeningBalanceApController extends Controller
         );
     }
 
+    public function show(int $id): JsonResponse
+    {
+        $this->authorizeView();
+
+        $tagihan = $this->findOpeningBalanceOrFail($id);
+
+        return $this->successResponse(new OpeningBalanceApResource($tagihan));
+    }
+
     public function details(int $id): JsonResponse
     {
         $this->authorizeView();

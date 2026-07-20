@@ -51,6 +51,7 @@ Route::prefix('opening-balance')->group(function () {
     Route::get('/summary', [OpeningBalanceApController::class, 'summary']);
     Route::get('/preview-no', [OpeningBalanceApController::class, 'previewNo']);
     Route::post('/', [OpeningBalanceApController::class, 'store']);
+    Route::get('/{id}', [OpeningBalanceApController::class, 'show']);
     Route::put('/{id}', [OpeningBalanceApController::class, 'update']);
     Route::get('/{id}/details', [OpeningBalanceApController::class, 'details']);
     Route::patch('/{id}/approve', [OpeningBalanceApController::class, 'approve'])->middleware('role:MANAGER|SUPERVISOR');

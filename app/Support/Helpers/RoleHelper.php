@@ -219,7 +219,12 @@ class RoleHelper
 
     public static function canOperateOpeningBalanceAp(?User $user): bool
     {
-        return self::hasAnyRole($user, [RoleEnum::ADMIN, RoleEnum::AP]);
+        return self::hasAnyRole($user, [
+            RoleEnum::ADMIN,
+            RoleEnum::MANAGER,
+            RoleEnum::SUPERVISOR,
+            RoleEnum::AP,
+        ]);
     }
 
     public static function canApproveOpeningBalanceAp(?User $user): bool
