@@ -93,7 +93,7 @@ class PembayaranApService
                 'jumlah_pembayaran'        => $totalVoucher,
                 'metode_pembayaran'        => $data['metode_pembayaran'],
                 'kategori_voucher'         => $data['kategori_voucher'] ?? null,
-                'no_referensi'             => $data['no_referensi'] ?? null,
+                'no_referensi'             => $this->generateKodeVoucher($data['kategori_voucher'], $data['tanggal_pembayaran']),
                 'keterangan'               => $data['keterangan'] ?? null,
                 'dibuat_dari_rekonsiliasi' => $data['dibuat_dari_rekonsiliasi'] ?? false,
                 'created_by'               => auth()->id(),
@@ -143,6 +143,34 @@ class PembayaranApService
 
             return $pembayaran->load(['items.tagihanAp.vendorAp', 'createdBy']);
         });
+    }
+
+    /**
+     * Suffix diacak lalu kandidatnya dicek ke DB agar beberapa voucher di tanggal
+     * & kategori yang sama tidak bentrok; unique index uniq_pembayaran_ap_no_referensi
+     * tetap jadi pengaman terakhir kalau ada race.
+     */
+    private function generateKodeVoucher(string $kategoriVoucher, string $tanggalPembayaran): string
+    {
+        for ($attempt = 0; $attempt < 10; $attempt++) {
+            $kandidat = $this->buildKodeVoucherCandidate($kategoriVoucher, $tanggalPembayaran);
+
+            if (!PembayaranAp::where('no_referensi', $kandidat)->exists()) {
+                return $kandidat;
+            }
+        }
+
+        return $kandidat;
+    }
+
+    /** Format: VBK-{BB|NBB}-{DDMMYYYY}-{XXX}, XXX = 000-999 acak. */
+    private function buildKodeVoucherCandidate(string $kategoriVoucher, string $tanggalPembayaran): string
+    {
+        $prefix  = 'VBK-' . $kategoriVoucher;
+        $tanggal = \Carbon\Carbon::parse($tanggalPembayaran)->format('dmY');
+        $suffix  = str_pad((string) random_int(0, 999), 3, '0', STR_PAD_LEFT);
+
+        return "{$prefix}-{$tanggal}-{$suffix}";
     }
 
     /**
