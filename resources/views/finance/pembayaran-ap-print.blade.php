@@ -113,7 +113,10 @@
     .sig-title { font-weight: bold; font-size: {{ $fsSigTitle }}; color: #555; text-transform: uppercase; margin-bottom: 12px; }
     .sig-name { font-weight: bold; font-size: {{ $fsSigName }}; text-decoration: underline; margin-bottom: 4px; }
     .sig-role { font-size: {{ $fsSigRole }}; color: #666; }
-    .sig-placeholder { height: 110px; }
+    .sig-placeholder { height: 160px; }
+    .sig-barcode-wrap { min-height: 160px; margin-bottom: 10px; }
+    .sig-barcode { display: inline-block; max-width: 100%; }
+    .sig-barcode img { width: 150px; height: 150px; }
 
     .footer { text-align: center; margin-top: 40px; padding-top: 15px; border-top: 1px solid #ddd; font-size: {{ $fsFooter }}; color: #888; }
   </style>
@@ -293,8 +296,14 @@
     <tr>
       <td class="sig-col">
         <div class="sig-title">Dibuat Oleh</div>
+        @if(!empty($signatureData['prepared_qr_src']))
+        <div class="sig-barcode-wrap">
+          <div class="sig-barcode"><img src="{{ $signatureData['prepared_qr_src'] }}" alt="QR verifikasi pembuat voucher"></div>
+        </div>
+        @else
         <div class="sig-placeholder"></div>
-        <div class="sig-name">{{ $pembayaran->createdBy?->karyawan?->nama_karyawan ?? $pembayaran->createdBy?->username ?? '___________________' }}</div>
+        @endif
+        <div class="sig-name">{{ $signatureData['prepared_by_name'] ?? '___________________' }}</div>
         <div class="sig-role">Staff AP</div>
       </td>
       <td class="sig-col">

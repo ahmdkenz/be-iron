@@ -10,6 +10,7 @@ use App\Domain\Finance\TagihanAp\Services\TagihanApService;
 use App\Http\Controllers\Controller;
 use App\Models\PembayaranAp;
 use App\Support\Helpers\RoleHelper;
+use App\Support\Helpers\SignatureBarcodeHelper;
 use App\Support\Helpers\Terbilang;
 use App\Support\Traits\ApiResponse;
 use Barryvdh\DomPDF\Facade\Pdf;
@@ -166,7 +167,25 @@ class PembayaranApController extends Controller
         $noVoucher    = $pembayaran->no_referensi ?: ('VP-' . str_pad((string) $pembayaran->id, 6, '0', STR_PAD_LEFT));
         $terbilang    = Terbilang::convert((int) $pembayaran->jumlah_pembayaran);
 
-        $viewData = compact('pembayaran', 'vendorGroups', 'noVoucher', 'terbilang');
+        $preparedByUser = $pembayaran->createdBy;
+        $preparedByName = $preparedByUser?->karyawan?->nama_karyawan
+            ?? $preparedByUser?->username
+            ?? '___________________';
+
+        $preparedPayload = SignatureBarcodeHelper::buildPembayaranApPreparedPayload(
+            $pembayaran,
+            $preparedByName,
+            $noVoucher,
+            $pembayaran->items->count(),
+            $vendorGroups->count(),
+        );
+
+        $signatureData = [
+            'prepared_by_name' => $preparedByName,
+            'prepared_qr_src'  => SignatureBarcodeHelper::generateDataUri($preparedPayload, 250),
+        ];
+
+        $viewData = compact('pembayaran', 'vendorGroups', 'noVoucher', 'terbilang', 'signatureData');
         $filename = 'Payment-Voucher-AP-' . str_replace(['/', '\\', ' '], '-', $noVoucher) . '.pdf';
 
         if ($request->has('html')) {
