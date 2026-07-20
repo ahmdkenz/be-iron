@@ -93,6 +93,12 @@ class TagihanAp extends Model
         return $this->hasMany(TagihanApItem::class, 'tagihan_ap_id');
     }
 
+    public function openingBalanceApDetails()
+    {
+        return $this->hasMany(OpeningBalanceApDetail::class, 'tagihan_ap_id')
+                    ->orderBy('tanggal_invoice_asal');
+    }
+
     public function pembayarans()
     {
         return $this->hasMany(PembayaranAp::class, 'tagihan_ap_id');

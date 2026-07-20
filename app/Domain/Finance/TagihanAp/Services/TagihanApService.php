@@ -16,9 +16,9 @@ class TagihanApService
 {
     public function __construct(private readonly TagihanApRepository $repository) {}
 
-    public function paginate(array $filters = []): LengthAwarePaginator
+    public function paginate(array $filters = [], ?array $with = null): LengthAwarePaginator
     {
-        return $this->repository->paginate($filters);
+        return $this->repository->paginate($filters, with: $with);
     }
 
     public function getSummary(array $filters = []): array
@@ -57,6 +57,215 @@ class TagihanApService
         $now  = \Carbon\Carbon::now();
 
         return 'AP-' . $date->format('dmY') . $now->format('Hisv');
+    }
+
+    public function generateOpeningBalanceNoTagihan(string $tanggal): string
+    {
+        $date = \Carbon\Carbon::parse($tanggal);
+        $now  = \Carbon\Carbon::now();
+
+        return 'OB-AP-' . $date->format('dmY') . $now->format('Hisv');
+    }
+
+    public function createOpeningBalance(array $data): TagihanAp
+    {
+        $user = auth()->user()->loadMissing('karyawan');
+        abort_if(!$user?->karyawan?->id, 422, 'User tidak terhubung dengan data karyawan');
+        abort_if(!$user->karyawan->perusahaan_id, 422, 'Karyawan tidak terhubung dengan entitas perusahaan');
+
+        $vendor = VendorAp::findOrFail($data['vendor_ap_id']);
+
+        return DB::transaction(function () use ($data, $vendor, $user) {
+            $saldoAwal = !empty($data['details'])
+                ? collect($data['details'])->sum(fn($d) => (float) ($d['sisa_tagihan_asal'] ?? 0))
+                : (float) ($data['saldo_awal'] ?? 0);
+
+            $tagihan = $this->repository->create([
+                'no_tagihan'          => $data['no_tagihan'],
+                'tanggal_tagihan'     => $data['tanggal'],
+                'tanggal_jatuh_tempo' => $data['tanggal_jatuh_tempo'] ?? null,
+                'vendor_ap_id'        => $vendor->id,
+                'perusahaan_id'       => $user->karyawan->perusahaan_id,
+                'karyawan_id'         => $user->karyawan->id,
+                'subtotal'            => $saldoAwal,
+                'total_tagihan'       => $saldoAwal,
+                'total_pembayaran'    => 0,
+                'sisa_tagihan'        => $saldoAwal,
+                'status'              => 'DRAFT',
+                'approval_status'     => 'PENDING',
+                'submitted_at'        => now(),
+                'submitted_by'        => auth()->id(),
+                'is_opening_balance'  => true,
+                'keterangan'          => $data['keterangan'] ?? 'Opening Balance AP',
+                'prepared_token'      => Str::uuid()->toString(),
+                'created_by'          => auth()->id(),
+            ]);
+
+            $this->createApprovalLog($tagihan, 'SUBMITTED');
+
+            if (!empty($data['details'])) {
+                $this->syncOpeningBalanceDetails($tagihan, $data['details']);
+            }
+
+            return $this->findOrFail($tagihan->id);
+        });
+    }
+
+    public function updateOpeningBalance(TagihanAp $tagihan, array $data): TagihanAp
+    {
+        $this->ensureOpeningBalance($tagihan);
+
+        abort_if(
+            !($tagihan->status === 'DRAFT' && $tagihan->approval_status === 'REJECTED'),
+            422,
+            'Opening balance hanya dapat diedit setelah ditolak'
+        );
+
+        $vendor = VendorAp::findOrFail($data['vendor_ap_id']);
+
+        $saldoAwal = !empty($data['details'])
+            ? collect($data['details'])->sum(fn($d) => (float) ($d['sisa_tagihan_asal'] ?? 0))
+            : (float) ($data['saldo_awal'] ?? 0);
+
+        $tagihan->update([
+            'no_tagihan'          => $data['no_tagihan'],
+            'tanggal_tagihan'     => $data['tanggal'],
+            'tanggal_jatuh_tempo' => $data['tanggal_jatuh_tempo'] ?? null,
+            'vendor_ap_id'        => $vendor->id,
+            'subtotal'            => $saldoAwal,
+            'total_tagihan'       => $saldoAwal,
+            'sisa_tagihan'        => $saldoAwal - $tagihan->total_pembayaran,
+            'keterangan'          => $data['keterangan'] ?? 'Opening Balance AP',
+            'updated_by'          => auth()->id(),
+        ]);
+
+        $tagihan->openingBalanceApDetails()->delete();
+        if (!empty($data['details'])) {
+            $this->syncOpeningBalanceDetails($tagihan, $data['details']);
+        }
+
+        return $this->findOrFail($tagihan->id);
+    }
+
+    private function syncOpeningBalanceDetails(TagihanAp $tagihan, array $details): void
+    {
+        foreach ($details as $detail) {
+            $items = $detail['items'] ?? [];
+
+            $jumlahTagihan = !empty($items)
+                ? collect($items)->sum('subtotal')
+                : ($detail['jumlah_tagihan_asal'] ?? 0);
+
+            $obDetail = $tagihan->openingBalanceApDetails()->create([
+                'no_invoice_asal'      => $detail['no_invoice_asal'],
+                'tanggal_invoice_asal' => $detail['tanggal_invoice_asal'],
+                'deskripsi'            => $detail['deskripsi'],
+                'jumlah_tagihan_asal'  => $jumlahTagihan,
+                'sisa_tagihan_asal'    => $detail['sisa_tagihan_asal'],
+                'keterangan'           => $detail['keterangan'] ?? null,
+                'created_by'           => auth()->id(),
+            ]);
+
+            foreach ($items as $item) {
+                $obDetail->items()->create([
+                    'barang_id'    => $item['barang_id'] ?? null,
+                    'kode_barang'  => $item['kode_barang'] ?? null,
+                    'nama_barang'  => $item['nama_barang'],
+                    'qty'          => $item['qty'],
+                    'satuan'       => $item['satuan'] ?? null,
+                    'harga_satuan' => $item['harga_satuan'],
+                    'subtotal'     => $item['subtotal'],
+                    'keterangan'   => $item['keterangan'] ?? null,
+                ]);
+            }
+        }
+    }
+
+    public function resubmitOpeningBalance(TagihanAp $tagihan, ?string $note = null): TagihanAp
+    {
+        $this->ensureOpeningBalance($tagihan);
+
+        abort_if(
+            !($tagihan->status === 'DRAFT' && $tagihan->approval_status === 'REJECTED'),
+            422,
+            'Opening balance hanya dapat diajukan ulang jika status approval ditolak'
+        );
+
+        return DB::transaction(function () use ($tagihan, $note) {
+            $tagihan->update([
+                'approval_status' => 'PENDING',
+                'submitted_at'    => now(),
+                'submitted_by'    => auth()->id(),
+                'approved_at'     => null,
+                'approved_by'     => null,
+                'rejected_at'     => null,
+                'rejected_by'     => null,
+                'updated_by'      => auth()->id(),
+            ]);
+
+            $this->createApprovalLog($tagihan, 'RESUBMITTED', $note);
+
+            return $this->findOrFail($tagihan->id);
+        });
+    }
+
+    public function approveOpeningBalance(TagihanAp $tagihan, ?string $note = null): TagihanAp
+    {
+        $this->ensurePendingOpeningBalance($tagihan);
+
+        return DB::transaction(function () use ($tagihan, $note) {
+            $tagihan->update([
+                'status'          => 'DITERIMA',
+                'approval_status' => 'APPROVED',
+                'approved_at'     => now(),
+                'approved_by'     => auth()->id(),
+                'rejected_at'     => null,
+                'rejected_by'     => null,
+                'approved_token'  => Str::uuid()->toString(),
+                'updated_by'      => auth()->id(),
+            ]);
+
+            $this->createApprovalLog($tagihan, 'APPROVED', $note);
+
+            return $this->findOrFail($tagihan->id);
+        });
+    }
+
+    public function rejectOpeningBalance(TagihanAp $tagihan, string $note): TagihanAp
+    {
+        $this->ensurePendingOpeningBalance($tagihan);
+
+        return DB::transaction(function () use ($tagihan, $note) {
+            $tagihan->update([
+                'status'          => 'DRAFT',
+                'approval_status' => 'REJECTED',
+                'approved_at'     => null,
+                'approved_by'     => null,
+                'rejected_at'     => now(),
+                'rejected_by'     => auth()->id(),
+                'updated_by'      => auth()->id(),
+            ]);
+
+            $this->createApprovalLog($tagihan, 'REJECTED', $note);
+
+            return $this->findOrFail($tagihan->id);
+        });
+    }
+
+    private function ensureOpeningBalance(TagihanAp $tagihan): void
+    {
+        abort_if(!$tagihan->is_opening_balance, 422, 'Data yang dipilih bukan opening balance');
+    }
+
+    private function ensurePendingOpeningBalance(TagihanAp $tagihan): void
+    {
+        $this->ensureOpeningBalance($tagihan);
+
+        abort_if(
+            !($tagihan->status === 'DRAFT' && $tagihan->approval_status === 'PENDING'),
+            422,
+            'Opening balance tidak berada pada status menunggu persetujuan'
+        );
     }
 
     public function create(TagihanApDTO $dto): TagihanAp

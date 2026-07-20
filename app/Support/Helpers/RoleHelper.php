@@ -207,6 +207,26 @@ class RoleHelper
         return self::hasAnyRole($user, [RoleEnum::ADMIN, RoleEnum::AP]);
     }
 
+    public static function canViewOpeningBalanceAp(?User $user): bool
+    {
+        return self::hasAnyRole($user, [
+            RoleEnum::ADMIN,
+            RoleEnum::MANAGER,
+            RoleEnum::SUPERVISOR,
+            RoleEnum::AP,
+        ]);
+    }
+
+    public static function canOperateOpeningBalanceAp(?User $user): bool
+    {
+        return self::hasAnyRole($user, [RoleEnum::ADMIN, RoleEnum::AP]);
+    }
+
+    public static function canApproveOpeningBalanceAp(?User $user): bool
+    {
+        return self::hasAnyRole($user, [RoleEnum::MANAGER, RoleEnum::SUPERVISOR]);
+    }
+
     // Staging import SHZ360 — ADMIN/MANAGER/SUPERVISOR punya akses global,
     // dan role AP diberi akses penuh yang sama (lihat, petakan vendor, konversi, dll).
     public static function canViewApShz360Import(?User $user): bool

@@ -69,6 +69,70 @@ class TagihanApController extends Controller
         ]);
     }
 
+    public function outstanding(Request $request): JsonResponse
+    {
+        $this->authorizeOperate();
+
+        $validated = $request->validate([
+            'vendor_ap_id' => ['required', 'integer', 'exists:tb_vendor_ap,id'],
+            'tanggal'      => ['nullable', 'date'],
+        ]);
+
+        $query = TagihanAp::with('items.barang')
+            ->where('vendor_ap_id', $validated['vendor_ap_id'])
+            ->whereIn('status', ['DITERIMA', 'SEBAGIAN'])
+            ->where('is_opening_balance', false);
+
+        if (!empty($validated['tanggal'])) {
+            $query->where('tanggal_tagihan', '<', $validated['tanggal']);
+        }
+
+        $tagihanList = $query->orderBy('tanggal_tagihan')->orderBy('id')->get();
+
+        // Fallback: item lama bisa punya barang_id kosong tapi kode_barang valid.
+        // Cari master barang berdasarkan kode_barang agar tetap tersambung.
+        $kodeBarangTanpaId = $tagihanList->flatMap(fn($t) => $t->items)
+            ->whereNull('barang_id')
+            ->pluck('kode_barang')
+            ->filter()
+            ->unique()
+            ->values();
+
+        $barangByKode = $kodeBarangTanpaId->isNotEmpty()
+            ? \App\Models\Barang::whereIn('kode_barang', $kodeBarangTanpaId)->get()->keyBy('kode_barang')
+            : collect();
+
+        $tagihanList = $tagihanList->map(fn($t) => [
+                'id'                => $t->id,
+                'no_tagihan'        => $t->no_tagihan,
+                'no_invoice_vendor' => $t->no_invoice_vendor,
+                'tanggal_tagihan'   => $t->tanggal_tagihan?->toDateString(),
+                'subtotal'          => (float) $t->subtotal,
+                'total_tagihan'     => (float) $t->total_tagihan,
+                'sisa_tagihan'      => max(0.0, (float) $t->sisa_tagihan),
+                'status'            => $t->status,
+                'keterangan'        => $t->keterangan,
+                'items'             => $t->items->map(function ($item) use ($barangByKode) {
+                    $fallbackBarang = !$item->barang_id && $item->kode_barang
+                        ? $barangByKode->get($item->kode_barang)
+                        : null;
+
+                    return [
+                        'barang_id'    => $item->barang_id ?? $fallbackBarang?->id,
+                        'kode_barang'  => $item->kode_barang ?? $item->barang?->kode_barang ?? '',
+                        'nama_barang'  => $item->nama_barang,
+                        'qty'          => (float) $item->qty,
+                        'satuan'       => $item->satuan ?? 'pcs',
+                        'harga_satuan' => (float) $item->harga_satuan,
+                        'subtotal'     => (float) $item->subtotal,
+                        'keterangan'   => $item->keterangan ?? '',
+                    ];
+                })->values()->all(),
+            ]);
+
+        return $this->successResponse($tagihanList);
+    }
+
     public function store(StoreTagihanApRequest $request): JsonResponse
     {
         $this->authorizeOperate();

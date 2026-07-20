@@ -2,6 +2,7 @@
 
 use App\Domain\Finance\ApShz360Sync\Controllers\ApShz360ImportController;
 use App\Domain\Finance\Dashboard\Controllers\DashboardApController;
+use App\Domain\Finance\OpeningBalanceAp\Controllers\OpeningBalanceApController;
 use App\Domain\Finance\PembayaranAp\Controllers\PembayaranApController;
 use App\Domain\Finance\TagihanAp\Controllers\TagihanApController;
 use App\Domain\Finance\VendorAp\Controllers\VendorApController;
@@ -25,6 +26,7 @@ Route::prefix('tagihan')->group(function () {
     Route::get('/', [TagihanApController::class, 'index']);
     Route::get('/summary', [TagihanApController::class, 'summary']);
     Route::get('/preview-no', [TagihanApController::class, 'previewNo']);
+    Route::get('/outstanding', [TagihanApController::class, 'outstanding']);
     Route::post('/', [TagihanApController::class, 'store']);
     Route::delete('/bulk', [TagihanApController::class, 'bulkDestroy']);
     Route::get('/{id}/pembayaran', [TagihanApController::class, 'pembayaran']);
@@ -42,6 +44,19 @@ Route::prefix('tagihan')->group(function () {
 Route::get('/pembayaran', [PembayaranApController::class, 'index']);
 Route::get('/pembayaran/cek-referensi', [PembayaranApController::class, 'cekReferensi']);
 Route::delete('/pembayaran/{pembayaran}', [PembayaranApController::class, 'destroy']);
+
+// ─── Opening Balance AP ───────────────────────────────────────────
+Route::prefix('opening-balance')->group(function () {
+    Route::get('/', [OpeningBalanceApController::class, 'index']);
+    Route::get('/summary', [OpeningBalanceApController::class, 'summary']);
+    Route::get('/preview-no', [OpeningBalanceApController::class, 'previewNo']);
+    Route::post('/', [OpeningBalanceApController::class, 'store']);
+    Route::put('/{id}', [OpeningBalanceApController::class, 'update']);
+    Route::get('/{id}/details', [OpeningBalanceApController::class, 'details']);
+    Route::patch('/{id}/approve', [OpeningBalanceApController::class, 'approve'])->middleware('role:MANAGER|SUPERVISOR');
+    Route::patch('/{id}/reject', [OpeningBalanceApController::class, 'reject'])->middleware('role:MANAGER|SUPERVISOR');
+    Route::patch('/{id}/resubmit', [OpeningBalanceApController::class, 'resubmit']);
+});
 
 // ─── Import SHZ360 (staging PO/Terima PO -> Tagihan AP) ──────────
 Route::prefix('shz360')->group(function () {

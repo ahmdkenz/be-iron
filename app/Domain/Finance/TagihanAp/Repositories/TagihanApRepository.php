@@ -35,8 +35,10 @@ class TagihanApRepository
         return TagihanAp::with([
             'vendorAp',
             'vendorAp.karyawanAp',
+            'perusahaan',
             'karyawan.perusahaan',
             'items.barang',
+            'openingBalanceApDetails.items.barang',
             'pembayarans.createdBy',
             'createdBy',
             'submittedBy',
