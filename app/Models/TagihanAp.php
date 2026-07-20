@@ -99,9 +99,20 @@ class TagihanAp extends Model
                     ->orderBy('tanggal_invoice_asal');
     }
 
+    /**
+     * Deprecated: hanya mencakup pembayaran lama (single-tagihan) yang masih
+     * mengisi header.tagihan_ap_id. Voucher AP baru (multi-vendor) TIDAK
+     * mengisi kolom ini lagi — gunakan pembayaranApItems() sebagai sumber
+     * kebenaran untuk hitung saldo/riwayat.
+     */
     public function pembayarans()
     {
         return $this->hasMany(PembayaranAp::class, 'tagihan_ap_id');
+    }
+
+    public function pembayaranApItems()
+    {
+        return $this->hasMany(PembayaranApItem::class, 'tagihan_ap_id');
     }
 
     public function approvalLogs()

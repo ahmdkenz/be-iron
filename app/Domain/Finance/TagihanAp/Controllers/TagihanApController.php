@@ -74,14 +74,31 @@ class TagihanApController extends Controller
         $this->authorizeOperate();
 
         $validated = $request->validate([
-            'vendor_ap_id' => ['required', 'integer', 'exists:tb_vendor_ap,id'],
+            'vendor_ap_id' => ['nullable', 'integer', 'exists:tb_vendor_ap,id'],
+            'search'       => ['nullable', 'string', 'max:100'],
             'tanggal'      => ['nullable', 'date'],
         ]);
 
-        $query = TagihanAp::with('items.barang')
-            ->where('vendor_ap_id', $validated['vendor_ap_id'])
+        $user    = auth()->user();
+        $filters = [];
+        ApFilterScope::apply($filters, $user);
+
+        $query = TagihanAp::with(['items.barang', 'vendorAp'])
             ->whereIn('status', ['DITERIMA', 'SEBAGIAN'])
-            ->where('is_opening_balance', false);
+            ->where('is_opening_balance', false)
+            ->when($validated['vendor_ap_id'] ?? null, fn($q, $v) => $q->where('vendor_ap_id', $v))
+            ->when($filters['perusahaan_id'] ?? null, fn($q, $v) => $q->where('perusahaan_id', $v))
+            ->when($filters['pic_ap_karyawan_id'] ?? null, fn($q, $v) =>
+                $q->whereHas('vendorAp', fn($q) => $q->where('karyawan_ap_id', $v))
+            )
+            ->when($validated['search'] ?? null, fn($q, $v) => $q->where(fn($q) => $q
+                ->where('no_tagihan', 'like', "%{$v}%")
+                ->orWhere('no_invoice_vendor', 'like', "%{$v}%")
+                ->orWhereHas('vendorAp', fn($q) => $q
+                    ->where('nama_vendor', 'like', "%{$v}%")
+                    ->orWhere('kode_vendor', 'like', "%{$v}%")
+                )
+            ));
 
         if (!empty($validated['tanggal'])) {
             $query->where('tanggal_tagihan', '<', $validated['tanggal']);
@@ -112,6 +129,9 @@ class TagihanApController extends Controller
                 'sisa_tagihan'      => max(0.0, (float) $t->sisa_tagihan),
                 'status'            => $t->status,
                 'keterangan'        => $t->keterangan,
+                'vendor_ap_id'      => $t->vendor_ap_id,
+                'vendor'            => $t->vendorAp?->nama_vendor,
+                'kode_vendor'       => $t->vendorAp?->kode_vendor,
                 'items'             => $t->items->map(function ($item) use ($barangByKode) {
                     $fallbackBarang = !$item->barang_id && $item->kode_barang
                         ? $barangByKode->get($item->kode_barang)
@@ -296,19 +316,19 @@ class TagihanApController extends Controller
         $this->authorizeView();
 
         $tagihan = TagihanAp::findOrFail($id);
-        $rows    = $tagihan->pembayarans()->with('createdBy')->get();
+        $rows    = $tagihan->pembayaranApItems()->with('pembayaranAp.createdBy')->get();
 
-        return $this->successResponse($rows->map(fn($p) => [
-            'id'                 => $p->id,
-            'tanggal_pembayaran' => $p->tanggal_pembayaran?->format('d-m-Y'),
-            'jumlah_pembayaran'  => (float) $p->jumlah_pembayaran,
-            'metode_pembayaran'  => $p->metode_pembayaran,
-            'no_referensi'       => $p->no_referensi,
-            'keterangan'         => $p->keterangan,
-            'created_by_name'    => $p->createdBy?->username,
-            'created_at'         => $p->created_at?->toIso8601String(),
-            'bukti_file_name'    => $p->bukti_file_name,
-            'bukti_mime_type'    => $p->bukti_mime_type,
+        return $this->successResponse($rows->map(fn($item) => [
+            'id'                 => $item->pembayaranAp->id,
+            'tanggal_pembayaran' => $item->pembayaranAp->tanggal_pembayaran?->format('d-m-Y'),
+            'jumlah_pembayaran'  => (float) $item->jumlah_dialokasikan,
+            'metode_pembayaran'  => $item->pembayaranAp->metode_pembayaran,
+            'no_referensi'       => $item->pembayaranAp->no_referensi,
+            'keterangan'         => $item->pembayaranAp->keterangan,
+            'created_by_name'    => $item->pembayaranAp->createdBy?->username,
+            'created_at'         => $item->pembayaranAp->created_at?->toIso8601String(),
+            'bukti_file_name'    => $item->pembayaranAp->bukti_file_name,
+            'bukti_mime_type'    => $item->pembayaranAp->bukti_mime_type,
         ]));
     }
 

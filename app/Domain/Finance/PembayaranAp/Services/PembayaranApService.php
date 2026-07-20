@@ -7,6 +7,7 @@ use App\Models\PembayaranAp;
 use App\Models\PembayaranApLog;
 use App\Models\TagihanAp;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -15,57 +16,151 @@ class PembayaranApService
 {
     public function __construct(private readonly TagihanApService $tagihanApService) {}
 
-    public function create(TagihanAp $tagihan, array $data, ?UploadedFile $buktiBayar = null): PembayaranAp
+    /**
+     * Satu-satunya jalur pembuatan Pembayaran AP. Membuat 1 voucher (header
+     * tb_pembayaran_ap) yang bisa mencakup banyak Tagihan AP dari banyak
+     * vendor sekaligus, asal semua tagihan berasal dari perusahaan_id yang
+     * sama (voucher = satu transaksi kas/bank keluar dari satu entitas).
+     *
+     * $data['alokasi'] = [['tagihan_ap_id' => int, 'jumlah' => float], ...]
+     */
+    public function createVoucher(array $data, ?UploadedFile $buktiBayar = null): PembayaranAp
     {
+        $alokasi = $data['alokasi'] ?? [];
+        abort_if(empty($alokasi), 422, 'Voucher harus mencakup minimal 1 tagihan');
+
+        $tagihanIds = collect($alokasi)->pluck('tagihan_ap_id')->map(fn($v) => (int) $v);
         abort_if(
-            $tagihan->approval_status !== 'APPROVED',
+            $tagihanIds->count() !== $tagihanIds->unique()->count(),
             422,
-            'Tagihan belum disetujui, pembayaran belum dapat dicatat'
+            'Tagihan duplikat tidak boleh muncul lebih dari sekali dalam satu voucher'
         );
 
-        abort_if(
-            $tagihan->status === 'LUNAS',
-            422,
-            'Tagihan ini sudah berstatus LUNAS, tidak dapat menambah pembayaran'
-        );
+        return DB::transaction(function () use ($data, $alokasi, $tagihanIds, $buktiBayar) {
+            // Lock dalam urutan id ascending supaya voucher paralel yang menyentuh
+            // tagihan yang sama tidak saling deadlock.
+            $tagihans = TagihanAp::whereIn('id', $tagihanIds->unique()->sort()->values())
+                ->lockForUpdate()
+                ->get()
+                ->keyBy('id');
 
-        $pembayaran = PembayaranAp::create([
-            'tagihan_ap_id'      => $tagihan->id,
-            'tanggal_pembayaran' => $data['tanggal_pembayaran'],
-            'jumlah_pembayaran'  => $data['jumlah_pembayaran'],
-            'metode_pembayaran'  => $data['metode_pembayaran'],
-            'no_referensi'       => $data['no_referensi'] ?? null,
-            'keterangan'         => $data['keterangan'] ?? null,
-            'dibuat_dari_rekonsiliasi' => $data['dibuat_dari_rekonsiliasi'] ?? false,
-            'created_by'         => auth()->id(),
-        ]);
+            abort_if(
+                $tagihans->count() !== $tagihanIds->unique()->count(),
+                404,
+                'Salah satu tagihan tidak ditemukan'
+            );
 
-        PembayaranApLog::create([
-            'pembayaran_ap_id' => $pembayaran->id,
-            'aksi'             => 'DIBUAT',
-            'actor_id'         => auth()->id(),
-            'data_sesudah'     => $pembayaran->toArray(),
-        ]);
+            $perusahaanIds = $tagihans->pluck('perusahaan_id')->unique();
+            abort_if(
+                $perusahaanIds->count() > 1,
+                422,
+                'Tagihan dalam satu voucher harus berasal dari entitas perusahaan yang sama'
+            );
 
-        $this->tagihanApService->recalculate($tagihan->fresh());
+            foreach ($alokasi as $row) {
+                $tagihan = $tagihans[(int) $row['tagihan_ap_id']];
+                $jumlah  = (float) $row['jumlah'];
 
-        if ($buktiBayar) {
-            try {
-                $this->storeBukti($pembayaran, $buktiBayar, $tagihan->loadMissing('vendorAp'));
-            } catch (\Throwable $e) {
-                Log::error('PembayaranApService: gagal menyimpan bukti bayar', [
-                    'pembayaran_id' => $pembayaran->id,
-                    'error'         => $e->getMessage(),
+                abort_if(
+                    $tagihan->approval_status !== 'APPROVED',
+                    422,
+                    "Tagihan {$tagihan->no_tagihan} belum disetujui, pembayaran belum dapat dicatat"
+                );
+                abort_if(
+                    $tagihan->status === 'LUNAS',
+                    422,
+                    "Tagihan {$tagihan->no_tagihan} sudah berstatus LUNAS, tidak dapat menambah pembayaran"
+                );
+                abort_if(
+                    $jumlah <= 0,
+                    422,
+                    "Jumlah pembayaran untuk tagihan {$tagihan->no_tagihan} harus lebih dari 0"
+                );
+                abort_if(
+                    $jumlah > (float) $tagihan->sisa_tagihan,
+                    422,
+                    "Jumlah pembayaran melebihi sisa tagihan {$tagihan->no_tagihan}"
+                );
+            }
+
+            // Total header selalu diturunkan dari sum alokasi — bukan input klien
+            // mentah — supaya tidak ada kelas bug "total tidak sama dengan detail".
+            $totalVoucher = collect($alokasi)->sum(fn($row) => (float) $row['jumlah']);
+
+            $pembayaran = PembayaranAp::create([
+                'tagihan_ap_id'            => null,
+                'tanggal_pembayaran'       => $data['tanggal_pembayaran'],
+                'jumlah_pembayaran'        => $totalVoucher,
+                'metode_pembayaran'        => $data['metode_pembayaran'],
+                'no_referensi'             => $data['no_referensi'] ?? null,
+                'keterangan'               => $data['keterangan'] ?? null,
+                'dibuat_dari_rekonsiliasi' => $data['dibuat_dari_rekonsiliasi'] ?? false,
+                'created_by'               => auth()->id(),
+            ]);
+
+            foreach ($alokasi as $row) {
+                $tagihan     = $tagihans[(int) $row['tagihan_ap_id']];
+                $jumlah      = (float) $row['jumlah'];
+                $sisaSebelum = (float) $tagihan->sisa_tagihan;
+                $sisaSesudah = max(0.0, $sisaSebelum - $jumlah);
+
+                $pembayaran->items()->create([
+                    'tagihan_ap_id'       => $tagihan->id,
+                    'vendor_ap_id'        => $tagihan->vendor_ap_id,
+                    'jumlah_dialokasikan' => $jumlah,
+                    'sisa_sebelum'        => $sisaSebelum,
+                    'sisa_sesudah'        => $sisaSesudah,
+                ]);
+
+                PembayaranApLog::create([
+                    'pembayaran_ap_id' => $pembayaran->id,
+                    'aksi'             => 'DIBUAT',
+                    'actor_id'         => auth()->id(),
+                    'keterangan'       => "Alokasi ke tagihan {$tagihan->no_tagihan} sebesar " . number_format($jumlah, 2, '.', ''),
+                    'data_sesudah'     => [
+                        'tagihan_ap_id' => $tagihan->id,
+                        'no_tagihan'    => $tagihan->no_tagihan,
+                        'jumlah'        => $jumlah,
+                    ],
                 ]);
             }
-        }
 
-        return $pembayaran->load('createdBy');
+            foreach ($tagihans as $tagihan) {
+                $this->tagihanApService->recalculate($tagihan);
+            }
+
+            if ($buktiBayar) {
+                try {
+                    $this->storeBukti($pembayaran, $buktiBayar);
+                } catch (\Throwable $e) {
+                    Log::error('PembayaranApService: gagal menyimpan bukti bayar', [
+                        'pembayaran_id' => $pembayaran->id,
+                        'error'         => $e->getMessage(),
+                    ]);
+                }
+            }
+
+            return $pembayaran->load(['items.tagihanAp.vendorAp', 'createdBy']);
+        });
     }
 
-    private function storeBukti(PembayaranAp $pembayaran, UploadedFile $file, TagihanAp $tagihan): void
+    /**
+     * Wrapper untuk endpoint lama (POST /tagihan/{id}/pembayaran, 1 tagihan) —
+     * signature & response dipertahankan agar TagihanApPembayaranForm.vue tidak
+     * perlu diubah. Internal-nya delegasi penuh ke createVoucher() dengan 1 item.
+     */
+    public function create(TagihanAp $tagihan, array $data, ?UploadedFile $buktiBayar = null): PembayaranAp
     {
-        $path = $this->buildBuktiPath($pembayaran, $file, $tagihan);
+        return $this->createVoucher(array_merge($data, [
+            'alokasi' => [
+                ['tagihan_ap_id' => $tagihan->id, 'jumlah' => $data['jumlah_pembayaran']],
+            ],
+        ]), $buktiBayar);
+    }
+
+    private function storeBukti(PembayaranAp $pembayaran, UploadedFile $file): void
+    {
+        $path = $this->buildBuktiPath($pembayaran, $file);
 
         Storage::disk('local')->put($path, file_get_contents($file->getRealPath()));
 
@@ -79,23 +174,18 @@ class PembayaranApService
         ]);
     }
 
-    private function buildBuktiPath(PembayaranAp $pembayaran, UploadedFile $file, TagihanAp $tagihan): string
+    private function buildBuktiPath(PembayaranAp $pembayaran, UploadedFile $file): string
     {
-        $vendorSegment = $this->sanitizePathSegment(
-            $tagihan->vendorAp
-                ? trim("{$tagihan->vendorAp->kode_vendor} - {$tagihan->vendorAp->nama_vendor}", ' -')
-                : null,
-            "Vendor {$tagihan->vendor_ap_id}"
-        );
-
-        $periode = optional($tagihan->tanggal_tagihan)->format('Y/m') ?? now()->format('Y/m');
-
-        $tagihanSegment = $this->sanitizePathSegment($tagihan->no_tagihan, "tagihan-{$tagihan->id}");
+        $periode    = optional($pembayaran->tanggal_pembayaran)->format('Y/m') ?? now()->format('Y/m');
+        $refSegment = $this->sanitizePathSegment($pembayaran->no_referensi, "voucher-{$pembayaran->id}");
 
         $ext      = $file->getClientOriginalExtension();
         $fileName = "pembayaran-{$pembayaran->id}-" . Str::uuid()->toString() . ($ext ? ".{$ext}" : '');
 
-        return "bukti-bayar-ap/{$vendorSegment}/{$periode}/{$tagihanSegment}/{$fileName}";
+        // Voucher bisa lintas vendor, jadi path tidak lagi dinamai per-vendor
+        // seperti sebelumnya — file lama tetap di path lamanya, ini cuma skema
+        // untuk upload baru.
+        return "bukti-bayar-ap/VOUCHER/{$periode}/{$refSegment}/{$fileName}";
     }
 
     private function sanitizePathSegment(?string $segment, string $fallback): string
@@ -109,26 +199,28 @@ class PembayaranApService
 
     public function delete(PembayaranAp $pembayaran): void
     {
-        $tagihanId = $pembayaran->tagihan_ap_id;
+        DB::transaction(function () use ($pembayaran) {
+            $tagihanIds = $pembayaran->items()->pluck('tagihan_ap_id')->unique()->sort()->values();
+            $tagihans   = TagihanAp::whereIn('id', $tagihanIds)->lockForUpdate()->get();
 
-        PembayaranApLog::create([
-            'pembayaran_ap_id' => $pembayaran->id,
-            'aksi'             => 'DIHAPUS',
-            'actor_id'         => auth()->id(),
-            'data_sebelum'     => $pembayaran->toArray(),
-        ]);
+            PembayaranApLog::create([
+                'pembayaran_ap_id' => $pembayaran->id,
+                'aksi'             => 'DIHAPUS',
+                'actor_id'         => auth()->id(),
+                'data_sebelum'     => $pembayaran->load('items')->toArray(),
+            ]);
 
-        $pembayaran->delete();
+            $pembayaran->delete();
 
-        $tagihan = TagihanAp::find($tagihanId);
-        if ($tagihan) {
-            $this->tagihanApService->recalculate($tagihan);
-        }
+            foreach ($tagihans as $tagihan) {
+                $this->tagihanApService->recalculate($tagihan);
+            }
+        });
     }
 
     public function cekDuplikatReferensi(string $noRef): ?array
     {
-        $existing = PembayaranAp::with(['tagihanAp.karyawan', 'tagihanAp.vendorAp'])
+        $existing = PembayaranAp::with(['items.tagihanAp.karyawan', 'items.tagihanAp.vendorAp'])
             ->where('no_referensi', $noRef)
             ->first();
 
@@ -136,11 +228,17 @@ class PembayaranApService
             return null;
         }
 
+        $items     = $existing->items;
+        $firstItem = $items->first();
+        $isSingle  = $items->count() === 1;
+
         return [
             'pembayaran_id'      => $existing->id,
-            'no_tagihan'         => $existing->tagihanAp?->no_tagihan,
-            'vendor'             => $existing->tagihanAp?->vendorAp?->nama_vendor,
-            'pic'                => $existing->tagihanAp?->karyawan?->nama_karyawan,
+            'tagihan_count'      => $items->count(),
+            'vendor_names'       => $items->pluck('tagihanAp.vendorAp.nama_vendor')->filter()->unique()->values()->all(),
+            'no_tagihan'         => $isSingle ? $firstItem?->tagihanAp?->no_tagihan : null,
+            'vendor'             => $isSingle ? $firstItem?->tagihanAp?->vendorAp?->nama_vendor : null,
+            'pic'                => $isSingle ? $firstItem?->tagihanAp?->karyawan?->nama_karyawan : null,
             'tanggal_pembayaran' => $existing->tanggal_pembayaran?->format('d-m-Y'),
             'jumlah_pembayaran'  => (float) $existing->jumlah_pembayaran,
             'metode_pembayaran'  => $existing->metode_pembayaran,

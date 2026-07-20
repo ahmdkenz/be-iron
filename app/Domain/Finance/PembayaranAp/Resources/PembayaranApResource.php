@@ -10,20 +10,42 @@ class PembayaranApResource extends JsonResource
 {
     public function toArray(Request $request): array
     {
+        $itemsArray = $this->whenLoaded('items') instanceof \Illuminate\Support\Collection
+            ? $this->items
+            : collect();
+        $firstTagihan = $itemsArray->first()?->tagihanAp;
+        $isSingle     = $itemsArray->count() === 1;
+
         return [
             'id'                       => $this->id,
-            'tagihan_ap_id'            => $this->tagihan_ap_id,
-            'no_tagihan'               => $this->whenLoaded('tagihanAp', fn() => $this->tagihanAp?->no_tagihan),
-            'tanggal_jatuh_tempo'      => $this->whenLoaded('tagihanAp', fn() => $this->tagihanAp?->tanggal_jatuh_tempo?->format('d-m-Y')),
-            'tagihan_status'           => $this->whenLoaded('tagihanAp', fn() => $this->tagihanAp?->status),
-            'total_tagihan'            => $this->whenLoaded('tagihanAp', fn() => (float) ($this->tagihanAp?->total_tagihan ?? 0)),
-            'total_pembayaran_tagihan' => $this->whenLoaded('tagihanAp', fn() => (float) ($this->tagihanAp?->total_pembayaran ?? 0)),
-            'sisa_tagihan'             => $this->whenLoaded('tagihanAp', fn() => (float) ($this->tagihanAp?->sisa_tagihan ?? 0)),
-            'vendor_ap_id'             => $this->whenLoaded('tagihanAp', fn() => $this->tagihanAp?->vendor_ap_id),
-            'kode_vendor'              => $this->whenLoaded('tagihanAp', fn() => $this->tagihanAp?->vendorAp?->kode_vendor),
-            'vendor'                   => $this->whenLoaded('tagihanAp', fn() => $this->tagihanAp?->vendorAp?->nama_vendor),
-            'perusahaan'               => $this->whenLoaded('tagihanAp', fn() => $this->tagihanAp?->perusahaan?->nama_singkatan_perusahaan),
-            'pic_ap'                   => $this->whenLoaded('tagihanAp', fn() => $this->tagihanAp?->karyawan?->nama_karyawan),
+            'jumlah_tagihan'           => $itemsArray->count(),
+            'items'                    => $this->whenLoaded('items', fn() => $itemsArray->map(fn($item) => [
+                'id'                  => $item->id,
+                'tagihan_ap_id'       => $item->tagihan_ap_id,
+                'no_tagihan'          => $item->tagihanAp?->no_tagihan,
+                'no_invoice_vendor'   => $item->tagihanAp?->no_invoice_vendor,
+                'vendor_ap_id'        => $item->vendor_ap_id,
+                'vendor'              => $item->tagihanAp?->vendorAp?->nama_vendor ?? $item->vendorAp?->nama_vendor,
+                'kode_vendor'         => $item->tagihanAp?->vendorAp?->kode_vendor ?? $item->vendorAp?->kode_vendor,
+                'jumlah_dialokasikan' => (float) $item->jumlah_dialokasikan,
+                'sisa_sebelum'        => (float) $item->sisa_sebelum,
+                'sisa_sesudah'        => (float) $item->sisa_sesudah,
+            ])->values()),
+            // Field tunggal di bawah dipertahankan (derivasi dari tagihan item
+            // pertama saat voucher cuma berisi 1 tagihan) supaya konsumen lama
+            // (mis. tombol "Catat Bayar" 1 tagihan) tidak perlu berubah.
+            'tagihan_ap_id'            => $isSingle ? $firstTagihan?->id : null,
+            'no_tagihan'               => $isSingle ? $firstTagihan?->no_tagihan : null,
+            'tanggal_jatuh_tempo'      => $isSingle ? $firstTagihan?->tanggal_jatuh_tempo?->format('d-m-Y') : null,
+            'tagihan_status'           => $isSingle ? $firstTagihan?->status : null,
+            'total_tagihan'            => $isSingle ? (float) ($firstTagihan?->total_tagihan ?? 0) : null,
+            'total_pembayaran_tagihan' => $isSingle ? (float) ($firstTagihan?->total_pembayaran ?? 0) : null,
+            'sisa_tagihan'             => $isSingle ? (float) ($firstTagihan?->sisa_tagihan ?? 0) : null,
+            'vendor_ap_id'             => $isSingle ? $firstTagihan?->vendor_ap_id : null,
+            'kode_vendor'              => $isSingle ? $firstTagihan?->vendorAp?->kode_vendor : null,
+            'vendor'                   => $isSingle ? $firstTagihan?->vendorAp?->nama_vendor : null,
+            'perusahaan'               => $isSingle ? $firstTagihan?->perusahaan?->nama_singkatan_perusahaan : null,
+            'pic_ap'                   => $isSingle ? $firstTagihan?->karyawan?->nama_karyawan : null,
             'tanggal_pembayaran'       => $this->tanggal_pembayaran?->format('d-m-Y'),
             'jumlah_pembayaran'        => (float) $this->jumlah_pembayaran,
             'metode_pembayaran'        => $this->metode_pembayaran,

@@ -391,7 +391,7 @@ class TagihanApService
 
     public function recalculate(TagihanAp $tagihan): void
     {
-        $totalPembayaran  = $tagihan->pembayarans()->sum('jumlah_pembayaran');
+        $totalPembayaran  = $tagihan->pembayaranApItems()->sum('jumlah_dialokasikan');
         $totalPenyesuaian = (float) $tagihan->total_penyesuaian;
         $totalTagihan     = (float) $tagihan->total_tagihan;
 
@@ -416,9 +416,10 @@ class TagihanApService
     }
 
     /**
-     * tb_tagihan_ap_item, tb_tagihan_ap_approval_logs, dan tb_pembayaran_ap
-     * semuanya CASCADE ke tagihan ini — tanpa guard di sini, hapus akan
-     * diam-diam menghapus permanen seluruh riwayat pembayaran.
+     * tb_tagihan_ap_item dan tb_tagihan_ap_approval_logs CASCADE ke tagihan ini;
+     * tb_pembayaran_ap_items sengaja RESTRICT (lihat migration
+     * create_tb_pembayaran_ap_items_table) — guard di bawah ini yang jadi lapis
+     * pertama supaya pesan errornya jelas, sebelum DB menolak lewat FK.
      *
      * tb_ap_import_tagihan_links juga CASCADE, tapi SENGAJA tidak diblokir di
      * sini: TagihanApObserver::deleted() akan memanggil
@@ -431,7 +432,7 @@ class TagihanApService
     public function delete(TagihanAp $tagihan): void
     {
         abort_if(
-            $tagihan->pembayarans()->exists(),
+            $tagihan->pembayaranApItems()->exists(),
             422,
             'Tagihan tidak dapat dihapus karena memiliki riwayat pembayaran'
         );

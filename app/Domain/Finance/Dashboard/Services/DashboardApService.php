@@ -2,7 +2,7 @@
 
 namespace App\Domain\Finance\Dashboard\Services;
 
-use App\Models\PembayaranAp;
+use App\Models\PembayaranApItem;
 use App\Models\TagihanAp;
 use App\Models\User;
 use App\Support\Helpers\ApFilterScope;
@@ -88,15 +88,19 @@ class DashboardApService
 
         $bulanLalu = $today->copy()->subMonthNoOverflow();
 
-        $bulanIni = (float) PembayaranAp::whereHas('tagihanAp', fn($q) => $this->applyScopeToTagihan($q, $filters))
-            ->whereMonth('tanggal_pembayaran', $today->month)
-            ->whereYear('tanggal_pembayaran', $today->year)
-            ->sum('jumlah_pembayaran');
+        $bulanIni = (float) PembayaranApItem::whereHas('tagihanAp', fn($q) => $this->applyScopeToTagihan($q, $filters))
+            ->whereHas('pembayaranAp', fn($q) => $q
+                ->whereMonth('tanggal_pembayaran', $today->month)
+                ->whereYear('tanggal_pembayaran', $today->year)
+            )
+            ->sum('jumlah_dialokasikan');
 
-        $bulanLaluTotal = (float) PembayaranAp::whereHas('tagihanAp', fn($q) => $this->applyScopeToTagihan($q, $filters))
-            ->whereMonth('tanggal_pembayaran', $bulanLalu->month)
-            ->whereYear('tanggal_pembayaran', $bulanLalu->year)
-            ->sum('jumlah_pembayaran');
+        $bulanLaluTotal = (float) PembayaranApItem::whereHas('tagihanAp', fn($q) => $this->applyScopeToTagihan($q, $filters))
+            ->whereHas('pembayaranAp', fn($q) => $q
+                ->whereMonth('tanggal_pembayaran', $bulanLalu->month)
+                ->whereYear('tanggal_pembayaran', $bulanLalu->year)
+            )
+            ->sum('jumlah_dialokasikan');
 
         $pembayaranTrendPct = $this->percentChange($bulanIni, $bulanLaluTotal);
 
@@ -128,11 +132,11 @@ class DashboardApService
             ->where('tanggal_tagihan', '<=', $asOf->toDateString())
             ->sum('total_tagihan');
 
-        $dibayarSampai = PembayaranAp::whereHas('tagihanAp', fn($q) => $this->applyScopeToTagihan($q, $filters)
+        $dibayarSampai = PembayaranApItem::whereHas('tagihanAp', fn($q) => $this->applyScopeToTagihan($q, $filters)
             ->where('approval_status', 'APPROVED')
             ->where('tanggal_tagihan', '<=', $asOf->toDateString()))
-            ->where('tanggal_pembayaran', '<=', $asOf->toDateString())
-            ->sum('jumlah_pembayaran');
+            ->whereHas('pembayaranAp', fn($q) => $q->where('tanggal_pembayaran', '<=', $asOf->toDateString()))
+            ->sum('jumlah_dialokasikan');
 
         return max(0.0, (float) $tagihanTotal - (float) $dibayarSampai);
     }
@@ -156,10 +160,12 @@ class DashboardApService
             $month = $today->copy()->subMonthsNoOverflow($i);
             $labels[] = $month->translatedFormat('M \'y');
 
-            $paymentTotals[] = (float) PembayaranAp::whereHas('tagihanAp', fn($q) => $this->applyScopeToTagihan($q, $filters))
-                ->whereMonth('tanggal_pembayaran', $month->month)
-                ->whereYear('tanggal_pembayaran', $month->year)
-                ->sum('jumlah_pembayaran');
+            $paymentTotals[] = (float) PembayaranApItem::whereHas('tagihanAp', fn($q) => $this->applyScopeToTagihan($q, $filters))
+                ->whereHas('pembayaranAp', fn($q) => $q
+                    ->whereMonth('tanggal_pembayaran', $month->month)
+                    ->whereYear('tanggal_pembayaran', $month->year)
+                )
+                ->sum('jumlah_dialokasikan');
 
             $invoiceCounts[] = (clone $this->scopedQuery($filters))
                 ->whereMonth('tanggal_tagihan', $month->month)

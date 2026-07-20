@@ -43,6 +43,11 @@ class PembayaranAp extends Model
         return $this->belongsTo(TagihanAp::class, 'tagihan_ap_id');
     }
 
+    public function items(): HasMany
+    {
+        return $this->hasMany(PembayaranApItem::class, 'pembayaran_ap_id');
+    }
+
     public function sumberPembayaran()
     {
         return $this->belongsTo(PembayaranAp::class, 'sumber_pembayaran_ap_id');
