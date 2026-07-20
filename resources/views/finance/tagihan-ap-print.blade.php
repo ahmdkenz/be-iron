@@ -494,7 +494,7 @@
 
 </div>
 
-{{-- ======== HALAMAN 2+: Tagihan AP Bulan Berjalan (Voucher AP lengkap) ======== --}}
+{{-- ======== HALAMAN 2+: Tagihan AP Bulan Berjalan (dokumen lengkap) ======== --}}
 @foreach($tagihanBerjalanInPeriod as $tb)
   <div style="page-break-before: always;"></div>
   @include('finance.partials.tagihan-ap-document', [

@@ -1,4 +1,4 @@
-{{-- Dokumen Tagihan AP (Voucher AP) tunggal — dipakai untuk cetak Tagihan AP reguler standalone
+{{-- Dokumen Tagihan AP tunggal — dipakai untuk cetak Tagihan AP reguler standalone
      maupun tiap halaman "Tagihan Bulan Berjalan" yang dilampirkan di cetak Opening Balance AP.
      Variabel yang wajib di-pass: $tagihan (TagihanAp), $signatureData (array dari buildSignatureData()). --}}
 
@@ -26,7 +26,7 @@
   <div class="divider-thick"></div>
   <div class="divider-thin"></div>
 
-  <div class="doc-title">Tagihan (AP Voucher)</div>
+  <div class="doc-title">Tagihan AP</div>
 
   <!-- Info Box -->
   <div class="info-container">

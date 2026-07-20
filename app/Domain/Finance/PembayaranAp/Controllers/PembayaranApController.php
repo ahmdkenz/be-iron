@@ -167,7 +167,7 @@ class PembayaranApController extends Controller
         $terbilang    = Terbilang::convert((int) $pembayaran->jumlah_pembayaran);
 
         $viewData = compact('pembayaran', 'vendorGroups', 'noVoucher', 'terbilang');
-        $filename = 'Voucher-AP-' . str_replace(['/', '\\', ' '], '-', $noVoucher) . '.pdf';
+        $filename = 'Payment-Voucher-AP-' . str_replace(['/', '\\', ' '], '-', $noVoucher) . '.pdf';
 
         if ($request->has('html')) {
             return view('finance.pembayaran-ap-print', $viewData)->render();

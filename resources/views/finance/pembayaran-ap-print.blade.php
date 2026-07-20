@@ -2,7 +2,7 @@
 <html lang="id">
 <head>
   <meta charset="UTF-8">
-  <title>Voucher AP {{ $noVoucher }}</title>
+  <title>Payment Voucher{{ $noVoucher }}</title>
   @php
     $htmlMode = request()->has('html');
 
@@ -125,7 +125,7 @@
   <div class="toolbar-left">
     <div class="toolbar-icon">AP</div>
     <div>
-      <div class="toolbar-title">Voucher Pembayaran AP {{ $noVoucher }}</div>
+      <div class="toolbar-title">Payment Voucher {{ $noVoucher }}</div>
       <div class="toolbar-sub">{{ \Carbon\Carbon::parse($pembayaran->tanggal_pembayaran)->isoFormat('D MMM YYYY') }} &bull; {{ $vendorGroups->count() }} Vendor</div>
     </div>
   </div>
@@ -168,17 +168,17 @@
   <div class="divider-thick"></div>
   <div class="divider-thin"></div>
 
-  <div class="doc-title">Voucher Pembayaran AP</div>
+  <div class="doc-title">Payment Voucher</div>
 
   <!-- Info Box -->
   <div class="info-container">
-    <div class="info-header">Informasi Voucher</div>
+    <div class="info-header">Informasi Payment Voucher</div>
     <table>
       <tr>
         <td class="info-col info-col-left">
           <table class="dl-table">
             <tr>
-              <td class="dl-lbl">No. Voucher</td><td class="dl-colon">:</td>
+              <td class="dl-lbl">No. Payment Voucher</td><td class="dl-colon">:</td>
               <td class="dl-val font-bold">{{ $noVoucher }}</td>
             </tr>
             <tr>
