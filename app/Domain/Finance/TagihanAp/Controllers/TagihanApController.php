@@ -195,7 +195,11 @@ class TagihanApController extends Controller
         }
 
         $user    = auth()->user();
-        $filters = ['is_opening_balance' => false];
+        $filters = $request->only([
+            'search', 'status', 'approval_status', 'vendor_ap_id', 'karyawan_id',
+            'tanggal_dari', 'tanggal_sampai',
+        ]);
+        $filters['is_opening_balance'] = false;
         ApFilterScope::apply($filters, $user);
 
         $tagihanList = $this->service->getAll($filters, [
