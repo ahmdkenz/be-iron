@@ -231,22 +231,31 @@ class EndingBalanceApKoreksiService
     }
 
     /**
-     * Generate nomor dokumen untuk Credit Note dan Debit Note.
-     * Format: CN-AP-YYYYMM-XXXX / DN-AP-YYYYMM-XXXX (sequential per bulan)
+     * Suffix diacak lalu kandidatnya dicek ke DB agar CN/DN yang diajukan di tanggal
+     * yang sama tidak bentrok; unique index uniq_eb_ap_koreksi_no_dokumen tetap jadi
+     * pengaman terakhir kalau ada race. Nomor dibuat dari tanggal pengajuan (now()),
+     * bukan tanggal dokumen lama, jadi tidak berubah setelah tersimpan.
      */
     private function generateNoDokumen(string $tipe): string
     {
-        $prefix    = $tipe === 'CREDIT_NOTE' ? 'CN-AP' : 'DN-AP';
-        $yearMonth = now()->format('Ym');
+        for ($attempt = 0; $attempt < 10; $attempt++) {
+            $kandidat = $this->buildNoDokumenCandidate($tipe);
 
-        $last = EndingBalanceApKoreksi::where('no_dokumen', 'LIKE', $prefix . '-' . $yearMonth . '-%')
-            ->max('no_dokumen');
-
-        $seq = 1;
-        if ($last) {
-            $seq = (int) substr($last, strrpos($last, '-') + 1) + 1;
+            if (!EndingBalanceApKoreksi::where('no_dokumen', $kandidat)->exists()) {
+                return $kandidat;
+            }
         }
 
-        return $prefix . '-' . $yearMonth . '-' . str_pad($seq, 4, '0', STR_PAD_LEFT);
+        abort(422, 'Gagal membuat nomor dokumen unik, silakan coba lagi.');
+    }
+
+    /** Format: {CN|DN}-AP-{DDMMYYYY}-{XXX}, XXX = 000-999 acak. */
+    private function buildNoDokumenCandidate(string $tipe): string
+    {
+        $prefix  = $tipe === 'CREDIT_NOTE' ? 'CN-AP' : 'DN-AP';
+        $tanggal = now()->format('dmY');
+        $suffix  = str_pad((string) random_int(0, 999), 3, '0', STR_PAD_LEFT);
+
+        return "{$prefix}-{$tanggal}-{$suffix}";
     }
 }

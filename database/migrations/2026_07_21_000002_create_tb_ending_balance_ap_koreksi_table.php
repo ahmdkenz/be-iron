@@ -20,7 +20,7 @@ return new class extends Migration
             // Tipe koreksi: KOREKSI_SALDO, CREDIT_NOTE, DEBIT_NOTE
             $table->string('tipe', 30)->default('KOREKSI_SALDO');
 
-            // Nomor dokumen resmi untuk CN dan DN (CN-AP-YYYYMM-XXXX / DN-AP-YYYYMM-XXXX)
+            // Nomor dokumen resmi untuk CN dan DN (CN-AP-DDMMYYYY-XXX / DN-AP-DDMMYYYY-XXX)
             $table->string('no_dokumen', 30)->nullable();
 
             $table->decimal('nilai_koreksi', 15, 2);  // positif = tambah hutang, negatif = kurangi hutang
