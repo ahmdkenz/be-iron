@@ -11,6 +11,7 @@ use App\Models\BankStatementDetail;
 use App\Models\Invoice;
 use App\Models\KlienAr;
 use App\Models\PendapatanDiMuka;
+use App\Models\TagihanAp;
 use App\Support\Helpers\RoleHelper;
 use App\Support\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
@@ -269,6 +270,33 @@ class BankStatementController extends Controller
         return $this->successResponse($list);
     }
 
+    public function tagihanApCandidates(Request $request, BankStatementDetail $detail): JsonResponse
+    {
+        $request->validate([
+            'search'       => ['nullable', 'string', 'max:100'],
+            'vendor_ap_id' => ['nullable', 'integer', 'exists:tb_vendor_ap,id'],
+            'page'         => ['nullable', 'integer', 'min:1'],
+            'per_page'     => ['nullable', 'integer', 'min:1', 'max:100'],
+        ]);
+
+        $user         = auth()->user()->loadMissing('karyawan');
+        $perusahaanId = (!RoleHelper::hasGlobalApAccess($user) && $user->karyawan)
+            ? $user->karyawan->perusahaan_id
+            : null;
+
+        $list = $this->service->getTagihanApCandidates(
+            $detail,
+            $request->string('search') ?: null,
+            $request->integer('vendor_ap_id') ?: null,
+            $request->integer('page', 1),
+            $request->integer('per_page', 50),
+            RoleHelper::picApKaryawanIdFor($user),
+            $perusahaanId,
+        );
+
+        return $this->successResponse($list);
+    }
+
     public function catatBayar(Request $request, BankStatementDetail $detail): JsonResponse
     {
         $request->validate([
@@ -380,6 +408,55 @@ class BankStatementController extends Controller
         }
     }
 
+    public function catatVoucherAp(Request $request, BankStatementDetail $detail): JsonResponse
+    {
+        $request->validate([
+            'kategori_voucher'         => ['required', 'in:BB,NBB'],
+            'keterangan'               => ['nullable', 'string', 'max:500'],
+            'bukti_pembayaran'         => ['nullable', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:10240'],
+            'alokasi'                  => ['required', 'array', 'min:1'],
+            'alokasi.*.tagihan_ap_id'  => ['required', 'integer', 'exists:tb_tagihan_ap,id'],
+            'alokasi.*.jumlah'         => ['required', 'numeric', 'min:0.01'],
+        ]);
+
+        try {
+            $alokasi    = $request->input('alokasi');
+            $tagihanIds = collect($alokasi)->pluck('tagihan_ap_id')->unique();
+            $this->authorizeTagihanApScope($tagihanIds);
+
+            $updated = $this->service->matchWithNewVoucherAp(
+                $detail,
+                $alokasi,
+                $request->input('kategori_voucher'),
+                $request->input('keterangan'),
+                $request->file('bukti_pembayaran'),
+            );
+
+            $updated->load(['pembayaranAp.items.tagihanAp.vendorAp', 'matchedBy.karyawan']);
+            $voucher = $updated->pembayaranAp;
+
+            return $this->successResponse([
+                'id'           => $updated->id,
+                'status_cocok' => $updated->status_cocok,
+                'matched_by'   => $updated->matchedBy?->name,
+                'selisih_bank' => $voucher
+                    ? round($updated->debit - (float) $voucher->jumlah_pembayaran, 2)
+                    : null,
+                'pembayaran'   => $voucher ? [
+                    'id'                 => $voucher->id,
+                    'no_referensi'       => $voucher->no_referensi,
+                    'tanggal_pembayaran' => $voucher->tanggal_pembayaran?->toDateString(),
+                    'jumlah_pembayaran'  => $voucher->jumlah_pembayaran,
+                    'metode_pembayaran'  => $voucher->metode_pembayaran,
+                    'vendor'             => $voucher->items->pluck('tagihanAp.vendorAp.nama_vendor')->filter()->unique()->values()->join(', '),
+                    'jumlah_tagihan'     => $voucher->items->count(),
+                ] : null,
+            ], 'Payment Voucher AP berhasil dicatat dan dicocokkan.');
+        } catch (\Symfony\Component\HttpKernel\Exception\HttpException $e) {
+            return $this->errorResponse($e->getMessage(), $e->getStatusCode());
+        }
+    }
+
     public function downloadTemplate(string $bankType): BinaryFileResponse|JsonResponse
     {
         $bankType = strtoupper($bankType);
@@ -433,7 +510,20 @@ class BankStatementController extends Controller
         abort_unless(
             RoleHelper::canManageMatchedRecord(auth()->user(), $detail->matched_by),
             403,
-            'Hanya PIC AR yang mencocokkan transaksi ini (atau Admin/Manager/Supervisor) yang dapat melakukan aksi ini.'
+            'Hanya pengguna yang mencocokkan transaksi ini (atau Admin/Manager/Supervisor) yang dapat melakukan aksi ini.'
         );
+    }
+
+    private function authorizeTagihanApScope(\Illuminate\Support\Collection $tagihanIds): void
+    {
+        $user = auth()->user()->loadMissing('karyawan');
+
+        if (!RoleHelper::hasGlobalApAccess($user) && $user->karyawan) {
+            $luarScope = TagihanAp::whereIn('id', $tagihanIds)
+                ->where('perusahaan_id', '!=', $user->karyawan->perusahaan_id)
+                ->exists();
+
+            abort_if($luarScope, 403, 'Anda tidak memiliki akses untuk mencatat pembayaran tagihan ini.');
+        }
     }
 }

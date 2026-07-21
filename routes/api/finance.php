@@ -102,13 +102,13 @@ Route::get('/kinerja-ar', [KinerjaArController::class, 'index']);
 Route::get('/kinerja-ar/export-excel', [KinerjaArController::class, 'exportExcel']);
 
 // ─── Rekonsiliasi Bank Statement ──────────────────────────────────
-Route::prefix('rekonsiliasi-bank')->middleware('role:ADMIN|MANAGER|SUPERVISOR|AR')->group(function () {
+Route::prefix('rekonsiliasi-bank')->middleware('role:ADMIN|MANAGER|SUPERVISOR|AR|AP')->group(function () {
     Route::get('/',                                  [BankStatementController::class, 'index']);
     Route::post('/upload',                           [BankStatementController::class, 'upload'])->middleware('role:ADMIN|MANAGER|SUPERVISOR');
     Route::get('/template/{bankType}',               [BankStatementController::class, 'downloadTemplate']);
     Route::get('/{bankStatement}',                   [BankStatementController::class, 'show']);
     Route::get('/{bankStatement}/details',           [BankStatementController::class, 'paginatedDetails']);
-    Route::delete('/{bankStatement}',                [BankStatementController::class, 'destroy']);
+    Route::delete('/{bankStatement}',                [BankStatementController::class, 'destroy'])->middleware('role:ADMIN|MANAGER|SUPERVISOR');
     Route::patch('/detail/{detail}/abaikan',         [BankStatementController::class, 'markDiabaikan']);
     Route::get('/detail/{detail}/kandidat',          [BankStatementController::class, 'kandidat']);
     Route::patch('/detail/{detail}/match',           [BankStatementController::class, 'matchDetail']);
@@ -119,6 +119,8 @@ Route::prefix('rekonsiliasi-bank')->middleware('role:ADMIN|MANAGER|SUPERVISOR|AR
     Route::get('/detail/{detail}/invoice-candidates', [BankStatementController::class, 'invoiceCandidates']);
     Route::post('/detail/{detail}/catat-bayar',       [BankStatementController::class, 'catatBayar']);
     Route::post('/detail/{detail}/catat-pdm',         [BankStatementController::class, 'catatPdm']);
+    Route::get('/detail/{detail}/tagihan-ap-candidates', [BankStatementController::class, 'tagihanApCandidates']);
+    Route::post('/detail/{detail}/catat-voucher-ap',      [BankStatementController::class, 'catatVoucherAp']);
 });
 
 // ─── Pendapatan di Muka ───────────────────────────────────────────

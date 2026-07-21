@@ -23,6 +23,7 @@ class BankStatementDetail extends Model
         'posted_at',
         'posted_by',
         'pembayaran_ar_id',
+        'pembayaran_ap_id',
         'matched_by',
     ];
 
@@ -43,6 +44,11 @@ class BankStatementDetail extends Model
     public function pembayaranAr(): BelongsTo
     {
         return $this->belongsTo(PembayaranAr::class, 'pembayaran_ar_id');
+    }
+
+    public function pembayaranAp(): BelongsTo
+    {
+        return $this->belongsTo(PembayaranAp::class, 'pembayaran_ap_id');
     }
 
     public function matchedBy(): BelongsTo

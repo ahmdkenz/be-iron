@@ -2,6 +2,7 @@
 
 namespace App\Domain\Finance\RekonsiliasiBankStatement\Services;
 
+use App\Domain\Finance\PembayaranAp\Services\PembayaranApService;
 use App\Domain\Finance\PembayaranAr\Services\PembayaranArService;
 use App\Domain\Finance\RekonsiliasiBankStatement\Exceptions\DuplicateStatementException;
 use App\Domain\Finance\RekonsiliasiBankStatement\Parsers\BankParserFactory;
@@ -11,7 +12,9 @@ use App\Models\Invoice;
 use App\Models\KlienAr;
 use App\Models\PembayaranAr;
 use App\Models\PendapatanDiMuka;
+use App\Models\TagihanAp;
 use App\Support\Helpers\RoleHelper;
+use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 
@@ -19,6 +22,7 @@ class BankStatementService
 {
     public function __construct(
         private readonly PembayaranArService $pembayaranArService,
+        private readonly PembayaranApService $pembayaranApService,
     ) {}
 
     public function upload(UploadedFile $file, string $bankType, int $userId, bool $force = false): BankStatement
@@ -72,8 +76,9 @@ class BankStatementService
                     'debit'             => $row['debit'],
                     'kredit'            => $row['kredit'],
                     'saldo'             => $row['saldo'],
-                    'status_cocok'      => $row['kredit'] == 0 ? 'DIABAIKAN' : 'UNMATCHED',
+                    'status_cocok'      => ($row['debit'] == 0 && $row['kredit'] == 0) ? 'DIABAIKAN' : 'UNMATCHED',
                     'pembayaran_ar_id'  => null,
+                    'pembayaran_ap_id'  => null,
                 ]);
             }
 
@@ -194,6 +199,7 @@ class BankStatementService
             'pembayaranAr.invoice.klienAr',
             'pembayaranAr.alokasiKelebihan.invoice.klienAr',
             'pembayaranAr.alokasiKelebihan.createdBy.karyawan',
+            'pembayaranAp.items.tagihanAp.vendorAp',
             'matchedBy.karyawan',
             'postedBy:id,username,karyawan_id',
             'postedBy.karyawan:id,nama_karyawan',
@@ -204,11 +210,14 @@ class BankStatementService
     {
         $pembayaran  = $d->pembayaranAr;
         $invoice     = $pembayaran?->invoice;
+        $voucherAp   = $d->pembayaranAp;
         // Pembayaran shell "Catat sebagai PDM" (tanpa invoice) tidak punya nominal
         // pembanding — seluruh kredit bank memang sengaja dicatat sebagai PDM.
-        $selisihBank = ($pembayaran && $invoice)
-            ? round($d->kredit - (float) $pembayaran->jumlah_pembayaran, 2)
-            : null;
+        $selisihBank = match (true) {
+            $pembayaran && $invoice => round($d->kredit - (float) $pembayaran->jumlah_pembayaran, 2),
+            (bool) $voucherAp       => round($d->debit - (float) $voucherAp->jumlah_pembayaran, 2),
+            default                 => null,
+        };
 
         $kelebihanBayar = null;
         if ($invoice) {
@@ -291,7 +300,15 @@ class BankStatementService
                 'jumlah_pembayaran'  => $pembayaran->jumlah_pembayaran,
                 'metode_pembayaran'  => $pembayaran->metode_pembayaran,
                 'klien'              => $invoice?->klienAr?->nama_klien ?? $pdmTanpaInvoice?->klienAr?->nama_klien,
-            ] : null,
+            ] : ($voucherAp ? [
+                'id'                 => $voucherAp->id,
+                'no_referensi'       => $voucherAp->no_referensi,
+                'tanggal_pembayaran' => $voucherAp->tanggal_pembayaran?->format('d-m-Y'),
+                'jumlah_pembayaran'  => $voucherAp->jumlah_pembayaran,
+                'metode_pembayaran'  => $voucherAp->metode_pembayaran,
+                'vendor'             => $voucherAp->items->pluck('tagihanAp.vendorAp.nama_vendor')->filter()->unique()->values()->join(', '),
+                'jumlah_tagihan'     => $voucherAp->items->count(),
+            ] : null),
         ];
     }
 
@@ -347,8 +364,19 @@ class BankStatementService
         abort_if($detail->status_cocok !== 'MATCHED', 422, 'Hanya transaksi MATCHED yang dapat dibatalkan.');
 
         $pembayaran = $detail->pembayaranAr;
+        $voucherAp  = $detail->pembayaranAp;
 
-        return DB::transaction(function () use ($detail, $pembayaran) {
+        return DB::transaction(function () use ($detail, $pembayaran, $voucherAp) {
+            // Payment Voucher AP dari rekonsiliasi bank selalu dibuat lewat flow
+            // "Catat Voucher AP" — jadi selalu ikut dihapus penuh saat dibatalkan.
+            // PembayaranApService::delete() melepas tautan detail bank, recalculate
+            // sisa_tagihan tiap TagihanAp terkait, dan refresh counter statement.
+            if ($voucherAp) {
+                $this->pembayaranApService->delete($voucherAp);
+
+                return $detail->fresh();
+            }
+
             // Pembayaran yang dibuat otomatis oleh "Catat Bayar" harus ikut dibatalkan
             // agar invoice tidak tetap tercatat terbayar (mencegah dobel bayar saat
             // detail bank dicocokkan ulang). PembayaranArService::delete() sudah
@@ -606,6 +634,89 @@ class BankStatementService
                 'nama_resto'         => $inv->klienAr?->resto?->nama_resto,
                 'is_opening_balance' => (bool) $inv->is_opening_balance,
             ];
+        });
+    }
+
+    public function getTagihanApCandidates(
+        BankStatementDetail $detail,
+        ?string $search = null,
+        ?int $vendorApId = null,
+        int $page = 1,
+        int $perPage = 50,
+        ?int $picApKaryawanId = null,
+        ?int $perusahaanId = null,
+    ): LengthAwarePaginator {
+        $query = TagihanAp::with('vendorAp')
+            ->whereIn('status', ['DITERIMA', 'SEBAGIAN'])
+            ->where('is_opening_balance', false)
+            ->when($vendorApId, fn($q, $v) => $q->where('vendor_ap_id', $v))
+            ->when($perusahaanId, fn($q, $v) => $q->where('perusahaan_id', $v))
+            ->when($picApKaryawanId, fn($q, $v) =>
+                $q->whereHas('vendorAp', fn($q2) => $q2->where('karyawan_ap_id', $v))
+            )
+            ->when($search, fn($q, $v) => $q->where(function ($q2) use ($v) {
+                $q2->where('no_tagihan', 'LIKE', "%{$v}%")
+                   ->orWhere('no_invoice_vendor', 'LIKE', "%{$v}%")
+                   ->orWhereHas('vendorAp', fn($q3) => $q3->where('nama_vendor', 'LIKE', "%{$v}%"));
+            }))
+            ->orderBy('tanggal_tagihan')
+            ->orderBy('id');
+
+        return $query->paginate($perPage, ['*'], 'page', $page)->through(fn($t) => [
+            'id'                => $t->id,
+            'no_tagihan'        => $t->no_tagihan,
+            'no_invoice_vendor' => $t->no_invoice_vendor,
+            'tanggal_tagihan'   => $t->tanggal_tagihan?->toDateString(),
+            'vendor'            => $t->vendorAp?->nama_vendor,
+            'vendor_ap_id'      => $t->vendor_ap_id,
+            'total_tagihan'     => (float) $t->total_tagihan,
+            'sisa_tagihan'      => (float) $t->sisa_tagihan,
+            'status'            => $t->status,
+        ]);
+    }
+
+    /**
+     * Membuat Payment Voucher AP baru dari sebuah baris debit rekening koran lalu
+     * langsung mencocokkannya. Total $alokasi harus sama dengan nominal debit bank
+     * (toleransi Rp 0,01) — beda dengan AR, belum ada konsep overpayment/PDM AP di V1.
+     */
+    public function matchWithNewVoucherAp(
+        BankStatementDetail $detail,
+        array $alokasi,
+        string $kategoriVoucher,
+        ?string $keterangan = null,
+        ?UploadedFile $buktiBayar = null,
+    ): BankStatementDetail {
+        abort_if($detail->status_cocok === 'MATCHED', 422, 'Transaksi ini sudah dicocokkan.');
+        abort_if($detail->debit <= 0, 422, 'Hanya transaksi debit yang dapat dicatat sebagai Payment Voucher AP.');
+        abort_if(empty($alokasi), 422, 'Voucher harus mencakup minimal 1 tagihan.');
+
+        $totalAlokasi = collect($alokasi)->sum(fn($row) => (float) $row['jumlah']);
+        abort_if(
+            round(abs($totalAlokasi - (float) $detail->debit), 2) > 0.01,
+            422,
+            'Total alokasi (Rp ' . number_format($totalAlokasi, 0, ',', '.') . ') harus sama dengan nominal debit rekening koran (Rp ' . number_format($detail->debit, 0, ',', '.') . ').'
+        );
+
+        return DB::transaction(function () use ($detail, $alokasi, $kategoriVoucher, $keterangan, $buktiBayar) {
+            $voucher = $this->pembayaranApService->createVoucher([
+                'tanggal_pembayaran'       => $detail->tanggal,
+                'metode_pembayaran'        => 'TRANSFER',
+                'kategori_voucher'         => $kategoriVoucher,
+                'keterangan'               => $keterangan,
+                'dibuat_dari_rekonsiliasi' => true,
+                'alokasi'                  => $alokasi,
+            ], $buktiBayar);
+
+            $detail->update([
+                'status_cocok'     => 'MATCHED',
+                'pembayaran_ap_id' => $voucher->id,
+                'matched_by'       => auth()->id(),
+            ]);
+
+            $this->refreshCounter($detail->bank_statement_id);
+
+            return $detail->fresh()->load('pembayaranAp.items.tagihanAp.vendorAp', 'matchedBy');
         });
     }
 

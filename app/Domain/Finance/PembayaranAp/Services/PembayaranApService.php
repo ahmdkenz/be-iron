@@ -3,6 +3,8 @@
 namespace App\Domain\Finance\PembayaranAp\Services;
 
 use App\Domain\Finance\TagihanAp\Services\TagihanApService;
+use App\Models\BankStatement;
+use App\Models\BankStatementDetail;
 use App\Models\PembayaranAp;
 use App\Models\PembayaranApLog;
 use App\Models\TagihanAp;
@@ -239,10 +241,30 @@ class PembayaranApService
                 'data_sebelum'     => $pembayaran->load('items')->toArray(),
             ]);
 
+            // Lepas tautan rekonsiliasi bank SEBELUM hard delete, meniru
+            // PembayaranArService::delete() — kalau voucher ini dulu dicocokkan
+            // ke sebuah detail rekening koran, detail itu harus kembali UNMATCHED
+            // supaya bisa dicocokkan ulang.
+            $linkedStatementIds = BankStatementDetail::where('pembayaran_ap_id', $pembayaran->id)
+                ->pluck('bank_statement_id')
+                ->unique()
+                ->all();
+            BankStatementDetail::where('pembayaran_ap_id', $pembayaran->id)
+                ->update(['pembayaran_ap_id' => null, 'status_cocok' => 'UNMATCHED']);
+
             $pembayaran->delete();
 
             foreach ($tagihans as $tagihan) {
                 $this->tagihanApService->recalculate($tagihan);
+            }
+
+            foreach ($linkedStatementIds as $statementId) {
+                $matched   = BankStatementDetail::where('bank_statement_id', $statementId)->where('status_cocok', 'MATCHED')->count();
+                $unmatched = BankStatementDetail::where('bank_statement_id', $statementId)->where('status_cocok', 'UNMATCHED')->count();
+                BankStatement::where('id', $statementId)->update([
+                    'jumlah_matched'   => $matched,
+                    'jumlah_unmatched' => $unmatched,
+                ]);
             }
         });
     }
