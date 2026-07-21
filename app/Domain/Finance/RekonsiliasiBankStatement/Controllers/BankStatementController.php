@@ -119,6 +119,8 @@ class BankStatementController extends Controller
 
     public function markDiabaikan(BankStatementDetail $detail): JsonResponse
     {
+        $this->authorizeRowScope($detail);
+
         $this->service->markDiabaikan($detail);
 
         return $this->successResponse(null, 'Transaksi ditandai diabaikan.');
@@ -126,6 +128,8 @@ class BankStatementController extends Controller
 
     public function kandidat(BankStatementDetail $detail): JsonResponse
     {
+        $this->authorizeArFlow();
+
         $list = $this->service->getKandidat($detail);
 
         return $this->successResponse($list);
@@ -133,6 +137,8 @@ class BankStatementController extends Controller
 
     public function matchDetail(Request $request, BankStatementDetail $detail): JsonResponse
     {
+        $this->authorizeArFlow();
+
         $request->validate([
             'pembayaran_ar_id' => ['required', 'integer', 'exists:tb_pembayaran_ar,id'],
         ]);
@@ -197,6 +203,7 @@ class BankStatementController extends Controller
     public function unmatchDetail(BankStatementDetail $detail): JsonResponse
     {
         $this->authorizeManageMatch($detail);
+        $this->authorizeRowScope($detail);
 
         try {
             $this->service->unmatch($detail);
@@ -209,6 +216,8 @@ class BankStatementController extends Controller
 
     public function invoiceB2C(BankStatementDetail $detail): JsonResponse
     {
+        $this->authorizeArFlow();
+
         try {
             return $this->successResponse($this->service->getInvoiceB2CKlien($detail));
         } catch (\Symfony\Component\HttpKernel\Exception\HttpException $e) {
@@ -218,6 +227,8 @@ class BankStatementController extends Controller
 
     public function invoiceB2B(BankStatementDetail $detail): JsonResponse
     {
+        $this->authorizeArFlow();
+
         try {
             return $this->successResponse($this->service->getInvoiceB2BKlien($detail));
         } catch (\Symfony\Component\HttpKernel\Exception\HttpException $e) {
@@ -228,6 +239,7 @@ class BankStatementController extends Controller
     public function applyKelebihanBayar(Request $request, BankStatementDetail $detail): JsonResponse
     {
         $this->authorizeManageMatch($detail);
+        $this->authorizeArFlow();
 
         $request->validate([
             'invoice_id' => ['required', 'integer', 'exists:tb_invoice,id'],
@@ -251,6 +263,8 @@ class BankStatementController extends Controller
 
     public function invoiceCandidates(Request $request, BankStatementDetail $detail): JsonResponse
     {
+        $this->authorizeArFlow();
+
         $request->validate([
             'search'   => ['nullable', 'string', 'max:100'],
             'type'     => ['nullable', 'string', 'in:ob,regular'],
@@ -272,6 +286,8 @@ class BankStatementController extends Controller
 
     public function tagihanApCandidates(Request $request, BankStatementDetail $detail): JsonResponse
     {
+        $this->authorizeApFlow();
+
         $request->validate([
             'search'       => ['nullable', 'string', 'max:100'],
             'vendor_ap_id' => ['nullable', 'integer', 'exists:tb_vendor_ap,id'],
@@ -299,6 +315,8 @@ class BankStatementController extends Controller
 
     public function catatBayar(Request $request, BankStatementDetail $detail): JsonResponse
     {
+        $this->authorizeArFlow();
+
         $request->validate([
             'invoice_id'                    => ['required', 'integer', 'exists:tb_invoice,id'],
             'settle_original_invoice_ids'   => ['nullable', 'array'],
@@ -372,6 +390,8 @@ class BankStatementController extends Controller
 
     public function catatPdm(Request $request, BankStatementDetail $detail): JsonResponse
     {
+        $this->authorizeArFlow();
+
         $request->validate([
             'klien_ar_id'      => ['required', 'integer', 'exists:tb_klien_ar,id'],
             'keterangan'       => ['nullable', 'string', 'max:500'],
@@ -410,6 +430,8 @@ class BankStatementController extends Controller
 
     public function catatVoucherAp(Request $request, BankStatementDetail $detail): JsonResponse
     {
+        $this->authorizeApFlow();
+
         $request->validate([
             'kategori_voucher'         => ['required', 'in:BB,NBB'],
             'keterangan'               => ['nullable', 'string', 'max:500'],
@@ -524,6 +546,44 @@ class BankStatementController extends Controller
                 ->exists();
 
             abort_if($luarScope, 403, 'Anda tidak memiliki akses untuk mencatat pembayaran tagihan ini.');
+        }
+    }
+
+    // AP murni (bukan Admin/Manager/Supervisor) tidak boleh menyentuh alur
+    // pencocokan Invoice/PDM AR — itu bukan wewenangnya, meski route berbagi
+    // grup middleware role:...|AR|AP yang sama dengan endpoint AP.
+    private function authorizeArFlow(): void
+    {
+        abort_if(
+            RoleHelper::isApStaff(auth()->user()),
+            403,
+            'Role AP tidak memiliki akses ke pencocokan transaksi AR.'
+        );
+    }
+
+    // AR murni (bukan Admin/Manager/Supervisor) tidak boleh menyentuh alur
+    // pembuatan Payment Voucher AP.
+    private function authorizeApFlow(): void
+    {
+        abort_if(
+            RoleHelper::isArStaff(auth()->user()),
+            403,
+            'Role AR tidak memiliki akses ke pencocokan transaksi AP.'
+        );
+    }
+
+    // Batasi Abaikan/Unmatch per tipe baris untuk PIC AR/AP murni: AR-only cuma
+    // baris kredit, AP-only cuma baris debit. Admin/Manager/Supervisor bebas.
+    private function authorizeRowScope(BankStatementDetail $detail): void
+    {
+        $user = auth()->user();
+
+        if (RoleHelper::isApStaff($user) && (float) $detail->kredit > 0) {
+            abort(403, 'Role AP tidak memiliki akses ke transaksi kredit (AR).');
+        }
+
+        if (RoleHelper::isArStaff($user) && (float) $detail->debit > 0) {
+            abort(403, 'Role AR tidak memiliki akses ke transaksi debit (AP).');
         }
     }
 }
