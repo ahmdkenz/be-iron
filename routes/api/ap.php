@@ -89,6 +89,8 @@ Route::prefix('ending-balance')->group(function () {
 Route::prefix('shz360')->group(function () {
     Route::get('/sync/last-run', [ApShz360ImportController::class, 'lastSyncRun']);
     Route::post('/sync/retry', [ApShz360ImportController::class, 'retrySync']);
+    Route::get('/sync/errors', [ApShz360ImportController::class, 'syncErrors']);
+    Route::get('/imports/summary', [ApShz360ImportController::class, 'summary']);
     Route::get('/imports', [ApShz360ImportController::class, 'index']);
     Route::get('/imports/{id}', [ApShz360ImportController::class, 'show']);
     Route::post('/imports/{id}/map-vendor', [ApShz360ImportController::class, 'mapVendor']);

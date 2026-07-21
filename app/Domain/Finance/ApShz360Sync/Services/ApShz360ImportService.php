@@ -10,6 +10,7 @@ use App\Domain\Finance\VendorAp\Services\VendorApService;
 use App\Models\ApImportTagihanLink;
 use App\Models\ApShz360PoImport;
 use App\Models\ApShz360ReceiptImport;
+use App\Models\ApShz360ReceiptImportItem;
 use App\Models\ApSourceVendorMap;
 use App\Models\TagihanAp;
 use App\Models\VendorAp;
@@ -30,7 +31,9 @@ class ApShz360ImportService
      */
     public function paginate(array $filters = []): LengthAwarePaginator
     {
-        $query = ApShz360ReceiptImport::with(['poImport.vendorAp', 'tagihanLink'])->latest('id');
+        $query = ApShz360ReceiptImport::with(['poImport.vendorAp', 'tagihanLink'])
+            ->withExists(['items as has_reject_items' => fn ($q) => $q->where('qty_tolak', '>', 0)])
+            ->latest('id');
 
         if (! empty($filters['import_status'])) {
             $query->where('import_status', $filters['import_status']);
@@ -55,10 +58,57 @@ class ApShz360ImportService
 
     public function findOrFail(int $id): ApShz360ReceiptImport
     {
-        $receipt = ApShz360ReceiptImport::with(['poImport.items', 'items.poImportItem', 'tagihanLink.tagihanAp'])->find($id);
+        $receipt = ApShz360ReceiptImport::with(['poImport.items', 'items.poImportItem', 'tagihanLink.tagihanAp'])
+            ->withExists(['items as has_reject_items' => fn ($q) => $q->where('qty_tolak', '>', 0)])
+            ->find($id);
         abort_if(! $receipt, 404, 'Data staging tidak ditemukan');
 
         return $receipt;
+    }
+
+    /**
+     * Ringkasan AP work queue untuk header halaman: dihitung langsung dari
+     * staging (bukan dari data paginated FE) supaya akurat meski user sedang
+     * memfilter/paging tabel. need_mapping mengikuti definisi yang sama dengan
+     * filter tabel (poImport tidak ada / vendor_ap_id kosong), tapi baris
+     * CONVERTED/IGNORED dikecualikan karena sudah tidak actionable.
+     */
+    public function summary(): array
+    {
+        $rows = ApShz360ReceiptImport::query()
+            ->select('id', 'po_import_id', 'import_status')
+            ->withSum('items as amount', 'subtotal')
+            ->with('poImport:id,vendor_ap_id')
+            ->get();
+
+        $sumAmount = fn ($collection) => (float) $collection->sum(fn ($r) => (float) ($r->amount ?? 0));
+
+        $needMapping = $rows->filter(fn ($r) => ! in_array($r->import_status, ['CONVERTED', 'IGNORED'], true)
+            && (! $r->poImport || ! $r->poImport->vendor_ap_id));
+        $ready = $rows->where('import_status', 'READY_FOR_AP');
+        $converted = $rows->where('import_status', 'CONVERTED');
+        $ignored = $rows->where('import_status', 'IGNORED');
+        $new = $rows->where('import_status', 'NEW');
+
+        $rejectedItemCount = ApShz360ReceiptImportItem::where('qty_tolak', '>', 0)->count();
+        $rejectedReceiptCount = ApShz360ReceiptImportItem::where('qty_tolak', '>', 0)
+            ->distinct()
+            ->count('receipt_import_id');
+
+        return [
+            'total_receipts' => $rows->count(),
+            'total_amount' => $sumAmount($rows),
+            'new_count' => $new->count(),
+            'need_mapping_count' => $needMapping->count(),
+            'ready_count' => $ready->count(),
+            'converted_count' => $converted->count(),
+            'ignored_count' => $ignored->count(),
+            'need_mapping_amount' => $sumAmount($needMapping),
+            'ready_amount' => $sumAmount($ready),
+            'converted_amount' => $sumAmount($converted),
+            'rejected_receipt_count' => $rejectedReceiptCount,
+            'rejected_item_count' => $rejectedItemCount,
+        ];
     }
 
     public function mapVendor(ApShz360ReceiptImport $receipt, int $vendorApId): ApShz360ReceiptImport

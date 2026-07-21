@@ -7,6 +7,7 @@ use App\Domain\Finance\ApShz360Sync\Services\ApShz360SyncService;
 use App\Domain\Finance\ApShz360Sync\Support\VendorNameMatcher;
 use App\Http\Controllers\Controller;
 use App\Models\ApShz360ReceiptImport;
+use App\Models\ApShz360SyncError;
 use App\Models\ApShz360SyncRun;
 use App\Models\VendorAp;
 use App\Support\Helpers\RoleHelper;
@@ -31,6 +32,13 @@ class ApShz360ImportController extends Controller
         $list = $this->service->paginate($filters);
 
         return $this->paginatedResponse($list->through(fn (ApShz360ReceiptImport $r) => $this->toArray($r)));
+    }
+
+    public function summary(): JsonResponse
+    {
+        $this->authorizeView();
+
+        return $this->successResponse($this->service->summary());
     }
 
     public function show(int $id): JsonResponse
@@ -110,15 +118,10 @@ class ApShz360ImportController extends Controller
 
         $run = $this->syncService->runFullSync();
 
-        return $this->successResponse([
-            'id' => $run->id,
-            'status' => $run->status,
-            'po_fetched' => $run->po_fetched,
-            'po_upserted' => $run->po_upserted,
-            'receipt_fetched' => $run->receipt_fetched,
-            'receipt_upserted' => $run->receipt_upserted,
-            'message' => $run->message,
-        ], $run->status === 'success' ? 'Sync berhasil dijalankan ulang' : 'Sync gagal, lihat detail error');
+        return $this->successResponse(
+            $this->syncRunToArray($run),
+            $run->status === 'success' ? 'Sync berhasil dijalankan ulang' : 'Sync gagal, lihat detail error'
+        );
     }
 
     public function lastSyncRun(): JsonResponse
@@ -128,7 +131,35 @@ class ApShz360ImportController extends Controller
         $run = ApShz360SyncRun::latest('started_at')->first();
         abort_if(! $run, 404, 'Belum pernah ada sync yang berjalan');
 
-        return $this->successResponse([
+        return $this->successResponse($this->syncRunToArray($run));
+    }
+
+    public function syncErrors(Request $request): JsonResponse
+    {
+        $this->authorizeView();
+
+        $limit = (int) $request->query('limit', 10);
+        $limit = $limit > 0 && $limit <= 50 ? $limit : 10;
+
+        $errors = ApShz360SyncError::with('syncRun:id,started_at,status')
+            ->latest('id')
+            ->limit($limit)
+            ->get()
+            ->map(fn (ApShz360SyncError $e) => [
+                'id' => $e->id,
+                'sync_run_id' => $e->sync_run_id,
+                'run_started_at' => $e->syncRun?->started_at?->toIso8601String(),
+                'source_type' => $e->source_type,
+                'source_id' => $e->source_id,
+                'message' => $e->message,
+            ]);
+
+        return $this->successResponse($errors);
+    }
+
+    private function syncRunToArray(ApShz360SyncRun $run): array
+    {
+        return [
             'id' => $run->id,
             'status' => $run->status,
             'started_at' => $run->started_at?->toIso8601String(),
@@ -139,7 +170,7 @@ class ApShz360ImportController extends Controller
             'receipt_upserted' => $run->receipt_upserted,
             'message' => $run->message,
             'error_count' => $run->errors()->count(),
-        ]);
+        ];
     }
 
     private function toArray(ApShz360ReceiptImport $receipt, bool $detail = false): array
@@ -161,6 +192,7 @@ class ApShz360ImportController extends Controller
             'source_supplier' => $this->extractSupplier($poImport?->raw_payload['supplier'] ?? null),
             'need_mapping' => ! $poImport || ! $poImport->vendor_ap_id,
             'total_diterima' => (float) $receipt->items()->sum('subtotal'),
+            'has_reject_items' => (bool) $receipt->has_reject_items,
         ];
 
         if ($data['need_mapping']) {
