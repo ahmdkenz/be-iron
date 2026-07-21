@@ -56,6 +56,7 @@ Route::prefix('opening-balance')->group(function () {
     Route::get('/', [OpeningBalanceApController::class, 'index']);
     Route::get('/summary', [OpeningBalanceApController::class, 'summary']);
     Route::get('/preview-no', [OpeningBalanceApController::class, 'previewNo']);
+    Route::get('/export-excel', [OpeningBalanceApController::class, 'exportExcel']);
     Route::post('/', [OpeningBalanceApController::class, 'store']);
     Route::get('/{id}', [OpeningBalanceApController::class, 'show']);
     Route::put('/{id}', [OpeningBalanceApController::class, 'update']);

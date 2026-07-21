@@ -5,6 +5,7 @@ namespace App\Domain\Finance\OpeningBalanceAp\Controllers;
 use App\Domain\Finance\OpeningBalanceAp\Requests\StoreOpeningBalanceApRequest;
 use App\Domain\Finance\OpeningBalanceAp\Resources\OpeningBalanceApDetailResource;
 use App\Domain\Finance\OpeningBalanceAp\Resources\OpeningBalanceApResource;
+use App\Domain\Finance\OpeningBalanceAp\Services\OpeningBalanceApExportService;
 use App\Domain\Finance\TagihanAp\Services\TagihanApService;
 use App\Http\Controllers\Controller;
 use App\Models\TagihanAp;
@@ -14,12 +15,17 @@ use App\Support\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx as XlsxWriter;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 class OpeningBalanceApController extends Controller
 {
     use ApiResponse;
 
-    public function __construct(private readonly TagihanApService $service) {}
+    public function __construct(
+        private readonly TagihanApService $service,
+        private readonly OpeningBalanceApExportService $exportService,
+    ) {}
 
     public function index(Request $request): JsonResponse
     {
@@ -68,6 +74,40 @@ class OpeningBalanceApController extends Controller
         return $this->successResponse([
             'no_tagihan' => $this->service->generateOpeningBalanceNoTagihan($payload['tanggal']),
         ]);
+    }
+
+    public function exportExcel(Request $request): BinaryFileResponse|JsonResponse
+    {
+        $this->authorizeView();
+
+        if (!class_exists('ZipArchive')) {
+            return $this->errorResponse('Ekstensi PHP "zip" tidak aktif. Aktifkan extension=zip pada php.ini lalu restart server.', 500);
+        }
+
+        $user    = auth()->user();
+        $filters = $request->only([
+            'search', 'status', 'vendor_ap_id', 'karyawan_id',
+            'tanggal_dari', 'tanggal_sampai', 'approval_status',
+        ]);
+        $filters['is_opening_balance'] = true;
+        ApFilterScope::apply($filters, $user);
+
+        $tagihanList = $this->service->getAll($filters, [
+            'vendorAp', 'perusahaan', 'karyawan',
+            'openingBalanceApDetails.items.barang',
+            'submittedBy.karyawan', 'approvedBy.karyawan', 'rejectedBy.karyawan', 'createdBy.karyawan',
+        ]);
+
+        $spreadsheet = $this->exportService->build($tagihanList);
+
+        $temp = tempnam(sys_get_temp_dir(), 'obap_') . '.xlsx';
+        (new XlsxWriter($spreadsheet))->save($temp);
+
+        return response()
+            ->download($temp, 'opening-balance-ap-' . now()->format('Ymd-His') . '.xlsx', [
+                'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            ])
+            ->deleteFileAfterSend(true);
     }
 
     public function store(StoreOpeningBalanceApRequest $request): JsonResponse
