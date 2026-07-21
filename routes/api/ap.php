@@ -27,6 +27,7 @@ Route::prefix('tagihan')->group(function () {
     Route::get('/summary', [TagihanApController::class, 'summary']);
     Route::get('/preview-no', [TagihanApController::class, 'previewNo']);
     Route::get('/outstanding', [TagihanApController::class, 'outstanding']);
+    Route::get('/export-excel', [TagihanApController::class, 'exportExcel']);
     Route::post('/', [TagihanApController::class, 'store']);
     Route::delete('/bulk', [TagihanApController::class, 'bulkDestroy']);
     Route::get('/{id}/pembayaran', [TagihanApController::class, 'pembayaran']);

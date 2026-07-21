@@ -22,10 +22,10 @@ class TagihanApRepository
             ->paginate($perPage);
     }
 
-    public function getAll(array $filters = []): Collection
+    public function getAll(array $filters = [], ?array $with = null): Collection
     {
         return $this->applyFilters(
-            TagihanAp::with(['vendorAp', 'createdBy']),
+            TagihanAp::with($with ?? ['vendorAp', 'createdBy']),
             $filters
         )->latest('tanggal_tagihan')->get();
     }

@@ -8,6 +8,7 @@ use App\Models\Karyawan;
 use App\Models\TagihanAp;
 use App\Models\TagihanApApprovalLog;
 use App\Models\VendorAp;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -19,6 +20,11 @@ class TagihanApService
     public function paginate(array $filters = [], ?array $with = null): LengthAwarePaginator
     {
         return $this->repository->paginate($filters, with: $with);
+    }
+
+    public function getAll(array $filters = [], ?array $with = null): Collection
+    {
+        return $this->repository->getAll($filters, $with);
     }
 
     public function getSummary(array $filters = []): array

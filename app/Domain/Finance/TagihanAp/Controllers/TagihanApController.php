@@ -6,6 +6,7 @@ use App\Domain\Finance\TagihanAp\DTO\TagihanApDTO;
 use App\Domain\Finance\TagihanAp\Requests\StoreTagihanApRequest;
 use App\Domain\Finance\TagihanAp\Requests\UpdateTagihanApRequest;
 use App\Domain\Finance\TagihanAp\Resources\TagihanApResource;
+use App\Domain\Finance\TagihanAp\Services\TagihanApExportService;
 use App\Domain\Finance\TagihanAp\Services\TagihanApService;
 use App\Http\Controllers\Controller;
 use App\Models\TagihanAp;
@@ -17,12 +18,17 @@ use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx as XlsxWriter;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 class TagihanApController extends Controller
 {
     use ApiResponse;
 
-    public function __construct(private readonly TagihanApService $service) {}
+    public function __construct(
+        private readonly TagihanApService $service,
+        private readonly TagihanApExportService $exportService,
+    ) {}
 
     public function index(Request $request): JsonResponse
     {
@@ -151,6 +157,38 @@ class TagihanApController extends Controller
             ]);
 
         return $this->successResponse($tagihanList);
+    }
+
+    public function exportExcel(Request $request): BinaryFileResponse|JsonResponse
+    {
+        $this->authorizeView();
+
+        if (!class_exists('ZipArchive')) {
+            return $this->errorResponse('Ekstensi PHP "zip" tidak aktif. Aktifkan extension=zip pada php.ini lalu restart server.', 500);
+        }
+
+        $user    = auth()->user();
+        $filters = ['is_opening_balance' => false];
+        ApFilterScope::apply($filters, $user);
+
+        $tagihanList = $this->service->getAll($filters, [
+            'items.barang',
+            'vendorAp.karyawanAp',
+            'perusahaan',
+            'karyawan',
+            'createdBy.karyawan',
+        ]);
+
+        $spreadsheet = $this->exportService->build($tagihanList);
+
+        $temp = tempnam(sys_get_temp_dir(), 'tgh_') . '.xlsx';
+        (new XlsxWriter($spreadsheet))->save($temp);
+
+        return response()
+            ->download($temp, 'tagihan-ap-' . now()->format('Ymd-His') . '.xlsx', [
+                'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            ])
+            ->deleteFileAfterSend(true);
     }
 
     public function store(StoreTagihanApRequest $request): JsonResponse
