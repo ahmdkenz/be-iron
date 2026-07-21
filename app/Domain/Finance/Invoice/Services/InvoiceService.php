@@ -2,6 +2,7 @@
 
 namespace App\Domain\Finance\Invoice\Services;
 
+use App\Domain\Finance\EndingBalance\Services\EndingBalanceService;
 use App\Domain\Finance\Invoice\DTO\InvoiceDTO;
 use App\Domain\Finance\Invoice\Repositories\InvoiceRepository;
 use App\Models\Invoice;
@@ -20,7 +21,30 @@ use Illuminate\Support\Str;
 
 class InvoiceService
 {
-    public function __construct(private readonly InvoiceRepository $repository) {}
+    public function __construct(
+        private readonly InvoiceRepository $repository,
+        private readonly EndingBalanceService $endingBalanceService,
+    ) {}
+
+    /**
+     * Guard bersama: tolak edit/hapus kalau periode Ending Balance invoice
+     * ini (berdasarkan klien_ar_id+tanggal_invoice saat ini) sudah LOCKED.
+     */
+    private function abortIfPeriodLocked(Invoice $invoice): void
+    {
+        if (!$invoice->klien_ar_id || !$invoice->tanggal_invoice) {
+            return;
+        }
+
+        abort_if(
+            $this->endingBalanceService->isLockedForPeriod(
+                $invoice->klien_ar_id,
+                $invoice->tanggal_invoice->toDateString()
+            ),
+            422,
+            'Invoice ini tidak dapat diedit/dihapus karena periodenya sudah dikunci di Ending Balance'
+        );
+    }
 
     public function paginate(array $filters = [], ?array $with = null): LengthAwarePaginator
     {
@@ -240,6 +264,8 @@ class InvoiceService
             'Opening balance hanya dapat diedit setelah ditolak'
         );
 
+        $this->abortIfPeriodLocked($invoice);
+
         $klien = KlienAr::findOrFail($data['klien_ar_id']);
 
         $saldoAwal = !empty($data['details'])
@@ -382,6 +408,8 @@ class InvoiceService
             422,
             'Invoice hanya dapat diedit jika berstatus DRAFT'
         );
+
+        $this->abortIfPeriodLocked($invoice);
 
         $klien    = KlienAr::findOrFail($dto->klien_ar_id);
         $carryover = $invoice->tagihan_periode_sebelumnya;
@@ -1014,6 +1042,8 @@ class InvoiceService
             422,
             'Hanya invoice berstatus DRAFT yang dapat dihapus'
         );
+
+        $this->abortIfPeriodLocked($invoice);
 
         $prevInvoice = Invoice::where('klien_ar_id', $invoice->klien_ar_id)
             ->where(function ($q) use ($invoice) {

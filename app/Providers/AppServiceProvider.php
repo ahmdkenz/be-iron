@@ -3,10 +3,12 @@
 namespace App\Providers;
 
 use App\Domain\Finance\Invoice\Observers\InvoiceObserver;
+use App\Domain\Finance\PembayaranAp\Observers\PembayaranApObserver;
 use App\Domain\Finance\PembayaranAr\Observers\PembayaranArObserver;
 use App\Domain\Finance\TagihanAp\Observers\TagihanApObserver;
 use App\Domain\Finance\VendorAp\Observers\VendorApObserver;
 use App\Models\Invoice;
+use App\Models\PembayaranAp;
 use App\Models\PembayaranAr;
 use App\Models\TagihanAp;
 use App\Models\VendorAp;
@@ -30,5 +32,6 @@ class AppServiceProvider extends ServiceProvider
         PembayaranAr::observe(PembayaranArObserver::class);
         TagihanAp::observe(TagihanApObserver::class);
         VendorAp::observe(VendorApObserver::class);
+        PembayaranAp::observe(PembayaranApObserver::class);
     }
 }

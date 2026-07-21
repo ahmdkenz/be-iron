@@ -2,6 +2,7 @@
 
 namespace App\Domain\Finance\TagihanAp\Services;
 
+use App\Domain\Finance\EndingBalanceAp\Services\EndingBalanceApService;
 use App\Domain\Finance\TagihanAp\DTO\TagihanApDTO;
 use App\Domain\Finance\TagihanAp\Repositories\TagihanApRepository;
 use App\Models\Karyawan;
@@ -15,7 +16,32 @@ use Illuminate\Support\Str;
 
 class TagihanApService
 {
-    public function __construct(private readonly TagihanApRepository $repository) {}
+    public function __construct(
+        private readonly TagihanApRepository $repository,
+        private readonly EndingBalanceApService $endingBalanceApService,
+    ) {}
+
+    /**
+     * Guard bersama: tolak edit/hapus kalau periode Ending Balance AP tagihan
+     * ini (berdasarkan vendor_ap_id+perusahaan_id+tanggal_tagihan saat ini)
+     * sudah LOCKED.
+     */
+    private function abortIfPeriodLocked(TagihanAp $tagihan): void
+    {
+        if (!$tagihan->vendor_ap_id || !$tagihan->perusahaan_id || !$tagihan->tanggal_tagihan) {
+            return;
+        }
+
+        abort_if(
+            $this->endingBalanceApService->isLockedForPeriod(
+                $tagihan->vendor_ap_id,
+                $tagihan->perusahaan_id,
+                $tagihan->tanggal_tagihan->toDateString()
+            ),
+            422,
+            'Tagihan ini tidak dapat diedit/dihapus karena periodenya sudah dikunci di Ending Balance AP'
+        );
+    }
 
     public function paginate(array $filters = [], ?array $with = null): LengthAwarePaginator
     {
@@ -127,6 +153,8 @@ class TagihanApService
             422,
             'Opening balance hanya dapat diedit setelah ditolak'
         );
+
+        $this->abortIfPeriodLocked($tagihan);
 
         $vendor = VendorAp::findOrFail($data['vendor_ap_id']);
 
@@ -350,6 +378,8 @@ class TagihanApService
             'Tagihan yang sudah ada pembayaran tidak dapat diedit'
         );
 
+        $this->abortIfPeriodLocked($tagihan);
+
         $vendor = VendorAp::findOrFail($dto->vendor_ap_id);
 
         $subtotal     = collect($dto->items)->sum(fn($item) => ($item['qty'] ?? 0) * ($item['harga_satuan'] ?? 0));
@@ -442,6 +472,8 @@ class TagihanApService
             422,
             'Tagihan tidak dapat dihapus karena memiliki riwayat pembayaran'
         );
+
+        $this->abortIfPeriodLocked($tagihan);
 
         DB::transaction(fn () => $this->repository->delete($tagihan));
     }

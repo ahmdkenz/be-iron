@@ -14,6 +14,13 @@ class InvoiceResource extends JsonResource
 {
     public function toArray(Request $request): array
     {
+        $isLocked = (bool) $this->tanggal_invoice
+            && EndingBalance::where('klien_ar_id', $this->klien_ar_id)
+                ->where('status', 'LOCKED')
+                ->where('periode_awal', '<=', $this->tanggal_invoice)
+                ->where('periode_akhir', '>=', $this->tanggal_invoice)
+                ->exists();
+
         return [
             'id'                         => $this->id,
             'no_invoice'                 => $this->no_invoice,
@@ -150,16 +157,10 @@ class InvoiceResource extends JsonResource
             'created_by_name'            => $this->whenLoaded('createdBy', fn() => $this->createdBy?->username),
             'updated_by'                 => $this->updated_by,
             'updated_by_name'            => $this->whenLoaded('updatedBy', fn() => $this->updatedBy?->username),
-            'is_eb_locked'               => $this->tanggal_invoice && !$this->is_opening_balance
-                ? EndingBalance::where('klien_ar_id', $this->klien_ar_id)
-                    ->where('status', 'LOCKED')
-                    ->where('periode_awal', '<=', $this->tanggal_invoice)
-                    ->where('periode_akhir', '>=', $this->tanggal_invoice)
-                    ->exists()
-                : false,
+            'is_eb_locked'               => $isLocked,
             'can_approve'                => $this->canApprove($request->user()),
             'can_reject'                 => $this->canReject($request->user()),
-            'can_edit'                   => $this->canEdit($request->user()),
+            'can_edit'                   => $this->canEdit($request->user(), $isLocked),
             'can_submit'                 => $this->canSubmit($request->user()),
             'can_record_payment'         => $this->isApprovedForFinanceFlow(),
             'can_print'                  => $this->isApprovedForFinanceFlow(),
@@ -217,11 +218,12 @@ class InvoiceResource extends JsonResource
         return $this->canApprove($user);
     }
 
-    private function canEdit(?User $user): bool
+    private function canEdit(?User $user, bool $isLocked = false): bool
     {
         return $this->is_opening_balance === true
             && $this->status === 'DRAFT'
             && $this->approval_status === 'REJECTED'
+            && !$isLocked
             && RoleHelper::canOperateOpeningBalance($user);
     }
 

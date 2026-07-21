@@ -2,6 +2,8 @@
 
 use App\Domain\Finance\ApShz360Sync\Controllers\ApShz360ImportController;
 use App\Domain\Finance\Dashboard\Controllers\DashboardApController;
+use App\Domain\Finance\EndingBalanceAp\Controllers\EndingBalanceApController;
+use App\Domain\Finance\EndingBalanceAp\Controllers\EndingBalanceApKoreksiController;
 use App\Domain\Finance\OpeningBalanceAp\Controllers\OpeningBalanceApController;
 use App\Domain\Finance\PembayaranAp\Controllers\PembayaranApController;
 use App\Domain\Finance\TagihanAp\Controllers\TagihanApController;
@@ -61,6 +63,25 @@ Route::prefix('opening-balance')->group(function () {
     Route::patch('/{id}/approve', [OpeningBalanceApController::class, 'approve'])->middleware('role:MANAGER|SUPERVISOR');
     Route::patch('/{id}/reject', [OpeningBalanceApController::class, 'reject'])->middleware('role:MANAGER|SUPERVISOR');
     Route::patch('/{id}/resubmit', [OpeningBalanceApController::class, 'resubmit']);
+});
+
+// ─── Ending Balance AP ────────────────────────────────────────────
+Route::prefix('ending-balance')->group(function () {
+    Route::get('/',                   [EndingBalanceApController::class, 'index']);
+    Route::get('/{id}/tagihan',       [EndingBalanceApController::class, 'tagihan']);
+    Route::get('/{id}/pembayaran',    [EndingBalanceApController::class, 'pembayaran']);
+    Route::get('/{id}',               [EndingBalanceApController::class, 'show']);
+    Route::patch('/{id}/lock',        [EndingBalanceApController::class, 'lock']);
+    Route::patch('/{id}/unlock',      [EndingBalanceApController::class, 'unlock']);
+    Route::patch('/{id}/recalculate', [EndingBalanceApController::class, 'recalculate']);
+
+    // Koreksi
+    Route::post('/{ebId}/koreksi',        [EndingBalanceApKoreksiController::class, 'store']);
+    Route::get('/koreksi/pending',        [EndingBalanceApKoreksiController::class, 'pending']);
+    Route::get('/koreksi/approved',       [EndingBalanceApKoreksiController::class, 'approved']);
+    Route::patch('/koreksi/{id}/approve', [EndingBalanceApKoreksiController::class, 'approve'])->middleware('role:MANAGER|SUPERVISOR|ADMIN');
+    Route::patch('/koreksi/{id}/reject',  [EndingBalanceApKoreksiController::class, 'reject'])->middleware('role:MANAGER|SUPERVISOR|ADMIN');
+    Route::get('/koreksi/{id}/print',     [EndingBalanceApKoreksiController::class, 'printDocument']);
 });
 
 // ─── Import SHZ360 (staging PO/Terima PO -> Tagihan AP) ──────────

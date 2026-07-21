@@ -115,6 +115,11 @@ class TagihanAp extends Model
         return $this->hasMany(PembayaranApItem::class, 'tagihan_ap_id');
     }
 
+    public function endingBalanceApKoreksi()
+    {
+        return $this->hasMany(EndingBalanceApKoreksi::class, 'tagihan_ap_id');
+    }
+
     public function approvalLogs()
     {
         return $this->hasMany(TagihanApApprovalLog::class, 'tagihan_ap_id')->latest('id');

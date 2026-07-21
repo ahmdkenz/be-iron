@@ -268,6 +268,45 @@ class RoleHelper
         return self::isApStaff($user) ? $user->karyawan?->id : null;
     }
 
+    public static function canViewEndingBalanceAp(?User $user): bool
+    {
+        return self::hasAnyRole($user, [
+            RoleEnum::ADMIN,
+            RoleEnum::MANAGER,
+            RoleEnum::SUPERVISOR,
+            RoleEnum::AP,
+        ]);
+    }
+
+    public static function canOperateEndingBalanceAp(?User $user): bool
+    {
+        return self::hasAnyRole($user, [
+            RoleEnum::ADMIN,
+            RoleEnum::MANAGER,
+            RoleEnum::SUPERVISOR,
+            RoleEnum::AP,
+        ]);
+    }
+
+    public static function canLockEndingBalanceAp(?User $user): bool
+    {
+        return self::hasAnyRole($user, [
+            RoleEnum::ADMIN,
+            RoleEnum::MANAGER,
+            RoleEnum::SUPERVISOR,
+        ]);
+    }
+
+    // Approver koreksi Ending Balance AP (satu tahap): Manager/Supervisor/Admin.
+    public static function canApproveEndingBalanceAp(?User $user): bool
+    {
+        return self::hasAnyRole($user, [
+            RoleEnum::ADMIN,
+            RoleEnum::MANAGER,
+            RoleEnum::SUPERVISOR,
+        ]);
+    }
+
     // Returns true when the user may manage a record owned by $matchedByUserId:
     // Admin/Manager/Supervisor may always manage it; otherwise only the user who owns it.
     public static function canManageMatchedRecord(?User $user, ?int $matchedByUserId): bool

@@ -5,6 +5,7 @@ namespace App\Domain\Finance\TagihanAp\Controllers;
 use App\Domain\Finance\TagihanAp\DTO\TagihanApDTO;
 use App\Domain\Finance\TagihanAp\Requests\StoreTagihanApRequest;
 use App\Domain\Finance\TagihanAp\Requests\UpdateTagihanApRequest;
+use App\Domain\Finance\TagihanAp\Resources\TagihanApListResource;
 use App\Domain\Finance\TagihanAp\Resources\TagihanApResource;
 use App\Domain\Finance\TagihanAp\Services\TagihanApExportService;
 use App\Domain\Finance\TagihanAp\Services\TagihanApService;
@@ -18,6 +19,7 @@ use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Support\Facades\DB;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx as XlsxWriter;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
@@ -42,11 +44,36 @@ class TagihanApController extends Controller
         $filters['is_opening_balance'] = false;
         ApFilterScope::apply($filters, $user);
 
-        $list = $this->service->paginate($filters);
+        $list      = $this->service->paginate($filters);
+        $lockedIds = $this->batchLoadEbLockedIds($list->getCollection());
 
         return $this->paginatedResponse(
-            $list->through(fn($t) => new TagihanApResource($t))
+            $list->through(fn($t) => new TagihanApListResource($t, $lockedIds))
         );
+    }
+
+    /**
+     * Batch-load id tagihan yang berada dalam periode ending balance AP LOCKED,
+     * satu query untuk seluruh halaman (hindari N+1 per baris).
+     */
+    private function batchLoadEbLockedIds(\Illuminate\Support\Collection $tagihanList): array
+    {
+        $ids = $tagihanList->pluck('id')->all();
+        if (empty($ids)) {
+            return [];
+        }
+
+        return DB::table('tb_tagihan_ap as t')
+            ->join('tb_ending_balance_ap as eb', function ($join) {
+                $join->on('t.vendor_ap_id', '=', 'eb.vendor_ap_id')
+                    ->on('t.perusahaan_id', '=', 'eb.perusahaan_id')
+                    ->whereColumn('t.tanggal_tagihan', '>=', 'eb.periode_awal')
+                    ->whereColumn('t.tanggal_tagihan', '<=', 'eb.periode_akhir');
+            })
+            ->where('eb.status', 'LOCKED')
+            ->whereIn('t.id', $ids)
+            ->pluck('t.id')
+            ->all();
     }
 
     public function summary(Request $request): JsonResponse

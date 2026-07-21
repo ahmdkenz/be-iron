@@ -2,6 +2,7 @@
 
 namespace App\Support\Helpers;
 
+use App\Models\EndingBalanceApKoreksi;
 use App\Models\EndingBalanceKoreksi;
 use App\Models\Invoice;
 use App\Models\PembayaranAp;
@@ -139,6 +140,42 @@ class SignatureBarcodeHelper
             "Disetujui Oleh: {$approvedByName}",
             "No Dokumen: {$k->no_dokumen}",
             "No Invoice: " . ($k->invoice?->no_invoice ?? '-'),
+            "Nilai: {$nilai}",
+            "Tanggal: {$tglFormatted}",
+            "Status: {$k->status}",
+        ];
+
+        return implode("\n", $lines);
+    }
+
+    public static function buildKoreksiApPreparedPayload(EndingBalanceApKoreksi $k, string $preparedByName): string
+    {
+        $tanggal      = $k->approved_at ?? $k->submitted_at;
+        $tglFormatted = $tanggal ? Carbon::parse($tanggal)->format('d-m-Y') : '-';
+        $nilai        = 'Rp ' . number_format(abs((float) $k->nilai_koreksi), 0, ',', '.');
+
+        $lines = [
+            "Disiapkan Oleh: {$preparedByName}",
+            "No Dokumen: {$k->no_dokumen}",
+            "No Tagihan: " . ($k->tagihanAp?->no_tagihan ?? '-'),
+            "Nilai: {$nilai}",
+            "Tanggal: {$tglFormatted}",
+            "Status: {$k->status}",
+        ];
+
+        return implode("\n", $lines);
+    }
+
+    public static function buildKoreksiApApprovedPayload(EndingBalanceApKoreksi $k, string $approvedByName): string
+    {
+        $tanggal      = $k->approved_at ?? $k->submitted_at;
+        $tglFormatted = $tanggal ? Carbon::parse($tanggal)->format('d-m-Y') : '-';
+        $nilai        = 'Rp ' . number_format(abs((float) $k->nilai_koreksi), 0, ',', '.');
+
+        $lines = [
+            "Disetujui Oleh: {$approvedByName}",
+            "No Dokumen: {$k->no_dokumen}",
+            "No Tagihan: " . ($k->tagihanAp?->no_tagihan ?? '-'),
             "Nilai: {$nilai}",
             "Tanggal: {$tglFormatted}",
             "Status: {$k->status}",

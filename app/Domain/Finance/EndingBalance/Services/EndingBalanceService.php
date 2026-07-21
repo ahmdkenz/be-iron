@@ -13,6 +13,20 @@ use Illuminate\Support\Facades\DB;
 class EndingBalanceService
 {
     /**
+     * Apakah tanggal tertentu untuk klien berada dalam periode Ending Balance
+     * yang berstatus LOCKED. Dipakai sebagai guard sebelum mengizinkan
+     * edit/hapus Invoice (termasuk Opening Balance).
+     */
+    public function isLockedForPeriod(int $klienArId, string $tanggal): bool
+    {
+        return EndingBalance::where('klien_ar_id', $klienArId)
+            ->where('status', 'LOCKED')
+            ->where('periode_awal', '<=', $tanggal)
+            ->where('periode_akhir', '>=', $tanggal)
+            ->exists();
+    }
+
+    /**
      * Paginated list of ending balances with filters.
      */
     public function paginate(array $filters = []): LengthAwarePaginator

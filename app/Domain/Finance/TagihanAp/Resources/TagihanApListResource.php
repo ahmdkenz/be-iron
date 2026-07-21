@@ -2,22 +2,20 @@
 
 namespace App\Domain\Finance\TagihanAp\Resources;
 
-use App\Models\EndingBalanceAp;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 use Illuminate\Support\Facades\URL;
 
-class TagihanApResource extends JsonResource
+class TagihanApListResource extends JsonResource
 {
+    public function __construct($resource, private readonly array $ebLockedIds = [])
+    {
+        parent::__construct($resource);
+    }
+
     public function toArray(Request $request): array
     {
-        $isLocked = $this->vendor_ap_id && $this->perusahaan_id && $this->tanggal_tagihan
-            && EndingBalanceAp::where('vendor_ap_id', $this->vendor_ap_id)
-                ->where('perusahaan_id', $this->perusahaan_id)
-                ->where('status', 'LOCKED')
-                ->where('periode_awal', '<=', $this->tanggal_tagihan)
-                ->where('periode_akhir', '>=', $this->tanggal_tagihan)
-                ->exists();
+        $isLocked = in_array($this->id, $this->ebLockedIds, true);
 
         return [
             'id'                  => $this->id,
@@ -52,7 +50,6 @@ class TagihanApResource extends JsonResource
             'is_opening_balance'  => $this->is_opening_balance,
             'is_eb_ap_locked'     => $isLocked,
             'can_edit'            => (float) $this->total_pembayaran === 0.0 && !$isLocked,
-            'items'               => TagihanApItemResource::collection($this->whenLoaded('items')),
             'submitted_at'        => $this->submitted_at?->toIso8601String(),
             'submitted_by_name'   => $this->whenLoaded('submittedBy', fn() => $this->submittedBy?->username),
             'approved_at'         => $this->approved_at?->toIso8601String(),
@@ -68,7 +65,6 @@ class TagihanApResource extends JsonResource
             'created_by_name'     => $this->whenLoaded('createdBy', fn() => $this->createdBy?->username),
             'created_at'          => $this->created_at?->setTimezone('Asia/Jakarta')->format('d-m-Y H:i'),
             'updated_at'          => $this->updated_at?->setTimezone('Asia/Jakarta')->format('d-m-Y H:i'),
-            'deleted_at'          => $this->deleted_at?->setTimezone('Asia/Jakarta')->format('d-m-Y H:i'),
         ];
     }
 }

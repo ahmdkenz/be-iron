@@ -2,6 +2,7 @@
 
 namespace App\Domain\Finance\OpeningBalanceAp\Resources;
 
+use App\Models\EndingBalanceAp;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 use Illuminate\Support\Facades\URL;
@@ -10,6 +11,14 @@ class OpeningBalanceApResource extends JsonResource
 {
     public function toArray(Request $request): array
     {
+        $isLocked = $this->vendor_ap_id && $this->perusahaan_id && $this->tanggal_tagihan
+            && EndingBalanceAp::where('vendor_ap_id', $this->vendor_ap_id)
+                ->where('perusahaan_id', $this->perusahaan_id)
+                ->where('status', 'LOCKED')
+                ->where('periode_awal', '<=', $this->tanggal_tagihan)
+                ->where('periode_akhir', '>=', $this->tanggal_tagihan)
+                ->exists();
+
         return [
             'id'                  => $this->id,
             'no_tagihan'          => $this->no_tagihan,
@@ -39,7 +48,8 @@ class OpeningBalanceApResource extends JsonResource
             'status'              => $this->status,
             'approval_status'     => $this->approval_status,
             'is_opening_balance'  => $this->is_opening_balance,
-            'can_edit'            => $this->status === 'DRAFT' && $this->approval_status === 'REJECTED',
+            'is_eb_ap_locked'     => $isLocked,
+            'can_edit'            => $this->status === 'DRAFT' && $this->approval_status === 'REJECTED' && !$isLocked,
             'can_resubmit'        => $this->status === 'DRAFT' && $this->approval_status === 'REJECTED',
             'opening_balance_ap_details' => $this->whenLoaded('openingBalanceApDetails', fn() =>
                 OpeningBalanceApDetailResource::collection($this->openingBalanceApDetails)
