@@ -95,11 +95,8 @@ Route::prefix('laporan')->group(function () {
     // Export: rate limit ketat untuk mencegah exfiltrasi & DoS, sama seperti export laporan AR.
     Route::middleware('throttle:10,1')->group(function () {
         Route::get('/hutang-vendor/export-excel',     [ApLaporanController::class, 'hutangVendorExportExcel']);
-        Route::get('/hutang-vendor/export-pdf',       [ApLaporanController::class, 'hutangVendorExportPdf']);
         Route::get('/histori-pembayaran/export-excel',[ApLaporanController::class, 'historiPembayaranExportExcel']);
-        Route::get('/histori-pembayaran/export-pdf',  [ApLaporanController::class, 'historiPembayaranExportPdf']);
         Route::get('/aging/export-excel',             [ApLaporanController::class, 'agingExportExcel']);
-        Route::get('/aging/export-pdf',               [ApLaporanController::class, 'agingExportPdf']);
     });
 });
 
