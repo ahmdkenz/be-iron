@@ -2,53 +2,76 @@
 
 namespace App\Domain\Finance\ApShz360Sync\Services;
 
+use App\Domain\Finance\ApShz360Sync\Exceptions\ApShz360SyncInProgressException;
 use App\Domain\Finance\ApShz360Sync\Support\VendorNameMatcher;
 use App\Models\ApShz360PoImport;
 use App\Models\ApShz360PoImportItem;
 use App\Models\ApShz360ReceiptImport;
 use App\Models\ApShz360SyncRun;
 use App\Models\ApSourceVendorMap;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Throwable;
 
 class ApShz360SyncService
 {
+    private const LOCK_KEY = 'ap-shz360-sync-full-lock';
+
+    // Failsafe kalau proses crash tanpa sempat release lock (bukan waktu tunggu normal).
+    private const LOCK_TIMEOUT_SECONDS = 600;
+
     public function __construct(private readonly Shz360ApiClient $client) {}
 
     /**
      * Orkestrasi 1 siklus sync penuh (dipakai command terjadwal & tombol retry manual).
      * Mundur 1 menit dari run sukses terakhir sebagai buffer supaya tidak ada
      * perubahan yang jatuh tepat di batas window dan terlewat.
+     *
+     * Baseline updated_since HANYA diambil dari run berstatus success (bersih tanpa
+     * error baris). Run partial_success sengaja tidak menjadi baseline, supaya baris
+     * yang gagal diproses tetap eligible untuk ditarik ulang di sync berikutnya.
+     *
+     * @throws ApShz360SyncInProgressException jika sync lain (scheduler/manual) masih berjalan.
      */
     public function runFullSync(): ApShz360SyncRun
     {
-        $run = ApShz360SyncRun::create(['started_at' => now(), 'status' => 'running']);
+        $lock = Cache::lock(self::LOCK_KEY, self::LOCK_TIMEOUT_SECONDS);
 
-        $lastSuccess = ApShz360SyncRun::where('status', 'success')
-            ->where('id', '!=', $run->id)
-            ->latest('started_at')
-            ->first();
-        $updatedSince = $lastSuccess?->started_at?->subMinute()->toIso8601String();
-
-        try {
-            $this->syncPurchaseOrders($run, $updatedSince);
-            $this->syncTerimaPos($run, $updatedSince);
-
-            $errorCount = $run->errors()->count();
-            $run->update([
-                'status' => 'success',
-                'finished_at' => now(),
-                'message' => $errorCount > 0 ? "Selesai dengan {$errorCount} baris gagal (lihat tb_ap_shz360_sync_errors)." : null,
-            ]);
-        } catch (Throwable $e) {
-            $run->update([
-                'status' => 'failed',
-                'finished_at' => now(),
-                'message' => $e->getMessage(),
-            ]);
+        if (! $lock->get()) {
+            throw new ApShz360SyncInProgressException();
         }
 
-        return $run->refresh();
+        try {
+            $run = ApShz360SyncRun::create(['started_at' => now(), 'status' => 'running']);
+
+            $lastSuccess = ApShz360SyncRun::where('status', 'success')
+                ->where('id', '!=', $run->id)
+                ->latest('started_at')
+                ->first();
+            $updatedSince = $lastSuccess?->started_at?->subMinute()->toIso8601String();
+
+            try {
+                $this->syncPurchaseOrders($run, $updatedSince);
+                $this->syncTerimaPos($run, $updatedSince);
+
+                $errorCount = $run->errors()->count();
+                $run->update([
+                    'status' => $errorCount > 0 ? 'partial_success' : 'success',
+                    'finished_at' => now(),
+                    'message' => $errorCount > 0 ? "Sync selesai sebagian, ada {$errorCount} baris gagal." : null,
+                ]);
+            } catch (Throwable $e) {
+                $run->update([
+                    'status' => 'failed',
+                    'finished_at' => now(),
+                    'message' => $e->getMessage(),
+                ]);
+            }
+
+            return $run->refresh();
+        } finally {
+            $lock->release();
+        }
     }
 
     public function syncPurchaseOrders(ApShz360SyncRun $run, ?string $updatedSince = null): void

@@ -2,6 +2,7 @@
 
 namespace App\Domain\Finance\ApShz360Sync\Controllers;
 
+use App\Domain\Finance\ApShz360Sync\Exceptions\ApShz360SyncInProgressException;
 use App\Domain\Finance\ApShz360Sync\Services\ApShz360ImportService;
 use App\Domain\Finance\ApShz360Sync\Services\ApShz360SyncService;
 use App\Domain\Finance\ApShz360Sync\Support\VendorNameMatcher;
@@ -116,11 +117,19 @@ class ApShz360ImportController extends Controller
     {
         $this->authorizeOperate();
 
-        $run = $this->syncService->runFullSync();
+        try {
+            $run = $this->syncService->runFullSync();
+        } catch (ApShz360SyncInProgressException $e) {
+            return $this->errorResponse($e->getMessage(), 409);
+        }
 
         return $this->successResponse(
             $this->syncRunToArray($run),
-            $run->status === 'success' ? 'Sync berhasil dijalankan ulang' : 'Sync gagal, lihat detail error'
+            match ($run->status) {
+                'success' => 'Sync berhasil dijalankan ulang',
+                'partial_success' => "Sync selesai sebagian, ada {$run->errors()->count()} baris gagal.",
+                default => 'Sync gagal, lihat detail error',
+            }
         );
     }
 

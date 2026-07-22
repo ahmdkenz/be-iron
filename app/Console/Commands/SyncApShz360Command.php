@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Domain\Finance\ApShz360Sync\Exceptions\ApShz360SyncInProgressException;
 use App\Domain\Finance\ApShz360Sync\Services\ApShz360SyncService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
@@ -14,7 +15,13 @@ class SyncApShz360Command extends Command
 
     public function handle(ApShz360SyncService $service): int
     {
-        $run = $service->runFullSync();
+        try {
+            $run = $service->runFullSync();
+        } catch (ApShz360SyncInProgressException $e) {
+            $this->warn($e->getMessage());
+
+            return self::SUCCESS;
+        }
 
         if ($run->status === 'failed') {
             Log::error('ap:sync-shz360-po gagal', ['run_id' => $run->id, 'error' => $run->message]);
@@ -23,7 +30,11 @@ class SyncApShz360Command extends Command
             return self::FAILURE;
         }
 
-        $this->info("Sync selesai. PO: {$run->po_upserted}/{$run->po_fetched}, Terima PO: {$run->receipt_upserted}/{$run->receipt_fetched}.");
+        if ($run->status === 'partial_success') {
+            Log::warning('ap:sync-shz360-po selesai sebagian', ['run_id' => $run->id, 'error_count' => $run->errors()->count()]);
+        }
+
+        $this->info("Sync selesai ({$run->status}). PO: {$run->po_upserted}/{$run->po_fetched}, Terima PO: {$run->receipt_upserted}/{$run->receipt_fetched}.");
 
         return self::SUCCESS;
     }
