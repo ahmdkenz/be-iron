@@ -8,10 +8,8 @@ use App\Http\Controllers\Controller;
 use App\Support\Helpers\ApFilterScope;
 use App\Support\Helpers\RoleHelper;
 use App\Support\Traits\ApiResponse;
-use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Http\Response;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx as XlsxWriter;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
@@ -72,18 +70,6 @@ class ApLaporanController extends Controller
         return $this->streamXlsx($spreadsheet, 'hutang-vendor-' . now()->format('Ymd-His'));
     }
 
-    public function hutangVendorExportPdf(Request $request): Response
-    {
-        $this->authorizeView();
-
-        $filters = $this->scopedFilters($request, [
-            'tanggal_dari', 'tanggal_sampai', 'vendor_ap_id', 'perusahaan_id', 'as_of_date',
-        ]);
-        $report = $this->service->getHutangVendor($filters);
-
-        return $this->streamPdf('finance.ap-laporan.hutang-vendor-pdf', ['report' => $report], 'hutang-vendor-' . now()->format('Ymd-His'));
-    }
-
     // ─── Aging Hutang ───────────────────────────────────────────────
 
     public function aging(Request $request): JsonResponse
@@ -123,16 +109,6 @@ class ApLaporanController extends Controller
         $spreadsheet = $this->exportService->buildAging($report);
 
         return $this->streamXlsx($spreadsheet, 'aging-hutang-' . now()->format('Ymd-His'));
-    }
-
-    public function agingExportPdf(Request $request): Response
-    {
-        $this->authorizeView();
-
-        $filters = $this->scopedFilters($request, ['as_of_date', 'vendor_ap_id', 'perusahaan_id']);
-        $report  = $this->service->getAging($filters);
-
-        return $this->streamPdf('finance.ap-laporan.aging-pdf', ['report' => $report], 'aging-hutang-' . now()->format('Ymd-His'));
     }
 
     // ─── Histori Pembayaran ─────────────────────────────────────────
@@ -185,23 +161,6 @@ class ApLaporanController extends Controller
         return $this->streamXlsx($spreadsheet, 'histori-pembayaran-ap-' . now()->format('Ymd-His'));
     }
 
-    public function historiPembayaranExportPdf(Request $request): Response
-    {
-        $this->authorizeView();
-
-        $filters = $this->scopedFilters($request, [
-            'tanggal_dari', 'tanggal_sampai', 'vendor_ap_id', 'perusahaan_id', 'metode_pembayaran', 'kategori_voucher',
-        ]);
-
-        $report = $this->service->getHistoriPembayaran($filters);
-
-        return $this->streamPdf(
-            'finance.ap-laporan.histori-pembayaran-pdf',
-            ['report' => $report, 'rows' => $report['rows']],
-            'histori-pembayaran-ap-' . now()->format('Ymd-His')
-        );
-    }
-
     // ─── Helpers ────────────────────────────────────────────────────
 
     private function scopedFilters(Request $request, array $keys): array
@@ -236,20 +195,5 @@ class ApLaporanController extends Controller
                 'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             ])
             ->deleteFileAfterSend(true);
-    }
-
-    private function streamPdf(string $view, array $data, string $filenameBase): Response
-    {
-        $data['printed_at'] = now()->format('d-m-Y H:i');
-
-        return Pdf::loadView($view, $data)
-            ->setPaper('a4', 'landscape')
-            ->setOptions([
-                'isHtml5ParserEnabled' => true,
-                'isRemoteEnabled'      => false,
-                'defaultFont'          => 'Arial',
-                'dpi'                  => 96,
-            ])
-            ->stream("{$filenameBase}.pdf");
     }
 }
