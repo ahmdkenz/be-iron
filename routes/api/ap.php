@@ -1,5 +1,6 @@
 <?php
 
+use App\Domain\Finance\ApLaporan\Controllers\ApLaporanController;
 use App\Domain\Finance\ApShz360Sync\Controllers\ApShz360ImportController;
 use App\Domain\Finance\Dashboard\Controllers\DashboardApController;
 use App\Domain\Finance\EndingBalanceAp\Controllers\EndingBalanceApController;
@@ -83,6 +84,23 @@ Route::prefix('ending-balance')->group(function () {
     Route::patch('/koreksi/{id}/approve', [EndingBalanceApKoreksiController::class, 'approve'])->middleware('role:MANAGER|SUPERVISOR|ADMIN');
     Route::patch('/koreksi/{id}/reject',  [EndingBalanceApKoreksiController::class, 'reject'])->middleware('role:MANAGER|SUPERVISOR|ADMIN');
     Route::get('/koreksi/{id}/print',     [EndingBalanceApKoreksiController::class, 'printDocument']);
+});
+
+// ─── Laporan AP ───────────────────────────────────────────────────
+Route::prefix('laporan')->group(function () {
+    Route::get('/hutang-vendor',         [ApLaporanController::class, 'hutangVendor']);
+    Route::get('/histori-pembayaran',    [ApLaporanController::class, 'historiPembayaran']);
+    Route::get('/aging',                 [ApLaporanController::class, 'aging']);
+
+    // Export: rate limit ketat untuk mencegah exfiltrasi & DoS, sama seperti export laporan AR.
+    Route::middleware('throttle:10,1')->group(function () {
+        Route::get('/hutang-vendor/export-excel',     [ApLaporanController::class, 'hutangVendorExportExcel']);
+        Route::get('/hutang-vendor/export-pdf',       [ApLaporanController::class, 'hutangVendorExportPdf']);
+        Route::get('/histori-pembayaran/export-excel',[ApLaporanController::class, 'historiPembayaranExportExcel']);
+        Route::get('/histori-pembayaran/export-pdf',  [ApLaporanController::class, 'historiPembayaranExportPdf']);
+        Route::get('/aging/export-excel',             [ApLaporanController::class, 'agingExportExcel']);
+        Route::get('/aging/export-pdf',               [ApLaporanController::class, 'agingExportPdf']);
+    });
 });
 
 // ─── Import SHZ360 (staging PO/Terima PO -> Tagihan AP) ──────────

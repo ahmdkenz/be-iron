@@ -86,8 +86,10 @@ Route::get('/mutasi-piutang', [MutasiPiutangController::class, 'index']);
 Route::get('/mutasi-piutang/export-excel', [MutasiPiutangController::class, 'exportExcel']);
 
 // ─── Rekening Koran (Jurnal Umum Bank Statement) ──────────────────
-Route::get('/rekening-koran',                          [RekeningKoranController::class, 'index']);
-Route::get('/rekening-koran/pic-ar-list',              [RekeningKoranController::class, 'picArList']);
+// Laporan global lintas PIC — hanya ADMIN/MANAGER/SUPERVISOR. Posting tetap
+// dibuka untuk AR karena dipakai dalam alur Rekonsiliasi Bank milik PIC AR.
+Route::get('/rekening-koran',                          [RekeningKoranController::class, 'index'])->middleware('role:ADMIN|MANAGER|SUPERVISOR');
+Route::get('/rekening-koran/pic-ar-list',              [RekeningKoranController::class, 'picArList'])->middleware('role:ADMIN|MANAGER|SUPERVISOR');
 Route::patch('/rekening-koran/{detail}/posting',       [RekeningKoranController::class, 'updatePosting'])->middleware('role:ADMIN|MANAGER|SUPERVISOR|AR');
 
 // ─── Jatuh Tempo ──────────────────────────────────────────────────
@@ -98,8 +100,8 @@ Route::get('/rekap-pembayaran', [RekapPembayaranController::class, 'index']);
 Route::get('/rekap-pembayaran/export-excel', [RekapPembayaranController::class, 'exportExcel']);
 
 // ─── Kinerja AR per PIC ───────────────────────────────────────────
-Route::get('/kinerja-ar', [KinerjaArController::class, 'index']);
-Route::get('/kinerja-ar/export-excel', [KinerjaArController::class, 'exportExcel']);
+// Laporan komparatif lintas PIC — hanya ADMIN/MANAGER/SUPERVISOR.
+Route::get('/kinerja-ar', [KinerjaArController::class, 'index'])->middleware('role:ADMIN|MANAGER|SUPERVISOR');
 
 // ─── Rekonsiliasi Bank Statement ──────────────────────────────────
 Route::prefix('rekonsiliasi-bank')->middleware('role:ADMIN|MANAGER|SUPERVISOR|AR|AP')->group(function () {
@@ -124,8 +126,10 @@ Route::prefix('rekonsiliasi-bank')->middleware('role:ADMIN|MANAGER|SUPERVISOR|AR
 });
 
 // ─── Pendapatan di Muka ───────────────────────────────────────────
-Route::get('/pendapatan-di-muka',                           [PendapatanDiMukaController::class, 'index']);
-Route::get('/pendapatan-di-muka/export-excel',              [PendapatanDiMukaController::class, 'exportExcel']);
+// Daftar/export laporan komparatif — hanya ADMIN/MANAGER/SUPERVISOR. Aksi
+// catat/batal/gunakan tetap dibuka untuk AR karena dipakai dalam alur
+// Rekonsiliasi Bank milik PIC AR sendiri.
+Route::get('/pendapatan-di-muka',                           [PendapatanDiMukaController::class, 'index'])->middleware('role:ADMIN|MANAGER|SUPERVISOR');
 Route::post('/pendapatan-di-muka/detail/{detail}/catat',    [PendapatanDiMukaController::class, 'store']);
 Route::delete('/pendapatan-di-muka/{pdm}/batal',            [PendapatanDiMukaController::class, 'cancel']);
 Route::post('/pendapatan-di-muka/{pdm}/gunakan',            [PendapatanDiMukaController::class, 'gunakan']);

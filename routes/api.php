@@ -32,8 +32,8 @@ Route::prefix('v1')->group(function () {
                 Route::get('jurnal-pic/export-excel',      [\App\Domain\Finance\JurnalPic\Controllers\JurnalPicController::class, 'exportExcel']);
                 Route::get('mutasi-piutang/export-excel',  [\App\Domain\Finance\MutasiPiutang\Controllers\MutasiPiutangController::class, 'exportExcel']);
                 Route::get('rekap-pembayaran/export-excel',[\App\Domain\Finance\RekapPembayaran\Controllers\RekapPembayaranController::class, 'exportExcel']);
-                Route::get('kinerja-ar/export-excel',      [\App\Domain\Finance\KinerjaAr\Controllers\KinerjaArController::class, 'exportExcel']);
-                Route::get('pendapatan-di-muka/export-excel', [\App\Domain\Finance\PendapatanDiMuka\Controllers\PendapatanDiMukaController::class, 'exportExcel']);
+                Route::get('kinerja-ar/export-excel',      [\App\Domain\Finance\KinerjaAr\Controllers\KinerjaArController::class, 'exportExcel'])->middleware('role:ADMIN|MANAGER|SUPERVISOR');
+                Route::get('pendapatan-di-muka/export-excel', [\App\Domain\Finance\PendapatanDiMuka\Controllers\PendapatanDiMukaController::class, 'exportExcel'])->middleware('role:ADMIN|MANAGER|SUPERVISOR');
                 Route::get('opening-balance/export',       [\App\Domain\Finance\OpeningBalance\Controllers\OpeningBalanceController::class, 'export']);
                 Route::post('rekonsiliasi-bank/upload',    [\App\Domain\Finance\RekonsiliasiBankStatement\Controllers\BankStatementController::class, 'upload']);
             });

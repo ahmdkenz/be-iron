@@ -3,7 +3,6 @@
 namespace App\Domain\Finance\JurnalPic\Services;
 
 use App\Models\PembayaranAr;
-use App\Support\Helpers\RoleHelper;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
@@ -48,16 +47,11 @@ class JurnalPicService
             ->when(
                 $filters['klien_ar_id'] ?? null,
                 fn(Builder $q, int $v) => $q->whereHas('invoice', fn($q) => $q->where('klien_ar_id', $v))
+            )
+            ->when(
+                $filters['pic_ar_karyawan_id'] ?? null,
+                fn(Builder $q, int $v) => $q->whereHas('invoice.klienAr', fn($q) => $q->where('karyawan_ar_id', $v))
             );
-
-        if (isset($filters['_user'])) {
-            $user = $filters['_user'];
-            if ($user->karyawan && !RoleHelper::hasGlobalFinanceAccess($user)) {
-                $query->whereHas('invoice', fn($q) =>
-                    $q->where('perusahaan_id', $user->karyawan->perusahaan_id)
-                );
-            }
-        }
 
         return $query;
     }
@@ -98,16 +92,15 @@ class JurnalPicService
 
         $query = PembayaranAr::query()
             ->whereHas('invoice')
-            ->when($noRef, fn(Builder $q, string $v) => $q->where('no_referensi', $v));
-
-        if (isset($filters['_user'])) {
-            $user = $filters['_user'];
-            if ($user->karyawan && !RoleHelper::hasGlobalFinanceAccess($user)) {
-                $query->whereHas('invoice', fn($q) =>
-                    $q->where('perusahaan_id', $user->karyawan->perusahaan_id)
-                );
-            }
-        }
+            ->when($noRef, fn(Builder $q, string $v) => $q->where('no_referensi', $v))
+            ->when(
+                $filters['perusahaan_id'] ?? null,
+                fn(Builder $q, int $v) => $q->whereHas('invoice', fn($q) => $q->where('perusahaan_id', $v))
+            )
+            ->when(
+                $filters['pic_ar_karyawan_id'] ?? null,
+                fn(Builder $q, int $v) => $q->whereHas('invoice.klienAr', fn($q) => $q->where('karyawan_ar_id', $v))
+            );
 
         return $query
             ->with([

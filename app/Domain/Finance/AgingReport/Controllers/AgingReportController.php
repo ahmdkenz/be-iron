@@ -4,6 +4,7 @@ namespace App\Domain\Finance\AgingReport\Controllers;
 
 use App\Domain\Finance\AgingReport\Services\AgingReportService;
 use App\Http\Controllers\Controller;
+use App\Support\Helpers\ArFilterScope;
 use App\Support\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -34,9 +35,10 @@ class AgingReportController extends Controller
             'per_page'       => ['nullable', 'integer', 'min:1', 'max:100'],
         ]);
 
-        $report = $this->service->getReport(
-            $request->only(['as_of_date', 'klien_ar_id', 'perusahaan_id', 'karyawan_ar_id', 'segment'])
-        );
+        $filters = $request->only(['as_of_date', 'klien_ar_id', 'perusahaan_id', 'karyawan_ar_id', 'segment']);
+        ArFilterScope::apply($filters, $request->user());
+
+        $report = $this->service->getReport($filters);
 
         // Quick-filter bucket (klik kartu summary) diterapkan di sini, bukan di
         // service, karena summary tetap harus dihitung dari seluruh baris —
@@ -70,9 +72,10 @@ class AgingReportController extends Controller
             'segment'        => ['nullable', 'in:B2B,B2C,ALL'],
         ]);
 
-        $report = $this->service->getReport(
-            $request->only(['as_of_date', 'klien_ar_id', 'perusahaan_id', 'karyawan_ar_id', 'segment'])
-        );
+        $filters = $request->only(['as_of_date', 'klien_ar_id', 'perusahaan_id', 'karyawan_ar_id', 'segment']);
+        ArFilterScope::apply($filters, $request->user());
+
+        $report = $this->service->getReport($filters);
 
         $spreadsheet = new Spreadsheet();
         $sheet       = $spreadsheet->getActiveSheet();

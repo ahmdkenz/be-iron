@@ -4,6 +4,7 @@ namespace App\Domain\Finance\RekapPembayaran\Controllers;
 
 use App\Domain\Finance\RekapPembayaran\Services\RekapPembayaranService;
 use App\Http\Controllers\Controller;
+use App\Support\Helpers\ArFilterScope;
 use App\Support\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -33,9 +34,10 @@ class RekapPembayaranController extends Controller
             'per_page'          => ['nullable', 'integer', 'min:1', 'max:100'],
         ]);
 
-        $report = $this->service->getReport(
-            $request->only(['tanggal_dari', 'tanggal_sampai', 'klien_ar_id', 'metode_pembayaran', 'segment'])
-        );
+        $filters = $request->only(['tanggal_dari', 'tanggal_sampai', 'klien_ar_id', 'metode_pembayaran', 'segment']);
+        ArFilterScope::apply($filters, $request->user());
+
+        $report = $this->service->getReport($filters);
 
         if ($perPage = $request->integer('per_page')) {
             ['items' => $report['rows'], 'meta' => $report['meta']]
@@ -59,9 +61,10 @@ class RekapPembayaranController extends Controller
             'segment'           => ['nullable', 'in:B2B,B2C,ALL'],
         ]);
 
-        $report = $this->service->getReport(
-            $request->only(['tanggal_dari', 'tanggal_sampai', 'klien_ar_id', 'metode_pembayaran', 'segment'])
-        );
+        $filters = $request->only(['tanggal_dari', 'tanggal_sampai', 'klien_ar_id', 'metode_pembayaran', 'segment']);
+        ArFilterScope::apply($filters, $request->user());
+
+        $report = $this->service->getReport($filters);
 
         $spreadsheet = new Spreadsheet();
         $sheet       = $spreadsheet->getActiveSheet();

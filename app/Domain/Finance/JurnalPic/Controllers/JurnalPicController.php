@@ -5,6 +5,7 @@ namespace App\Domain\Finance\JurnalPic\Controllers;
 use App\Domain\Finance\JurnalPic\Resources\JurnalPicResource;
 use App\Domain\Finance\JurnalPic\Services\JurnalPicService;
 use App\Http\Controllers\Controller;
+use App\Support\Helpers\ArFilterScope;
 use App\Support\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -36,13 +37,11 @@ class JurnalPicController extends Controller
             'per_page'            => ['nullable', 'integer', 'min:1', 'max:100'],
         ]);
 
-        $filters          = $request->only([
+        $filters = $request->only([
             'no_referensi', 'karyawan_id', 'perusahaan_id', 'klien_ar_id',
             'metode_pembayaran', 'tanggal_dari', 'tanggal_sampai', 'status_rekonsiliasi', 'per_page',
         ]);
-        /** @var \App\Models\User $authUser */
-        $authUser         = auth()->user();
-        $filters['_user'] = $authUser->load('karyawan');
+        ArFilterScope::apply($filters, $request->user());
 
         $paginator = $this->service->getJurnal($filters);
         $summary   = $this->service->getSummary($filters);
@@ -68,13 +67,11 @@ class JurnalPicController extends Controller
             'no_referensi' => ['required', 'string', 'max:100'],
         ]);
 
-        /** @var \App\Models\User $authUser */
-        $authUser = auth()->user();
-        $filters  = [
-            '_user'        => $authUser->load('karyawan'),
+        $filters = [
             'no_referensi' => $request->no_referensi,
             'per_page'     => 50,
         ];
+        ArFilterScope::apply($filters, $request->user());
 
         $rows = $this->service->getByReferensiExact($filters);
 
@@ -101,13 +98,11 @@ class JurnalPicController extends Controller
             'status_rekonsiliasi' => ['nullable', 'in:MATCHED,POSSIBLE,UNMATCHED,DIABAIKAN'],
         ]);
 
-        $filters          = $request->only([
+        $filters = $request->only([
             'no_referensi', 'karyawan_id', 'perusahaan_id', 'klien_ar_id',
             'metode_pembayaran', 'tanggal_dari', 'tanggal_sampai', 'status_rekonsiliasi',
         ]);
-        /** @var \App\Models\User $authUser */
-        $authUser         = auth()->user();
-        $filters['_user'] = $authUser->load('karyawan');
+        ArFilterScope::apply($filters, $request->user());
 
         $rows    = $this->service->getJurnalAll($filters);
         $summary = $this->service->getSummary($filters);

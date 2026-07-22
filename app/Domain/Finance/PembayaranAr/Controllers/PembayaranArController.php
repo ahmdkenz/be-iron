@@ -65,6 +65,12 @@ class PembayaranArController extends Controller
             );
         }
 
+        if (RoleHelper::isArOnly($user) && $user->karyawan) {
+            $query->whereHas('invoice.klienAr', fn($q) =>
+                $q->where('karyawan_ar_id', $user->karyawan->id)
+            );
+        }
+
         $totalJumlah = (clone $query)->sum('jumlah_pembayaran');
         $list        = $query->latest('tanggal_pembayaran')->paginate($request->per_page ?? 20);
 

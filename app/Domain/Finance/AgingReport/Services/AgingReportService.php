@@ -16,6 +16,8 @@ class AgingReportService
 
         $segmentTypes = $this->resolveSegmentTypes($filters['segment'] ?? null);
 
+        $picArFilter = $filters['pic_ar_karyawan_id'] ?? null;
+
         $regularInvoices = Invoice::query()
             ->with(['klienAr.perusahaan', 'klienAr.karyawanAr', 'klienAr.resto'])
             ->where('is_opening_balance', false)
@@ -23,6 +25,7 @@ class AgingReportService
             ->when($filters['klien_ar_id'] ?? null, fn($q, $v) => $q->where('klien_ar_id', $v))
             ->when($filters['perusahaan_id'] ?? null, fn($q, $v) => $q->where('perusahaan_id', $v))
             ->when($filters['karyawan_ar_id'] ?? null, fn($q, $v) => $q->whereHas('klienAr', fn($q) => $q->where('karyawan_ar_id', $v)))
+            ->when($picArFilter, fn($q, $v) => $q->whereHas('klienAr', fn($q) => $q->where('karyawan_ar_id', $v)))
             ->when($segmentTypes, fn($q) => $q->whereHas('klienAr', fn($q) => $q->whereIn('tipe_klien', $segmentTypes)))
             ->get();
 
@@ -34,6 +37,7 @@ class AgingReportService
             ->when($filters['klien_ar_id'] ?? null, fn($q, $v) => $q->where('klien_ar_id', $v))
             ->when($filters['perusahaan_id'] ?? null, fn($q, $v) => $q->where('perusahaan_id', $v))
             ->when($filters['karyawan_ar_id'] ?? null, fn($q, $v) => $q->whereHas('klienAr', fn($q) => $q->where('karyawan_ar_id', $v)))
+            ->when($picArFilter, fn($q, $v) => $q->whereHas('klienAr', fn($q) => $q->where('karyawan_ar_id', $v)))
             ->when($segmentTypes, fn($q) => $q->whereHas('klienAr', fn($q) => $q->whereIn('tipe_klien', $segmentTypes)))
             ->get();
 

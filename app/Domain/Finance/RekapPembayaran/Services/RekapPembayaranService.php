@@ -30,7 +30,9 @@ class RekapPembayaranService
             ->when($to, fn($q) => $q->whereDate('tb_pembayaran_ar.tanggal_pembayaran', '<=', $to->toDateString()))
             ->when($filters['klien_ar_id'] ?? null, fn($q, $v) => $q->where('tb_invoice.klien_ar_id', $v))
             ->when($filters['metode_pembayaran'] ?? null, fn($q, $v) => $q->where('tb_pembayaran_ar.metode_pembayaran', $v))
-            ->when($segmentTypes, fn($q) => $q->whereIn('tb_klien_ar.tipe_klien', $segmentTypes));
+            ->when($segmentTypes, fn($q) => $q->whereIn('tb_klien_ar.tipe_klien', $segmentTypes))
+            ->when($filters['perusahaan_id'] ?? null, fn($q, $v) => $q->where('tb_invoice.perusahaan_id', $v))
+            ->when($filters['pic_ar_karyawan_id'] ?? null, fn($q, $v) => $q->where('tb_klien_ar.karyawan_ar_id', $v));
 
         // Rekap per metode (untuk summary cards)
         // Gunakan COUNT/SUM DISTINCT untuk menghindari duplikasi akibat LEFT JOIN bsd
