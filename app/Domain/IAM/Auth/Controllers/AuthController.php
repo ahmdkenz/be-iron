@@ -70,8 +70,8 @@ class AuthController extends Controller
         $user->update(['refresh_token' => hash('sha256', $refreshToken)]);
 
         $isProduction   = app()->isProduction();
-        $accessCookie   = cookie('auth_token', $accessToken, 1440, '/api', null, $isProduction, true, false, 'Strict');
-        $refreshCookie  = cookie('refresh_token', $refreshToken, self::REFRESH_TOKEN_TTL, '/api/v1/auth/refresh', null, $isProduction, true, false, 'Strict');
+        $accessCookie   = cookie('auth_token', $accessToken, 1440, '/api', null, $isProduction, true, false, 'Lax');
+        $refreshCookie  = cookie('refresh_token', $refreshToken, self::REFRESH_TOKEN_TTL, '/api/v1/auth/refresh', null, $isProduction, true, false, 'Lax');
 
         return $this->successResponse([
             'user' => new UserResource($user),
@@ -99,8 +99,8 @@ class AuthController extends Controller
         $user->update(['refresh_token' => hash('sha256', $newRefreshToken)]);
 
         $isProduction  = app()->isProduction();
-        $accessCookie  = cookie('auth_token', $newAccessToken, 1440, '/api', null, $isProduction, true, false, 'Strict');
-        $refreshCookie = cookie('refresh_token', $newRefreshToken, self::REFRESH_TOKEN_TTL, '/api/v1/auth/refresh', null, $isProduction, true, false, 'Strict');
+        $accessCookie  = cookie('auth_token', $newAccessToken, 1440, '/api', null, $isProduction, true, false, 'Lax');
+        $refreshCookie = cookie('refresh_token', $newRefreshToken, self::REFRESH_TOKEN_TTL, '/api/v1/auth/refresh', null, $isProduction, true, false, 'Lax');
 
         return $this->successResponse(null, 'Token diperbarui')->withCookie($accessCookie)->withCookie($refreshCookie);
     }
@@ -112,8 +112,8 @@ class AuthController extends Controller
         $user->currentAccessToken()->delete();
 
         $isProduction  = app()->isProduction();
-        $expiredAccess  = cookie('auth_token', '', -1, '/api', null, $isProduction, true, false, 'Strict');
-        $expiredRefresh = cookie('refresh_token', '', -1, '/api/v1/auth/refresh', null, $isProduction, true, false, 'Strict');
+        $expiredAccess  = cookie('auth_token', '', -1, '/api', null, $isProduction, true, false, 'Lax');
+        $expiredRefresh = cookie('refresh_token', '', -1, '/api/v1/auth/refresh', null, $isProduction, true, false, 'Lax');
 
         return $this->successResponse(null, 'Logout berhasil')->withCookie($expiredAccess)->withCookie($expiredRefresh);
     }
