@@ -60,7 +60,7 @@ class KlienArService
             'no_npwp'       => $dto->no_npwp,
             'no_wa'         => $dto->no_wa,
             'perusahaan_id' => $perusahaanId,
-            'karyawan_ar_id'=> $dto->karyawan_ar_id,
+            'karyawan_ar_id'=> $this->resolveKaryawanArId($dto),
             'resto_id'      => $dto->resto_id,
             'status'        => $dto->status,
             'created_by'    => auth()->id(),
@@ -84,11 +84,25 @@ class KlienArService
             'no_npwp'       => $dto->no_npwp,
             'no_wa'         => $dto->no_wa,
             'perusahaan_id' => $perusahaanId,
-            'karyawan_ar_id'=> $dto->karyawan_ar_id,
+            'karyawan_ar_id'=> $this->resolveKaryawanArId($dto),
             'resto_id'      => $dto->resto_id,
             'status'        => $dto->status,
             'updated_by'    => auth()->id(),
         ]);
+    }
+
+    // PIC Resto (karyawan_id) adalah sumber kebenaran untuk PIC AR Client tipe RESTO —
+    // mencegah karyawan_ar_id disimpangkan lewat form/API KlienAr sendiri.
+    private function resolveKaryawanArId(KlienArDTO $dto): int
+    {
+        if ($dto->tipe_klien === 'RESTO' && $dto->resto_id) {
+            $restoKaryawanId = Resto::find($dto->resto_id)?->karyawan_id;
+            if ($restoKaryawanId) {
+                return $restoKaryawanId;
+            }
+        }
+
+        return $dto->karyawan_ar_id;
     }
 
     public function delete(KlienAr $klien): void

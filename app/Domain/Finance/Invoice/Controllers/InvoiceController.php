@@ -67,6 +67,26 @@ class InvoiceController extends Controller
     }
 
     /**
+     * Tolak akses kalau user AR murni (PIC AR) meminta data Client yang bukan
+     * miliknya. Admin/Manager/Supervisor tetap punya akses global.
+     */
+    private function authorizeKlienArOwnership(int $klienArId): void
+    {
+        $picArKaryawanId = RoleHelper::picArKaryawanIdFor(auth()->user());
+        if ($picArKaryawanId === null) {
+            return;
+        }
+
+        $klien = KlienAr::withTrashed()->find($klienArId);
+
+        abort_if(
+            !$klien || (int) $klien->karyawan_ar_id !== $picArKaryawanId,
+            403,
+            'Anda hanya dapat mengakses data Client yang ditugaskan kepada Anda'
+        );
+    }
+
+    /**
      * Batch-load id invoice yang berada dalam periode ending balance LOCKED,
      * satu query untuk seluruh halaman (hindari N+1 per baris).
      */
@@ -125,6 +145,8 @@ class InvoiceController extends Controller
             'klien_ar_id' => ['required', 'integer', 'exists:tb_klien_ar,id'],
             'tanggal'     => ['nullable', 'date'],
         ]);
+
+        $this->authorizeKlienArOwnership((int) $validated['klien_ar_id']);
 
         $query = \App\Models\Invoice::with('items.barang')
             ->where('klien_ar_id', $validated['klien_ar_id'])
@@ -789,6 +811,11 @@ class InvoiceController extends Controller
     public function print(Request $request, int $id): Response|string
     {
         $invoice = $this->service->findForPrintOrFail($id);
+
+        if ($invoice->is_opening_balance && $invoice->klien_ar_id) {
+            $this->authorizeKlienArOwnership($invoice->klien_ar_id);
+        }
+
         abort_if(
             $invoice->requiresApproval() && !$invoice->isApprovedForFinanceFlow(),
             422,

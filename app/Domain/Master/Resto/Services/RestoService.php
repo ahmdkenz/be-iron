@@ -53,7 +53,7 @@ class RestoService
 
     public function update(Resto $resto, RestoDTO $dto): Resto
     {
-        return $this->repository->update($resto, [
+        $resto = $this->repository->update($resto, [
             'nama_resto'      => $dto->nama_resto,
             'perusahaan_id'   => $dto->perusahaan_id,
             'brand_id'        => $dto->brand_id,
@@ -70,6 +70,24 @@ class RestoService
             'keterangan'    => $dto->keterangan,
             'status'        => $dto->status,
         ]);
+
+        $this->syncKlienArPic($resto);
+
+        return $resto;
+    }
+
+    // PIC Resto (karyawan_id) adalah sumber kebenaran untuk PIC AR Client tipe RESTO.
+    // Cascade di sini mencegah karyawan_ar_id klien AR menyimpang lagi setelah PIC Resto diubah.
+    private function syncKlienArPic(Resto $resto): void
+    {
+        if (!$resto->karyawan_id) {
+            return;
+        }
+
+        $resto->klienArs()
+            ->where('tipe_klien', 'RESTO')
+            ->where('karyawan_ar_id', '!=', $resto->karyawan_id)
+            ->update(['karyawan_ar_id' => $resto->karyawan_id]);
     }
 
     public function delete(Resto $resto): void

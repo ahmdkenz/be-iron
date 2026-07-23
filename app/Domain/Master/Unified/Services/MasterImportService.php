@@ -242,7 +242,14 @@ class MasterImportService
                         }
                     }
 
-                    $existingResto = Resto::where('nama_resto', $namaCabang)->latest()->first();
+                    // kode_resto adalah identitas unik outlet — jadi kunci lookup utama supaya
+                    // dua cabang dengan nama sama (mis. "Veteran" di kota berbeda) tidak tertukar.
+                    // Fallback ke nama_resto hanya berlaku untuk baris lama yang kode_resto-nya kosong.
+                    if ($kodeResto !== '') {
+                        $existingResto = Resto::where('kode_resto', $kodeResto)->latest()->first();
+                    } else {
+                        $existingResto = Resto::where('nama_resto', $namaCabang)->latest()->first();
+                    }
                     if (!$existingResto && $kodeResto === '') {
                         $rowErrors[] = "kode_resto wajib diisi untuk data baru '{$namaCabang}'";
                     }
@@ -314,6 +321,20 @@ class MasterImportService
                     }
                 }
 
+                // ── Toggle segmen: PT menggantikan RESTO untuk outlet yang sama ────
+                // Kalau outlet ini sekarang berstatus PT, matikan Client AR RESTO lama
+                // miliknya (kalau masih aktif) supaya invoice berikutnya tidak lagi
+                // ter-resolve ke Client AR RESTO yang sudah usang. Arah sebaliknya
+                // (RESTO menggantikan PT) tidak butuh aksi serupa: Client AR PT dipakai
+                // bersama banyak outlet per perusahaan_id, jadi tidak boleh dimatikan
+                // hanya karena satu outlet berubah balik jadi RESTO.
+                if ($tipeKlien === 'PT' && $resto) {
+                    $kliUpd += KlienAr::where('resto_id', $resto->id)
+                        ->where('tipe_klien', 'RESTO')
+                        ->where('status', true)
+                        ->update(['status' => false, 'updated_by' => $actingUserId]);
+                }
+
                 // ── 3. KlienAr ──────────────────────────────────────────────
                 if ($namaCabang !== '' && in_array($tipeKlien, ['PT', 'RESTO'])) {
                     $namaPicAr      = $this->importValue($col($row, 'pic_ar'));
@@ -325,7 +346,13 @@ class MasterImportService
                     $namaKlien      = $namaCabang;
 
                     $karyawanArId = null;
-                    if ($namaPicAr) {
+                    if ($tipeKlien === 'RESTO') {
+                        // PIC AR untuk Client AR tipe RESTO selalu mengikuti PIC Resto (kolom nama_pic),
+                        // bukan kolom pic_ar terpisah — mencegah kolom nama_pic & pic_ar diisi beda orang
+                        // di Excel sehingga PIC AR "nyasar" dari PIC Resto yang sebenarnya.
+                        $karyawanArId = $karyawanId;
+                        if (!$karyawanArId) $rowErrors[] = "PIC Resto (nama_pic) wajib diisi untuk membuat Client AR tipe RESTO";
+                    } elseif ($namaPicAr) {
                         $karyawanArId = $karyawanMap[strtolower($namaPicAr)] ?? null;
                         if (!$karyawanArId) $rowErrors[] = "Karyawan AR '{$namaPicAr}' tidak ditemukan";
                     } else {
@@ -622,6 +649,10 @@ class MasterImportService
         [$namaMap, $restoMap, $restoNameMap, $restoNameCount] = $this->buildKlienMapsForInvoice();
         $barangMap = $this->buildBarangMapForInvoice();
 
+        // Preload acuan MASTER DATA per kode_resto — dipakai memvalidasi tiap baris
+        // MASTER INVOICE sebelum di-resolve (lihat validateInvoiceRowAgainstMasterData()).
+        $restoMasterMap = $this->buildRestoMasterMapForInvoice();
+
         // Preload EB locked
         $lockedEbMap = $this->invoiceGroupProcessor->buildLockedEbMap();
 
@@ -655,6 +686,13 @@ class MasterImportService
 
             if (!in_array($tipeInvoice, ['B2B', 'B2C'])) {
                 $errors[] = ['sheet' => 'MASTER INVOICE', 'row' => $lineNumber, 'message' => "tipe_invoice '{$tipeInvoice}' tidak valid. Harus 'B2B' atau 'B2C'."];
+                $invFail++;
+                continue;
+            }
+
+            $masterValidationError = $this->validateInvoiceRowAgainstMasterData($tipeInvoice, $namaKlien, $kodeResto, $restoMasterMap);
+            if ($masterValidationError) {
+                $errors[] = ['sheet' => 'MASTER INVOICE', 'row' => $lineNumber, 'message' => $masterValidationError];
                 $invFail++;
                 continue;
             }
@@ -921,10 +959,14 @@ class MasterImportService
 
     /**
      * @return array{0: array<string, KlienAr>, 1: array<string, KlienAr>, 2: array<string, KlienAr>, 3: array<string, int>}
-     *   [0] namaMap        lower(nama_klien) => KlienAr (semua tipe, first match) — dipakai B2B.
-     *   [1] restoMap       upper(kode_resto) => KlienAr tipe RESTO — jalur utama B2C.
-     *   [2] restoNameMap   lower(nama_klien) => KlienAr tipe RESTO — fallback B2C saat kode_resto kosong.
-     *   [3] restoNameCount lower(nama_klien) => jumlah KlienAr tipe RESTO dengan nama tsb (guard ambiguitas).
+     *   [0] namaMap        lower(nama_klien) => KlienAr AKTIF (semua tipe, first match) — dipakai B2B.
+     *   [1] restoMap       upper(kode_resto) => KlienAr tipe RESTO AKTIF — jalur utama B2C.
+     *   [2] restoNameMap   lower(nama_klien) => KlienAr tipe RESTO AKTIF — fallback B2C saat kode_resto kosong.
+     *   [3] restoNameCount lower(nama_klien) => jumlah KlienAr tipe RESTO AKTIF dengan nama tsb (guard ambiguitas).
+     *
+     * Hanya KlienAr berstatus aktif yang disertakan — supaya Client AR yang sudah
+     * dinonaktifkan (mis. karena outlet-nya beralih segmen PT/RESTO) tidak lagi
+     * dipakai untuk resolusi invoice baru.
      */
     private function buildKlienMapsForInvoice(): array
     {
@@ -934,6 +976,7 @@ class MasterImportService
         $restoNameCount = [];
 
         $klienList = KlienAr::with('resto:id,kode_resto')
+            ->where('status', true)
             ->get(['id', 'nama_klien', 'tipe_klien', 'resto_id', 'perusahaan_id', 'karyawan_ar_id']);
 
         foreach ($klienList as $klien) {
@@ -963,6 +1006,108 @@ class MasterImportService
         }
 
         return [$namaMap, $restoMap, $restoNameMap, $restoNameCount];
+    }
+
+    /**
+     * Bangun peta acuan MASTER DATA per kode_resto — dipakai untuk memvalidasi baris
+     * MASTER INVOICE (lihat validateInvoiceRowAgainstMasterData()) sebelum di-resolve.
+     *
+     * Untuk tiap outlet (kode_resto), tentukan segmen yang SEDANG AKTIF saat ini:
+     *   - RESTO, jika outlet itu punya KlienAr tipe RESTO aktif (resto_id).
+     *   - PT,    jika tidak, tapi entitas (perusahaan_id) outlet itu punya KlienAr tipe PT aktif.
+     * Outlet tanpa keduanya (belum onboarding AR / gagal saat MASTER DATA) tidak masuk peta,
+     * sehingga baris invoice untuk kode_resto tsb akan gagal validasi dengan pesan jelas.
+     *
+     * @return array<string, array{tipe_klien: string, nama_klien: string, klien_id: int}>
+     *   upper(kode_resto) => info Client AR aktif yang berlaku untuk outlet tsb.
+     */
+    private function buildRestoMasterMapForInvoice(): array
+    {
+        $map = [];
+
+        $restos = Resto::whereNotNull('kode_resto')
+            ->where('kode_resto', '!=', '')
+            ->get(['id', 'kode_resto', 'perusahaan_id']);
+
+        if ($restos->isEmpty()) {
+            return $map;
+        }
+
+        $restoKlienByRestoId = [];
+        foreach (
+            KlienAr::where('tipe_klien', 'RESTO')
+                ->where('status', true)
+                ->whereIn('resto_id', $restos->pluck('id'))
+                ->get(['id', 'resto_id', 'nama_klien']) as $klien
+        ) {
+            if (!isset($restoKlienByRestoId[$klien->resto_id])) {
+                $restoKlienByRestoId[$klien->resto_id] = $klien;
+            }
+        }
+
+        $ptKlienByPerusahaanId = [];
+        foreach (
+            KlienAr::where('tipe_klien', 'PT')
+                ->where('status', true)
+                ->whereIn('perusahaan_id', $restos->pluck('perusahaan_id')->filter()->unique())
+                ->get(['id', 'perusahaan_id', 'nama_klien']) as $klien
+        ) {
+            if (!isset($ptKlienByPerusahaanId[$klien->perusahaan_id])) {
+                $ptKlienByPerusahaanId[$klien->perusahaan_id] = $klien;
+            }
+        }
+
+        foreach ($restos as $resto) {
+            $kodeKey = strtoupper($resto->kode_resto);
+
+            if (isset($restoKlienByRestoId[$resto->id])) {
+                $klien = $restoKlienByRestoId[$resto->id];
+                $map[$kodeKey] = ['tipe_klien' => 'RESTO', 'nama_klien' => $klien->nama_klien, 'klien_id' => $klien->id];
+                continue;
+            }
+
+            if ($resto->perusahaan_id && isset($ptKlienByPerusahaanId[$resto->perusahaan_id])) {
+                $klien = $ptKlienByPerusahaanId[$resto->perusahaan_id];
+                $map[$kodeKey] = ['tipe_klien' => 'PT', 'nama_klien' => $klien->nama_klien, 'klien_id' => $klien->id];
+            }
+        }
+
+        return $map;
+    }
+
+    /**
+     * Validasi 1 baris MASTER INVOICE terhadap MASTER DATA (via $restoMasterMap).
+     * kode_resto adalah acuan utama — tipe_invoice & nama_klien pada baris invoice
+     * wajib konsisten dengan segmen yang tercatat di MASTER DATA untuk outlet tsb.
+     *
+     * @param array<string, array{tipe_klien: string, nama_klien: string, klien_id: int}> $restoMasterMap
+     * @return string|null pesan error, atau null jika valid.
+     */
+    private function validateInvoiceRowAgainstMasterData(
+        string $tipeInvoice,
+        string $namaKlien,
+        ?string $kodeResto,
+        array $restoMasterMap,
+    ): ?string {
+        if (!$kodeResto) {
+            return 'kode_resto wajib diisi.';
+        }
+
+        $entry = $restoMasterMap[strtoupper($kodeResto)] ?? null;
+        if (!$entry) {
+            return "kode_resto '{$kodeResto}' tidak ditemukan di MASTER DATA atau belum memiliki Client AR aktif.";
+        }
+
+        $expectedTipeInvoice = $entry['tipe_klien'] === 'PT' ? 'B2B' : 'B2C';
+        if ($tipeInvoice !== $expectedTipeInvoice) {
+            return "kode_resto '{$kodeResto}' terdaftar sebagai {$entry['tipe_klien']} di MASTER DATA — tipe_invoice seharusnya '{$expectedTipeInvoice}', bukan '{$tipeInvoice}'.";
+        }
+
+        if (strtolower($namaKlien) !== strtolower($entry['nama_klien'])) {
+            return "nama_klien '{$namaKlien}' tidak sesuai MASTER DATA untuk kode_resto '{$kodeResto}' (seharusnya '{$entry['nama_klien']}').";
+        }
+
+        return null;
     }
 
     /**

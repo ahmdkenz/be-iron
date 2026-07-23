@@ -76,6 +76,7 @@ class OpeningBalanceController extends Controller
     public function store(StoreOpeningBalanceRequest $request): JsonResponse
     {
         $this->authorizeOperateOpeningBalance();
+        $this->authorizeKlienArOwnership((int) $request->validated('klien_ar_id'));
 
         $invoice = $this->service->createOpeningBalance($request->validated());
 
@@ -90,6 +91,8 @@ class OpeningBalanceController extends Controller
         $this->authorizeOperateOpeningBalance();
 
         $invoice = $this->findOpeningBalanceOrFail($id);
+        $this->authorizeKlienArOwnership((int) $request->validated('klien_ar_id'));
+
         $updated = $this->service->updateOpeningBalance($invoice, $request->validated());
 
         return $this->successResponse(
@@ -555,7 +558,31 @@ class OpeningBalanceController extends Controller
         $invoice = $this->service->findOrFail($id);
         abort_if(!$invoice->is_opening_balance, 404, 'Opening balance tidak ditemukan');
 
+        if ($invoice->klien_ar_id) {
+            $this->authorizeKlienArOwnership($invoice->klien_ar_id);
+        }
+
         return $invoice;
+    }
+
+    /**
+     * Tolak akses kalau user AR murni (PIC AR) mencoba mengelola/memilih Client
+     * yang bukan miliknya. Admin/Manager/Supervisor tetap punya akses global.
+     */
+    private function authorizeKlienArOwnership(int $klienArId): void
+    {
+        $picArKaryawanId = RoleHelper::picArKaryawanIdFor(auth()->user());
+        if ($picArKaryawanId === null) {
+            return;
+        }
+
+        $klien = KlienAr::withTrashed()->find($klienArId);
+
+        abort_if(
+            !$klien || (int) $klien->karyawan_ar_id !== $picArKaryawanId,
+            403,
+            'Anda hanya dapat mengelola opening balance untuk Client yang ditugaskan kepada Anda'
+        );
     }
 
     private function authorizeViewOpeningBalance(): void

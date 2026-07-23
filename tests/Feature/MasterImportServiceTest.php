@@ -664,6 +664,109 @@ class MasterImportServiceTest extends TestCase
     }
 
     // ──────────────────────────────────────────────────────────────
+    //  validateInvoiceRowAgainstMasterData
+    // ──────────────────────────────────────────────────────────────
+
+    public function test_validate_master_data_pt_b2b_matching_passes(): void
+    {
+        $restoMasterMap = [
+            'FB257' => ['tipe_klien' => 'PT', 'nama_klien' => 'PT. Arkhan Berkah Bersama', 'klien_id' => 1],
+        ];
+
+        $error = $this->invoke(
+            'validateInvoiceRowAgainstMasterData',
+            'B2B', 'PT. Arkhan Berkah Bersama', 'FB257', $restoMasterMap,
+        );
+
+        $this->assertNull($error);
+    }
+
+    public function test_validate_master_data_resto_b2c_matching_passes(): void
+    {
+        $restoMasterMap = [
+            'KD-A' => ['tipe_klien' => 'RESTO', 'nama_klien' => 'Ian Rizky Kurniawan', 'klien_id' => 2],
+        ];
+
+        $error = $this->invoke(
+            'validateInvoiceRowAgainstMasterData',
+            'B2C', 'Ian Rizky Kurniawan', 'kd-a', $restoMasterMap, // lowercase kode_resto harus dinormalisasi
+        );
+
+        $this->assertNull($error);
+    }
+
+    public function test_validate_master_data_blank_kode_resto_fails(): void
+    {
+        $error = $this->invoke(
+            'validateInvoiceRowAgainstMasterData',
+            'B2B', 'PT Sejahtera', null, [],
+        );
+
+        $this->assertStringContainsString('kode_resto wajib diisi', $error);
+    }
+
+    public function test_validate_master_data_unknown_kode_resto_fails(): void
+    {
+        $error = $this->invoke(
+            'validateInvoiceRowAgainstMasterData',
+            'B2C', 'Investor X', 'KD-TIDAK-ADA', [],
+        );
+
+        $this->assertStringContainsString('tidak ditemukan', $error);
+    }
+
+    // Regression: FB257/Veteran — kalau MASTER DATA sudah menyatakan outlet itu PT,
+    // baris invoice B2C untuk kode_resto tsb wajib gagal, bukan diam-diam ter-resolve
+    // ke Client AR RESTO lama (mis. "Ian Rizky Kurniawan").
+    public function test_validate_master_data_fb257_registered_as_pt_rejects_b2c(): void
+    {
+        $restoMasterMap = [
+            'FB257' => ['tipe_klien' => 'PT', 'nama_klien' => 'PT. Arkhan Berkah Bersama', 'klien_id' => 5],
+        ];
+
+        $error = $this->invoke(
+            'validateInvoiceRowAgainstMasterData',
+            'B2C', 'Ian Rizky Kurniawan', 'FB257', $restoMasterMap,
+        );
+
+        $this->assertNotNull($error);
+        $this->assertStringContainsString('FB257', $error);
+        $this->assertStringContainsString('PT', $error);
+        $this->assertStringContainsString('B2B', $error);
+    }
+
+    public function test_validate_master_data_tipe_invoice_mismatch_for_resto_fails(): void
+    {
+        $restoMasterMap = [
+            'KD-B' => ['tipe_klien' => 'RESTO', 'nama_klien' => 'Investor Y', 'klien_id' => 3],
+        ];
+
+        $error = $this->invoke(
+            'validateInvoiceRowAgainstMasterData',
+            'B2B', 'Investor Y', 'KD-B', $restoMasterMap,
+        );
+
+        $this->assertNotNull($error);
+        $this->assertStringContainsString('RESTO', $error);
+        $this->assertStringContainsString('B2C', $error);
+    }
+
+    public function test_validate_master_data_nama_klien_mismatch_fails(): void
+    {
+        $restoMasterMap = [
+            'FB257' => ['tipe_klien' => 'PT', 'nama_klien' => 'PT. Arkhan Berkah Bersama', 'klien_id' => 5],
+        ];
+
+        $error = $this->invoke(
+            'validateInvoiceRowAgainstMasterData',
+            'B2B', 'PT Lain Yang Salah', 'FB257', $restoMasterMap,
+        );
+
+        $this->assertNotNull($error);
+        $this->assertStringContainsString('tidak sesuai MASTER DATA', $error);
+    }
+
+    // ──────────────────────────────────────────────────────────────
     //  importDate
     // ──────────────────────────────────────────────────────────────
 
