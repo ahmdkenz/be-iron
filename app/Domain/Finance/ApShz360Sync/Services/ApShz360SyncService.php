@@ -33,7 +33,7 @@ class ApShz360SyncService
      *
      * @throws ApShz360SyncInProgressException jika sync lain (scheduler/manual) masih berjalan.
      */
-    public function runFullSync(): ApShz360SyncRun
+    public function runFullSync(bool $forceFullResync = false): ApShz360SyncRun
     {
         $lock = Cache::lock(self::LOCK_KEY, self::LOCK_TIMEOUT_SECONDS);
 
@@ -42,13 +42,29 @@ class ApShz360SyncService
         }
 
         try {
+            // Lock baru saja didapat secara eksklusif, jadi row 'running' yang masih
+            // tersisa di sini pasti bukan sync yang sedang aktif — peninggalan proses
+            // yang mati tak wajar (timeout/crash) sebelum sempat masuk ke catch/finally.
+            ApShz360SyncRun::where('status', 'running')->update([
+                'status' => 'failed',
+                'finished_at' => now(),
+                'message' => 'Sync sebelumnya terhenti tak terduga (proses berhenti sebelum selesai) — ditandai gagal otomatis oleh sync berikutnya.',
+            ]);
+
             $run = ApShz360SyncRun::create(['started_at' => now(), 'status' => 'running']);
 
-            $lastSuccess = ApShz360SyncRun::where('status', 'success')
-                ->where('id', '!=', $run->id)
-                ->latest('started_at')
-                ->first();
-            $updatedSince = $lastSuccess?->started_at?->subMinute()->toIso8601String();
+            // Full resync sengaja abaikan baseline sama sekali (persis perilaku
+            // run pertama kali) — tarik semua yang match status saat ini apa pun
+            // umur updated_at-nya, supaya PO/Terima PO lama yang kelewat gap bisa
+            // ditarik ulang tanpa perlu reset tb_ap_shz360_sync_runs manual.
+            $updatedSince = null;
+            if (! $forceFullResync) {
+                $lastSuccess = ApShz360SyncRun::where('status', 'success')
+                    ->where('id', '!=', $run->id)
+                    ->latest('started_at')
+                    ->first();
+                $updatedSince = $lastSuccess?->started_at?->subMinute()->toIso8601String();
+            }
 
             try {
                 $this->syncPurchaseOrders($run, $updatedSince);
@@ -169,12 +185,16 @@ class ApShz360SyncService
     {
         $hash = $this->hash($row);
         $existing = ApShz360ReceiptImport::where('source_receipt_id', $row['source_receipt_id'])->first();
+        $poImport = ApShz360PoImport::where('source_po_id', $row['source_po_id'] ?? null)->first();
 
-        if ($existing && $existing->source_hash === $hash) {
+        // Skip beneran kalau data receipt tidak berubah DAN (linkage ke PO sudah
+        // ada ATAU memang masih belum bisa diisi sekarang). Selain itu lanjut,
+        // supaya po_import_id yang sempat kosong bisa nyambung sendiri begitu
+        // PO-nya tersedia di sync berikutnya (source_hash saja tidak cukup jadi
+        // penanda "tidak ada yang perlu diupdate").
+        if ($existing && $existing->source_hash === $hash && ($existing->po_import_id !== null || ! $poImport)) {
             return false;
         }
-
-        $poImport = ApShz360PoImport::where('source_po_id', $row['source_po_id'] ?? null)->first();
 
         $importStatus = $existing && in_array($existing->import_status, ['CONVERTED', 'IGNORED'], true)
             ? $existing->import_status

@@ -104,6 +104,7 @@ Route::prefix('laporan')->group(function () {
 Route::prefix('shz360')->group(function () {
     Route::get('/sync/last-run', [ApShz360ImportController::class, 'lastSyncRun']);
     Route::post('/sync/retry', [ApShz360ImportController::class, 'retrySync']);
+    Route::post('/sync/full-resync', [ApShz360ImportController::class, 'fullResync']);
     Route::get('/sync/errors', [ApShz360ImportController::class, 'syncErrors']);
     Route::get('/imports/summary', [ApShz360ImportController::class, 'summary']);
     Route::get('/imports', [ApShz360ImportController::class, 'index']);
