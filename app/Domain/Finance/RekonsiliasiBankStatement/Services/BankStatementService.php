@@ -2,6 +2,7 @@
 
 namespace App\Domain\Finance\RekonsiliasiBankStatement\Services;
 
+use App\Domain\Finance\Invoice\Services\InvoiceService;
 use App\Domain\Finance\PembayaranAp\Services\PembayaranApService;
 use App\Domain\Finance\PembayaranAr\Services\PembayaranArService;
 use App\Domain\Finance\RekonsiliasiBankStatement\Exceptions\DuplicateStatementException;
@@ -23,6 +24,7 @@ class BankStatementService
     public function __construct(
         private readonly PembayaranArService $pembayaranArService,
         private readonly PembayaranApService $pembayaranApService,
+        private readonly InvoiceService $invoiceService,
     ) {}
 
     public function upload(UploadedFile $file, string $bankType, int $userId, bool $force = false): BankStatement
@@ -221,9 +223,7 @@ class BankStatementService
 
         $kelebihanBayar = null;
         if ($invoice) {
-            $kelebihanFromInvoice = max(0, round((float) $invoice->total_pembayaran - (float) $invoice->total_tagihan, 2));
-            $kelebihanFromBank    = max(0, round($d->kredit - (float) $pembayaran->jumlah_pembayaran, 2));
-            $total                = max($kelebihanFromInvoice, $kelebihanFromBank);
+            $total = $this->computeKelebihanTotal($pembayaran, $d);
             if ($total > 0) {
                 $dialokasi = (float) $pembayaran->alokasiKelebihan->sum('jumlah_pembayaran');
                 $pdm       = PendapatanDiMuka::where('sumber_pembayaran_ar_id', $pembayaran->id)->first();
@@ -415,19 +415,14 @@ class BankStatementService
         $sourceInvoice = $detail->pembayaranAr?->invoice;
         abort_if(!$sourceInvoice, 422, 'Belum ada pembayaran yang dicocokkan.');
 
-        $sourceInvoice->loadMissing('klienAr.resto');
-        $investorId = $sourceInvoice->klienAr?->resto?->investor_id;
-
+        // Dibatasi ke klien/resto sumber yang sama (bukan seluruh investor) agar
+        // alokasi kelebihan tidak melompat ke outlet lain yang tidak terkait
+        // dengan transaksi bank ini.
         $query = Invoice::with('klienAr.resto.investor')
             ->whereNotIn('status', ['LUNAS'])
             ->whereHas('klienAr', fn($q) => $q->where('tipe_klien', 'RESTO'))
-            ->orderByDesc('tanggal_invoice');
-
-        if ($investorId) {
-            $query->whereHas('klienAr.resto', fn($q) => $q->where('investor_id', $investorId));
-        } else {
-            $query->where('klien_ar_id', $sourceInvoice->klien_ar_id);
-        }
+            ->where('klien_ar_id', $sourceInvoice->klien_ar_id)
+            ->orderBy('tanggal_invoice');
 
         return $query->get()->map(function ($inv) {
             $subtotal        = (float) $inv->subtotal;
@@ -460,7 +455,7 @@ class BankStatementService
             ->whereNotIn('status', ['LUNAS'])
             ->where('klien_ar_id', $sourceInvoice->klien_ar_id)
             ->whereHas('klienAr', fn($q) => $q->where('tipe_klien', '!=', 'RESTO'))
-            ->orderByDesc('tanggal_invoice')
+            ->orderBy('tanggal_invoice')
             ->get()
             ->map(function ($inv) {
                 $subtotal        = (float) $inv->subtotal;
@@ -492,11 +487,9 @@ class BankStatementService
         $pembayaran = $detail->pembayaranAr;
         abort_if(!$pembayaran, 422, 'Transaksi belum memiliki pembayaran yang dicocokkan.');
 
-        $inv                  = $pembayaran->invoice;
-        $kelebihanFromInvoice = max(0, (float) $inv->total_pembayaran - (float) $inv->total_tagihan);
-        $kelebihanFromBank    = max(0, (float) $detail->kredit - (float) $pembayaran->jumlah_pembayaran);
-        $total                = max($kelebihanFromInvoice, $kelebihanFromBank);
-        $sudah                = (float) $pembayaran->alokasiKelebihan()->sum('jumlah_pembayaran');
+        $inv   = $pembayaran->invoice;
+        $total = $this->computeKelebihanTotal($pembayaran, $detail);
+        $sudah = (float) $pembayaran->alokasiKelebihan()->sum('jumlah_pembayaran');
         $sisa  = max(0, round($total - $sudah, 2));
 
         abort_if($jumlah <= 0, 422, 'Jumlah harus lebih dari 0.');
@@ -508,22 +501,14 @@ class BankStatementService
 
         $target = Invoice::with('klienAr.resto')->findOrFail($invoiceId);
         $inv->loadMissing('klienAr.resto');
-        $sourceInvestorId = $inv->klienAr?->resto?->investor_id;
-        $targetInvestorId = $target->klienAr?->resto?->investor_id;
 
-        if ($sourceInvestorId && $targetInvestorId) {
-            abort_if(
-                $sourceInvestorId !== $targetInvestorId,
-                422,
-                'Invoice tujuan harus milik investor yang sama.'
-            );
-        } else {
-            abort_if(
-                $target->klien_ar_id !== $inv->klien_ar_id,
-                422,
-                'Invoice tujuan harus milik klien yang sama.'
-            );
-        }
+        // Dibatasi ke klien/resto sumber yang sama (bukan seluruh investor),
+        // selaras dengan pembatasan kandidat di getInvoiceB2CKlien/B2BKlien.
+        abort_if(
+            $target->klien_ar_id !== $inv->klien_ar_id,
+            422,
+            'Invoice tujuan harus milik klien/resto yang sama.'
+        );
         abort_if($target->status === 'LUNAS', 422, 'Invoice ini sudah LUNAS.');
         abort_if(
             $target->requiresApproval() && !$target->isApprovedForFinanceFlow(),
@@ -556,27 +541,13 @@ class BankStatementService
                 'created_by'              => auth()->id(),
             ]);
 
-            // Update Invoice B langsung tanpa cascade ke invoice-invoice berikutnya.
-            // Memanggil InvoiceService::recalculate() akan memicu cascadeCarryoverToNext()
-            // yang mengurangi total_tagihan Invoice A (sumber kelebihan), sehingga $total
-            // naik sebesar alokasi dan $sisa tidak pernah berkurang ke 0 (circular dependency).
-            $fresh     = $target->fresh();
-            $newTotal  = (float) $fresh->pembayarans()->sum('jumlah_pembayaran');
-            $subtotal  = (float) $fresh->subtotal;
-            $rawSisa   = max(0, (float) $fresh->total_tagihan - $newTotal);
-            $isLunas   = $subtotal > 0 ? $newTotal >= $subtotal : $rawSisa <= 0;
-            $newSisa   = $isLunas ? 0 : $rawSisa;
-            $newStatus = match (true) {
-                $isLunas      => 'LUNAS',
-                $newTotal > 0 => 'SEBAGIAN',
-                default       => 'TERKIRIM',
-            };
-            $fresh->update([
-                'total_pembayaran' => $newTotal,
-                'sisa_tagihan'     => $newSisa,
-                'status'           => $newStatus,
-                'updated_by'       => auth()->id(),
-            ]);
+            // Refresh invoice tujuan lewat InvoiceService lalu cascade ke invoice
+            // sesudahnya, supaya kalau invoice tujuan jadi LUNAS, carryover invoice
+            // berikutnya (tagihan_periode_sebelumnya) ikut ter-update. Ini aman karena
+            // computeKelebihanTotal() sudah dibuat stabil terhadap subtotal (bukan
+            // total_tagihan yang berubah akibat cascade), jadi tidak ada lagi circular
+            // dependency seperti sebelumnya.
+            $this->invoiceService->recalculate($target->fresh());
         });
     }
 
@@ -797,6 +768,29 @@ class BankStatementService
 
             return $this->manualMatch($detail, $pembayaran->id);
         });
+    }
+
+    /**
+     * Total kelebihan bayar dari sebuah pembayaran hasil rekonsiliasi.
+     *
+     * Sengaja dibandingkan terhadap subtotal invoice (bukan total_tagihan),
+     * karena total_tagihan memuat tagihan_periode_sebelumnya yang bisa berubah
+     * akibat cascadeCarryoverToNext() saat invoice lain di-recalculate. Jika
+     * dipakai, nilai "kelebihan" bisa naik/turun sendiri tanpa ada uang yang
+     * benar-benar berpindah (circular dependency). Subtotal tidak berubah
+     * setelah invoice terkirim, jadi hasilnya stabil dipakai lintas panggilan.
+     */
+    private function computeKelebihanTotal(PembayaranAr $pembayaran, BankStatementDetail $detail): float
+    {
+        $inv = $pembayaran->invoice;
+        if (!$inv) {
+            return 0.0;
+        }
+
+        $kelebihanFromInvoice = max(0, round((float) $inv->total_pembayaran - (float) $inv->subtotal, 2));
+        $kelebihanFromBank    = max(0, round((float) $detail->kredit - (float) $pembayaran->jumlah_pembayaran, 2));
+
+        return max($kelebihanFromInvoice, $kelebihanFromBank);
     }
 
     private function nextAlokasiSuffix(PembayaranAr $pembayaran): int

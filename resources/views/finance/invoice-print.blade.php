@@ -524,12 +524,6 @@
             <td class="totals-lbl">Total Barang</td>
             <td class="totals-val">Rp {{ number_format((float)$invoice->subtotal, 0, ',', '.') }}</td>
           </tr>
-          @if((float)$invoice->tagihan_periode_sebelumnya > 0)
-          <tr>
-            <td class="totals-lbl">Tagihan Sebelumnya</td>
-            <td class="totals-val">Rp {{ number_format((float)$invoice->tagihan_periode_sebelumnya, 0, ',', '.') }}</td>
-          </tr>
-          @endif
           @endif
 
           <tr class="totals-grand">
