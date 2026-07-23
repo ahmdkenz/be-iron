@@ -71,7 +71,7 @@ class AuthController extends Controller
 
         $isProduction   = app()->isProduction();
         $accessCookie   = cookie('auth_token', $accessToken, 1440, '/api', null, $isProduction, true, false, 'Lax');
-        $refreshCookie  = cookie('refresh_token', $refreshToken, self::REFRESH_TOKEN_TTL, '/api/v1/auth/refresh', null, $isProduction, true, false, 'Lax');
+        $refreshCookie  = cookie('refresh_token', $refreshToken, self::REFRESH_TOKEN_TTL, '/api/v1/auth', null, $isProduction, true, false, 'Lax');
 
         return $this->successResponse([
             'user' => new UserResource($user),
@@ -100,7 +100,7 @@ class AuthController extends Controller
 
         $isProduction  = app()->isProduction();
         $accessCookie  = cookie('auth_token', $newAccessToken, 1440, '/api', null, $isProduction, true, false, 'Lax');
-        $refreshCookie = cookie('refresh_token', $newRefreshToken, self::REFRESH_TOKEN_TTL, '/api/v1/auth/refresh', null, $isProduction, true, false, 'Lax');
+        $refreshCookie = cookie('refresh_token', $newRefreshToken, self::REFRESH_TOKEN_TTL, '/api/v1/auth', null, $isProduction, true, false, 'Lax');
 
         return $this->successResponse(null, 'Token diperbarui')->withCookie($accessCookie)->withCookie($refreshCookie);
     }
@@ -113,7 +113,7 @@ class AuthController extends Controller
 
         $isProduction  = app()->isProduction();
         $expiredAccess  = cookie('auth_token', '', -1, '/api', null, $isProduction, true, false, 'Lax');
-        $expiredRefresh = cookie('refresh_token', '', -1, '/api/v1/auth/refresh', null, $isProduction, true, false, 'Lax');
+        $expiredRefresh = cookie('refresh_token', '', -1, '/api/v1/auth', null, $isProduction, true, false, 'Lax');
 
         return $this->successResponse(null, 'Logout berhasil')->withCookie($expiredAccess)->withCookie($expiredRefresh);
     }
@@ -122,5 +122,38 @@ class AuthController extends Controller
     {
         $user = $request->user()->load('roles', 'karyawan.perusahaan');
         return $this->successResponse(new UserResource($user));
+    }
+
+    // Endpoint publik: selalu 200, tidak pernah 401. Dipakai router guard FE untuk
+    // cek "apakah browser ini masih punya sesi valid" TANPA localStorage marker —
+    // baca langsung cookie HttpOnly auth_token/refresh_token di server.
+    // InjectCookieToken (middleware global grup 'api') sudah menyalin cookie auth_token
+    // jadi header Authorization sebelum controller ini jalan, jadi $request->user('sanctum')
+    // otomatis memvalidasi expiry lewat Sanctum Guard seperti endpoint /me.
+    public function session(Request $request): JsonResponse
+    {
+        $user = $request->user('sanctum');
+
+        if ($user) {
+            return $this->successResponse([
+                'authenticated' => true,
+                'user'          => new UserResource($user->load('roles', 'karyawan.perusahaan')),
+            ]);
+        }
+
+        $refreshToken = $request->cookie('refresh_token');
+        $hasValidRefreshToken = $refreshToken
+            && User::where('refresh_token', hash('sha256', $refreshToken))->where('status', true)->exists();
+
+        if ($hasValidRefreshToken) {
+            return $this->successResponse([
+                'authenticated'    => true,
+                'refresh_required' => true,
+            ]);
+        }
+
+        return $this->successResponse([
+            'authenticated' => false,
+        ]);
     }
 }
