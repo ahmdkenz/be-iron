@@ -256,6 +256,12 @@ class InvoiceRepository
                     ->where('nama_klien', 'like', "%{$v}%")
                     ->orWhere('kode_klien', 'like', "%{$v}%")
                 )
+                ->orWhereHas('resto', fn($q) => $q->where('nama_resto', 'like', "%{$v}%"))
+                ->orWhereHas('klienAr.resto', fn($q) => $q->where('nama_resto', 'like', "%{$v}%"))
+                ->orWhereHas('items', fn($q) => $q
+                    ->where('no_invoice_resto', 'like', "%{$v}%")
+                    ->orWhere('nama_resto', 'like', "%{$v}%")
+                )
             ))
             ->when($filters['perusahaan_id'] ?? null, fn($q, $v) => $q->where('perusahaan_id', $v))
             ->when($filters['klien_ar_id'] ?? null, fn($q, $v) => $q->where('klien_ar_id', $v))
