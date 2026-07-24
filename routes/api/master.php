@@ -10,8 +10,11 @@ use App\Domain\Master\Unified\Controllers\UnifiedMasterController;
 use Illuminate\Support\Facades\Route;
 
 // Must declare named sub-routes BEFORE apiResource binding
-Route::get('/karyawan/search', [KaryawanController::class, 'search']);
-Route::delete('/karyawan/bulk', [KaryawanController::class, 'bulkDestroy']);
+Route::middleware('role:ADMIN|MANAGER|SUPERVISOR')->group(function () {
+    Route::get('/karyawan/search', [KaryawanController::class, 'search']);
+    Route::delete('/karyawan/bulk', [KaryawanController::class, 'bulkDestroy']);
+    Route::apiResource('karyawan', KaryawanController::class);
+});
 
 Route::delete('/perusahaan/bulk', [PerusahaanController::class, 'bulkDestroy']);
 
@@ -31,7 +34,6 @@ Route::middleware('role:ADMIN|MANAGER|SUPERVISOR')->group(function () {
     Route::get('/master-data/import/{id}/status', [UnifiedMasterController::class, 'importStatus']);
 });
 
-Route::apiResource('karyawan', KaryawanController::class);
 Route::apiResource('perusahaan', PerusahaanController::class);
 Route::apiResource('investor', InvestorController::class);
 Route::apiResource('resto', RestoController::class);
