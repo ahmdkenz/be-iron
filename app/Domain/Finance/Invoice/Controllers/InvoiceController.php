@@ -8,6 +8,7 @@ use App\Domain\Finance\Invoice\Requests\UpdateInvoiceRequest;
 use App\Domain\Finance\Invoice\Resources\InvoiceItemResource;
 use App\Domain\Finance\Invoice\Resources\InvoiceListResource;
 use App\Domain\Finance\Invoice\Resources\InvoiceResource;
+use App\Domain\Finance\Invoice\Services\InvoicePrintItemAggregator;
 use App\Domain\Finance\Invoice\Services\InvoiceService;
 use App\Http\Controllers\Controller;
 use App\Models\Invoice;
@@ -794,6 +795,8 @@ class InvoiceController extends Controller
             ]);
         }
 
+        $this->attachPrintItems($invoice);
+
         $signatureData = $this->buildSignatureData($invoice);
         $filename = 'Invoice-' . str_replace(['/', '\\', ' '], '-', $invoice->no_invoice) . '.pdf';
 
@@ -853,6 +856,9 @@ class InvoiceController extends Controller
                 'approvedBy.karyawan',
             ]);
         }
+
+        $this->attachPrintItems($invoice);
+        $regularInvoicesInPeriod->each(fn ($inv) => $this->attachPrintItems($inv));
 
         $signatureData = $this->buildSignatureData($invoice);
         $regularInvoicesSignatureData = $regularInvoicesInPeriod
@@ -1048,5 +1054,16 @@ class InvoiceController extends Controller
             'approved_by_name' => null,
             'approved_qr_src'  => null,
         ];
+    }
+
+    /**
+     * Item khusus untuk cetak: invoice PT diringkas (lihat InvoicePrintItemAggregator),
+     * invoice RESTO/B2C tetap memakai item asli.
+     */
+    private function attachPrintItems(Invoice $invoice): void
+    {
+        $invoice->printItems = $invoice->klienAr?->tipe_klien === 'PT'
+            ? InvoicePrintItemAggregator::aggregate($invoice->items)
+            : $invoice->items;
     }
 }

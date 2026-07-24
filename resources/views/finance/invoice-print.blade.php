@@ -9,10 +9,10 @@
     // (>=100, dihitung dari invoice utama maupun invoice reguler di halaman
     // OB) dipadatkan lebih jauh lagi supaya tetap muat wajar jumlah halamannya.
     $htmlMode = request()->has('html');
-    $maxItemCount = $invoice->is_opening_balance ? 0 : $invoice->items->count();
+    $maxItemCount = $invoice->is_opening_balance ? 0 : $invoice->printItems->count();
     if (isset($regularInvoicesInPeriod)) {
         foreach ($regularInvoicesInPeriod as $__ri) {
-            $maxItemCount = max($maxItemCount, $__ri->items->count());
+            $maxItemCount = max($maxItemCount, $__ri->printItems->count());
         }
     }
     $compactPdf = !$htmlMode && $maxItemCount >= 100;
@@ -461,7 +461,7 @@
       </tr>
     </thead>
     <tbody>
-      @forelse($invoice->items as $i => $item)
+      @forelse($invoice->printItems as $i => $item)
       <tr>
         <td class="col-no text-center" style="color:#777;">{{ $i + 1 }}</td>
         <td class="col-kode" style="color:#555; font-size:14px;">{{ $item->kode_barang ?? $item->barang?->kode_barang ?? '-' }}</td>
@@ -739,7 +739,7 @@
         </tr>
       </thead>
       <tbody>
-        @forelse($regInv->items as $i => $item)
+        @forelse($regInv->printItems as $i => $item)
         <tr>
           <td class="col-no text-center" style="color:#777;">{{ $i + 1 }}</td>
           <td class="col-kode" style="color:#555; font-size:14px;">{{ $item->kode_barang ?? $item->barang?->kode_barang ?? '-' }}</td>
