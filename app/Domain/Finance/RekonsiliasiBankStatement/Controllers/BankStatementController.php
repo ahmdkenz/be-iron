@@ -44,7 +44,9 @@ class BankStatementController extends Controller
             'created_at'       => $s->created_at?->setTimezone('Asia/Jakarta')->format('d-m-Y H:i'),
         ]);
 
-        return $this->successResponse($data);
+        // Kontrak flat {data:[...], meta:{...}} (bukan paginator bersarang) —
+        // dibutuhkan oleh composable FE useLoadMore (lihat paginatedResponse()).
+        return $this->paginatedResponse($data);
     }
 
     public function upload(Request $request): JsonResponse
@@ -99,14 +101,30 @@ class BankStatementController extends Controller
             'status'   => ['nullable', 'string', 'in:SEMUA,MATCHED,UNMATCHED,POSSIBLE,DIABAIKAN'],
         ]);
 
-        return $this->successResponse(
-            $this->service->paginateDetails(
-                $bankStatement,
-                $request->string('status') ?: null,
-                $request->integer('page', 1),
-                $request->integer('per_page', 25),
-            )
+        $result = $this->service->paginateDetails(
+            $bankStatement,
+            $request->string('status') ?: null,
+            $request->integer('page', 1),
+            $request->integer('per_page', 25),
         );
+
+        // Kontrak flat {data:[...], meta:{...}} (bukan {header, rows, meta}
+        // bersarang) — dibutuhkan oleh composable FE useLoadMore. Info header
+        // laporan (jumlah_matched dkk) dipisah ke endpoint ringan header().
+        return response()->json([
+            'success' => true,
+            'message' => 'Success',
+            'data'    => $result['rows'],
+            'meta'    => $result['meta'],
+        ]);
+    }
+
+    // Info ringkasan rekening koran (header) terpisah dari daftar baris ber-
+    // paginasi, supaya FE bisa muat header sekali saja tanpa ikut ter-refetch
+    // di setiap "Muat lagi"/reset filter pada useLoadMore.
+    public function header(BankStatement $bankStatement): JsonResponse
+    {
+        return $this->successResponse($this->service->getHeader($bankStatement));
     }
 
     public function destroy(BankStatement $bankStatement): JsonResponse
