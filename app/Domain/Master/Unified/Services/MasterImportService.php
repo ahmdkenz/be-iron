@@ -88,7 +88,7 @@ class MasterImportService
             return;
         }
 
-        $headerRow = array_map(fn($c) => strtolower(trim((string) $c)), $rows[0] ?? []);
+        $headerRow = array_map(fn($c) => $this->normalizeHeaderName((string) $c), $rows[0] ?? []);
         if (in_array('nama_klien', $headerRow)) {
             $errors[] = ['sheet' => 'MASTER DATA', 'row' => 0, 'message' => 'Template lama masih memiliki kolom nama_klien. Download template terbaru.'];
             return;
@@ -102,10 +102,11 @@ class MasterImportService
         $batch->update(['master_total' => count($rows)]);
 
         // Preload referensi
-        $actingUserId  = $batch->user_id;
-        $brandMap      = $this->buildLowerMap(Brand::all(['id', 'nama_brand']), 'nama_brand');
-        $karyawanMap   = $this->buildLowerMap(Karyawan::all(['id', 'nama_karyawan']), 'nama_karyawan');
-        $perusahaanMap = $this->buildPerusahaanMap();
+        $actingUserId   = $batch->user_id;
+        $brandMap       = $this->buildLowerMap(Brand::all(['id', 'nama_brand']), 'nama_brand');
+        $karyawanMap    = $this->buildLowerMap(Karyawan::all(['id', 'nama_karyawan']), 'nama_karyawan');
+        $karyawanNikMap = $this->buildLowerMap(Karyawan::all(['id', 'nik']), 'nik');
+        $perusahaanMap  = $this->buildPerusahaanMap();
 
         $invIns  = $invUpd  = $invFail  = 0;
         $resIns  = $resUpd  = $resFail  = 0;
@@ -210,20 +211,15 @@ class MasterImportService
                     $namaBrand      = $this->importValue($col($row, 'nama_brand')) ?? '';
                     $kodeResto      = $this->importValue($col($row, 'kode_resto')) ?? '';
                     $namaPicResto   = $this->importValue($col($row, 'nama_pic')) ?? '';
+                    $picArRaw       = $this->importValue($col($row, 'pic_ar')) ?? '';
 
-                    // Fallback: untuk tipe PT, gunakan pic_ar jika nama_pic kosong
-                    $picRestoFallback = false;
-                    if ($namaPicResto === '' && $tipeKlien === 'PT') {
-                        $namaPicArFallback = $this->importValue($col($row, 'pic_ar')) ?? '';
-                        if ($namaPicArFallback !== '') {
-                            $namaPicResto     = $namaPicArFallback;
-                            $picRestoFallback = true;
-                        }
-                    }
+                    $picResult        = $this->resolvePicRestoForRow($namaPicResto, $picArRaw, $tipeKlien, $karyawanMap, $karyawanNikMap);
+                    $karyawanId       = $picResult['karyawan_id'];
+                    $picRestoFallback = $picResult['used_fallback'];
+                    $picIdentifier    = $picResult['identifier'];
 
                     $perusahaanId = null;
                     $brandId      = null;
-                    $karyawanId   = null;
                     $rowErrors    = [];
 
                     if ($namaPerusahaan) {
@@ -234,11 +230,12 @@ class MasterImportService
                         $brandId = $brandMap[strtolower($namaBrand)] ?? null;
                         if (!$brandId) $rowErrors[] = "Brand '{$namaBrand}' tidak ditemukan";
                     }
-                    if ($namaPicResto) {
-                        $karyawanId = $karyawanMap[strtolower($namaPicResto)] ?? null;
+                    if ($picIdentifier !== '') {
                         if (!$karyawanId) {
                             $picLabel    = $picRestoFallback ? 'PIC Resto/PIC AR' : 'PIC Resto';
-                            $rowErrors[] = "{$picLabel} '{$namaPicResto}' tidak ditemukan";
+                            $rowErrors[] = "{$picLabel} '{$picIdentifier}' tidak ditemukan (nama karyawan atau NIK)";
+                        } elseif ($picResult['conflict_error']) {
+                            $rowErrors[] = $picResult['conflict_error'];
                         }
                     }
 
@@ -337,7 +334,6 @@ class MasterImportService
 
                 // ── 3. KlienAr ──────────────────────────────────────────────
                 if ($namaCabang !== '' && in_array($tipeKlien, ['PT', 'RESTO'])) {
-                    $namaPicAr      = $this->importValue($col($row, 'pic_ar'));
                     $namaEntitasKli = $this->importValue($col($row, 'nama_entitas')) ?? '';
                     // no_npwp & no_wa diturunkan otomatis dari Investor (semua tipe) — diisi di blok penentuan nama klien di bawah
                     $noNpwp         = null;
@@ -347,14 +343,16 @@ class MasterImportService
 
                     $karyawanArId = null;
                     if ($tipeKlien === 'RESTO') {
-                        // PIC AR untuk Client AR tipe RESTO selalu mengikuti PIC Resto (kolom nama_pic),
+                        // PIC AR untuk Client AR tipe RESTO selalu mengikuti PIC Resto (kolom nama_pic,
+                        // atau pic_ar sbg fallback jika nama_pic kosong — lihat resolvePicRestoForRow()),
                         // bukan kolom pic_ar terpisah — mencegah kolom nama_pic & pic_ar diisi beda orang
-                        // di Excel sehingga PIC AR "nyasar" dari PIC Resto yang sebenarnya.
+                        // di Excel sehingga PIC AR "nyasar" dari PIC Resto yang sebenarnya (lihat validasi
+                        // konflik di blok Resto di atas).
                         $karyawanArId = $karyawanId;
-                        if (!$karyawanArId) $rowErrors[] = "PIC Resto (nama_pic) wajib diisi untuk membuat Client AR tipe RESTO";
-                    } elseif ($namaPicAr) {
-                        $karyawanArId = $karyawanMap[strtolower($namaPicAr)] ?? null;
-                        if (!$karyawanArId) $rowErrors[] = "Karyawan AR '{$namaPicAr}' tidak ditemukan";
+                        if (!$karyawanArId) $rowErrors[] = "PIC Resto (nama_pic atau pic_ar) wajib diisi untuk membuat Client AR tipe RESTO";
+                    } elseif ($picArRaw !== '') {
+                        $karyawanArId = $this->resolveKaryawanIdByNameOrNik($picArRaw, $karyawanMap, $karyawanNikMap);
+                        if (!$karyawanArId) $rowErrors[] = "Karyawan AR '{$picArRaw}' tidak ditemukan (nama atau NIK)";
                     } else {
                         $rowErrors[] = "pic_ar wajib diisi untuk membuat Client AR";
                     }
@@ -511,7 +509,7 @@ class MasterImportService
         }
 
         // Header-based column lookup — toleran terhadap template lama yang masih memiliki kolom nama_brand
-        $headerRow    = array_map(fn($c) => strtolower(trim((string) $c)), $rows[0] ?? []);
+        $headerRow    = array_map(fn($c) => $this->normalizeHeaderName((string) $c), $rows[0] ?? []);
         $headerIdxMap = array_flip($headerRow);
         $col = static fn(array $row, string $name): mixed =>
             $row[$headerIdxMap[$name] ?? -1] ?? '';
@@ -889,7 +887,7 @@ class MasterImportService
             $firstCell = trim($cells[0] ?? '');
 
             if (!$headerFound) {
-                if (strtolower($firstCell) === strtolower($headerFirstCol)) {
+                if ($this->normalizeHeaderName($firstCell) === strtolower($headerFirstCol)) {
                     $headerFound = true;
                     $rows[]      = $cells;
                 }
@@ -913,6 +911,69 @@ class MasterImportService
             }
         }
         return $map;
+    }
+
+    /**
+     * Hilangkan tanda mandatory "(*)" dari nama header Excel (mis. "nama_investor (*)" → "nama_investor")
+     * lalu lowercase+trim — supaya template lama (tanpa tanda) dan baru (dengan tanda) sama-sama terbaca.
+     */
+    private function normalizeHeaderName(string $raw): string
+    {
+        $s = strtolower(trim($raw));
+        return trim(preg_replace('/\(\s*\*\s*\)\s*$/', '', $s));
+    }
+
+    /** Resolve id karyawan dari input yang boleh berupa nama_karyawan ATAU nik (case-insensitive). */
+    private function resolveKaryawanIdByNameOrNik(string $identifier, array $karyawanMap, array $karyawanNikMap): ?int
+    {
+        $key = strtolower($identifier);
+        return $karyawanMap[$key] ?? $karyawanNikMap[$key] ?? null;
+    }
+
+    /**
+     * Resolve PIC Resto (kolom nama_pic) untuk satu baris MASTER DATA, dengan aturan:
+     *   - nama_pic boleh diisi nama karyawan ATAU nik.
+     *   - Jika nama_pic kosong dan tipe_klien PT/RESTO, pic_ar dipakai sebagai pengganti (fallback).
+     *   - Khusus tipe_klien RESTO: jika nama_pic & pic_ar SAMA-SAMA diisi (bukan hasil fallback) dan
+     *     keduanya berhasil di-resolve tapi menunjuk karyawan yang berbeda, baris dianggap ambigu.
+     *     (Tidak berlaku untuk PT karena nama_pic = PIC Resto dan pic_ar = PIC AR Client memang dua
+     *     peran berbeda yang boleh diisi orang berbeda.)
+     *
+     * @return array{karyawan_id: ?int, identifier: string, used_fallback: bool, conflict_error: ?string}
+     */
+    private function resolvePicRestoForRow(
+        string $namaPicResto,
+        string $picArRaw,
+        string $tipeKlien,
+        array $karyawanMap,
+        array $karyawanNikMap,
+    ): array {
+        $identifier   = $namaPicResto;
+        $usedFallback = false;
+
+        if ($identifier === '' && $picArRaw !== '' && in_array($tipeKlien, ['PT', 'RESTO'], true)) {
+            $identifier   = $picArRaw;
+            $usedFallback = true;
+        }
+
+        $karyawanId = $identifier !== ''
+            ? $this->resolveKaryawanIdByNameOrNik($identifier, $karyawanMap, $karyawanNikMap)
+            : null;
+
+        $conflictError = null;
+        if ($tipeKlien === 'RESTO' && !$usedFallback && $namaPicResto !== '' && $picArRaw !== '' && $karyawanId) {
+            $picArKaryawanId = $this->resolveKaryawanIdByNameOrNik($picArRaw, $karyawanMap, $karyawanNikMap);
+            if ($picArKaryawanId && $picArKaryawanId !== $karyawanId) {
+                $conflictError = "nama_pic ('{$namaPicResto}') dan pic_ar ('{$picArRaw}') menunjuk karyawan yang berbeda — isi salah satu saja atau samakan keduanya";
+            }
+        }
+
+        return [
+            'karyawan_id'    => $karyawanId,
+            'identifier'     => $identifier,
+            'used_fallback'  => $usedFallback,
+            'conflict_error' => $conflictError,
+        ];
     }
 
     /** @return array<string,int> nama_perusahaan & singkatan (lower) => id */

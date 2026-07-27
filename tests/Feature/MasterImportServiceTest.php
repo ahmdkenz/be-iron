@@ -767,6 +767,161 @@ class MasterImportServiceTest extends TestCase
     }
 
     // ──────────────────────────────────────────────────────────────
+    //  normalizeHeaderName
+    // ──────────────────────────────────────────────────────────────
+
+    public function test_normalize_header_name_strips_mandatory_marker(): void
+    {
+        $this->assertSame('nama_investor', $this->invoke('normalizeHeaderName', 'nama_investor (*)'));
+        $this->assertSame('nama_investor', $this->invoke('normalizeHeaderName', 'nama_investor(*)'));
+        $this->assertSame('nama_investor', $this->invoke('normalizeHeaderName', '  Nama_Investor (*)  '));
+    }
+
+    public function test_normalize_header_name_without_marker_unchanged(): void
+    {
+        $this->assertSame('kode_resto', $this->invoke('normalizeHeaderName', 'kode_resto'));
+        $this->assertSame('kode_resto', $this->invoke('normalizeHeaderName', ' Kode_Resto '));
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    //  parseSheet — header bertanda (*)
+    // ──────────────────────────────────────────────────────────────
+
+    public function test_parse_sheet_detects_header_with_mandatory_marker(): void
+    {
+        $spreadsheet = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+        $sheet->setCellValue('A1', 'TEMPLATE IMPORT MASTER DATA'); // baris judul, harus dilewati
+        $sheet->setCellValue('A2', 'nama_investor (*)');
+        $sheet->setCellValue('B2', 'ktp');
+        $sheet->setCellValue('A3', 'Investor Satu');
+        $sheet->setCellValue('B3', '1234567890');
+
+        $rows = $this->invoke('parseSheet', $sheet, 'nama_investor', 2);
+
+        $this->assertCount(2, $rows); // baris header + 1 baris data
+        $this->assertSame('nama_investor (*)', $rows[0][0]);
+        $this->assertSame('Investor Satu', $rows[1][0]);
+    }
+
+    public function test_parse_sheet_detects_header_without_marker_backward_compat(): void
+    {
+        $spreadsheet = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+        $sheet->setCellValue('A1', 'nama_investor');
+        $sheet->setCellValue('A2', 'Investor Dua');
+
+        $rows = $this->invoke('parseSheet', $sheet, 'nama_investor', 1);
+
+        $this->assertCount(2, $rows);
+        $this->assertSame('Investor Dua', $rows[1][0]);
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    //  resolveKaryawanIdByNameOrNik
+    // ──────────────────────────────────────────────────────────────
+
+    public function test_resolve_karyawan_by_nama(): void
+    {
+        $karyawanMap    = ['andi wijaya' => 1];
+        $karyawanNikMap = ['3273010101900001' => 1];
+
+        $this->assertSame(1, $this->invoke('resolveKaryawanIdByNameOrNik', 'Andi Wijaya', $karyawanMap, $karyawanNikMap));
+    }
+
+    public function test_resolve_karyawan_by_nik(): void
+    {
+        $karyawanMap    = ['andi wijaya' => 1];
+        $karyawanNikMap = ['3273010101900001' => 1];
+
+        $this->assertSame(1, $this->invoke('resolveKaryawanIdByNameOrNik', '3273010101900001', $karyawanMap, $karyawanNikMap));
+    }
+
+    public function test_resolve_karyawan_not_found_returns_null(): void
+    {
+        $this->assertNull($this->invoke('resolveKaryawanIdByNameOrNik', 'Tidak Ada', ['andi wijaya' => 1], ['3273010101900001' => 1]));
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    //  resolvePicRestoForRow
+    // ──────────────────────────────────────────────────────────────
+
+    public function test_pic_resto_pt_pic_ar_by_nik_used_directly(): void
+    {
+        $karyawanMap    = ['siti rahayu' => 2];
+        $karyawanNikMap = ['3273010101900002' => 2];
+
+        $result = $this->invoke('resolvePicRestoForRow', '', '3273010101900002', 'PT', $karyawanMap, $karyawanNikMap);
+
+        $this->assertSame(2, $result['karyawan_id']);
+        $this->assertTrue($result['used_fallback']);
+        $this->assertNull($result['conflict_error']);
+    }
+
+    public function test_pic_resto_resto_nama_pic_by_nik(): void
+    {
+        $karyawanMap    = ['andi wijaya' => 1];
+        $karyawanNikMap = ['3273010101900001' => 1];
+
+        $result = $this->invoke('resolvePicRestoForRow', '3273010101900001', '', 'RESTO', $karyawanMap, $karyawanNikMap);
+
+        $this->assertSame(1, $result['karyawan_id']);
+        $this->assertFalse($result['used_fallback']);
+        $this->assertNull($result['conflict_error']);
+    }
+
+    public function test_pic_resto_resto_falls_back_to_pic_ar_when_nama_pic_kosong(): void
+    {
+        $karyawanMap    = ['siti rahayu' => 2];
+        $karyawanNikMap = [];
+
+        $result = $this->invoke('resolvePicRestoForRow', '', 'Siti Rahayu', 'RESTO', $karyawanMap, $karyawanNikMap);
+
+        $this->assertSame(2, $result['karyawan_id']);
+        $this->assertTrue($result['used_fallback']);
+        $this->assertNull($result['conflict_error']);
+    }
+
+    public function test_pic_resto_resto_conflict_when_nama_pic_and_pic_ar_differ(): void
+    {
+        $karyawanMap    = ['andi wijaya' => 1, 'siti rahayu' => 2];
+        $karyawanNikMap = [];
+
+        $result = $this->invoke('resolvePicRestoForRow', 'Andi Wijaya', 'Siti Rahayu', 'RESTO', $karyawanMap, $karyawanNikMap);
+
+        $this->assertSame(1, $result['karyawan_id']);
+        $this->assertFalse($result['used_fallback']);
+        $this->assertNotNull($result['conflict_error']);
+        $this->assertStringContainsString('Andi Wijaya', $result['conflict_error']);
+        $this->assertStringContainsString('Siti Rahayu', $result['conflict_error']);
+    }
+
+    public function test_pic_resto_resto_no_conflict_when_nama_pic_and_pic_ar_same_person(): void
+    {
+        $karyawanMap    = ['andi wijaya' => 1];
+        $karyawanNikMap = ['3273010101900001' => 1];
+
+        // nama_pic diisi nama, pic_ar diisi NIK — sama-sama menunjuk karyawan yang sama
+        $result = $this->invoke('resolvePicRestoForRow', 'Andi Wijaya', '3273010101900001', 'RESTO', $karyawanMap, $karyawanNikMap);
+
+        $this->assertSame(1, $result['karyawan_id']);
+        $this->assertNull($result['conflict_error']);
+    }
+
+    public function test_pic_resto_pt_ignores_conflict_between_nama_pic_and_pic_ar(): void
+    {
+        // Untuk PT, nama_pic (PIC Resto) & pic_ar (PIC AR Client) memang dua peran berbeda —
+        // boleh diisi orang berbeda, tidak dianggap konflik.
+        $karyawanMap    = ['andi wijaya' => 1, 'siti rahayu' => 2];
+        $karyawanNikMap = [];
+
+        $result = $this->invoke('resolvePicRestoForRow', 'Andi Wijaya', 'Siti Rahayu', 'PT', $karyawanMap, $karyawanNikMap);
+
+        $this->assertSame(1, $result['karyawan_id']);
+        $this->assertNull($result['conflict_error']);
+    }
+
+    // ──────────────────────────────────────────────────────────────
     //  importDate
     // ──────────────────────────────────────────────────────────────
 

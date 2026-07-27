@@ -171,7 +171,7 @@ class UnifiedMasterController extends Controller
         $sheet->setTitle('MASTER DATA');
 
         $cols = [
-            'A'  => ['nama_investor',   28],
+            'A'  => ['nama_investor (*)', 30],
             'B'  => ['ktp',             20],
             'C'  => ['npwp',            24],
             'D'  => ['no_hp',           16],
@@ -179,11 +179,11 @@ class UnifiedMasterController extends Controller
             'F'  => ['no_hp_pengelola', 20],
             'G'  => ['kode_cabang',     18],
             'H'  => ['id_cabang',       18],
-            'I'  => ['kode_resto',      16],
-            'J'  => ['nama_cabang',     28],
-            'K'  => ['nama_entitas',    24],
+            'I'  => ['kode_resto (*)',      18],
+            'J'  => ['nama_cabang (*)',     30],
+            'K'  => ['nama_entitas (*)',    26],
             'L'  => ['nama_brand',      20],
-            'M'  => ['nama_pic',        22],
+            'M'  => ['nama_pic (*)',        24],
             'N'  => ['supervisor',      24],
             'O'  => ['no_hp_supervisor',18],
             'P'  => ['stokis',          22],
@@ -193,8 +193,8 @@ class UnifiedMasterController extends Controller
             'T'  => ['no_telp',         16],
             'U'  => ['tgl_aktif',       14],
             'V'  => ['keterangan',      26],
-            'W'  => ['pic_ar',          24],
-            'X'  => ['tipe_klien',      14],
+            'W'  => ['pic_ar (*)',          26],
+            'X'  => ['tipe_klien (*)',      18],
             'Y'  => ['status',          10],
         ];
 
@@ -212,7 +212,7 @@ class UnifiedMasterController extends Controller
 
         // Row 2 — Subtitle
         $sheet->mergeCells("A2:{$lastCol}2");
-        $sheet->setCellValue('A2', 'Satu baris = 1 outlet (Investor + Resto + Client AR). Kolom tipe_klien wajib (PT/RESTO) untuk Client AR. Kolom nama_entitas wajib jika tipe_klien=PT. NPWP & kontak Client AR otomatis dari Investor baris ini (npwp → no_npwp, no_hp → no_wa) untuk semua tipe. Hanya role ADMIN/MANAGER/SUPERVISOR. Lihat sheet "Petunjuk Pengisian".');
+        $sheet->setCellValue('A2', 'Satu baris = 1 outlet (Investor + Resto + Client AR). Kolom bertanda (*) wajib diisi — sebagian bersifat kondisional: nama_entitas & pic_ar wajib jika tipe_klien=PT; nama_pic wajib jika tipe_klien=RESTO. Kolom nama_pic & pic_ar boleh diisi NAMA karyawan atau NIK. NPWP & kontak Client AR otomatis dari Investor baris ini (npwp → no_npwp, no_hp → no_wa) untuk semua tipe. Hanya role ADMIN/MANAGER/SUPERVISOR. Lihat sheet "Petunjuk Pengisian".');
         $sheet->getStyle('A2')->applyFromArray([
             'font'      => ['italic' => true, 'size' => 9, 'color' => ['argb' => 'FF37474F']],
             'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFE3F2FD']],
@@ -298,8 +298,8 @@ class UnifiedMasterController extends Controller
         $sheet->setTitle('MASTER BARANG');
 
         $cols = [
-            'A' => ['kode_barang', 18],
-            'B' => ['nama_barang', 32],
+            'A' => ['kode_barang (*)', 20],
+            'B' => ['nama_barang (*)', 32],
             'C' => ['spesifikasi', 30],
             'D' => ['keterangan',  28],
             'E' => ['status',      12],
@@ -381,20 +381,20 @@ class UnifiedMasterController extends Controller
         $sheet->setTitle('MASTER INVOICE');
 
         $cols = [
-            'A' => ['nama_klien',          28],
-            'B' => ['tanggal_invoice',     16],
+            'A' => ['nama_klien (*)',          28],
+            'B' => ['tanggal_invoice (*)',     20],
             'C' => ['tanggal_jatuh_tempo', 18],
             'D' => ['no_surat_jalan',      18],
             'E' => ['keterangan_invoice',  26],
             'F' => ['no_invoice_resto',    20],
-            'G' => ['kode_resto',          14],
+            'G' => ['kode_resto (*)',          16],
             'H' => ['nama_resto',          26],
             'I' => ['kode_barang',         16],
-            'J' => ['nama_barang',         30],
-            'K' => ['qty',                 10],
+            'J' => ['nama_barang (*)',         30],
+            'K' => ['qty (*)',                 12],
             'L' => ['satuan',              10],
-            'M' => ['harga_satuan',        16],
-            'N' => ['tipe_invoice',        14],
+            'M' => ['harga_satuan (*)',        18],
+            'N' => ['tipe_invoice (*)',        16],
         ];
 
         $lastCol = 'N';
@@ -411,7 +411,7 @@ class UnifiedMasterController extends Controller
 
         // Row 2 — Subtitle
         $sheet->mergeCells("A2:{$lastCol}2");
-        $sheet->setCellValue('A2', '1 baris = 1 item invoice. Baris dengan tipe_invoice + klien + tanggal_invoice yang sama digabung menjadi 1 invoice. 1 klien (1 outlet) hanya boleh punya 1 invoice per hari. B2B: isi no_invoice_resto/kode_resto/nama_resto. B2C: no_invoice_resto opsional (nomor asli/referensi asal); kode_resto WAJIB diisi jika investor/klien punya lebih dari 1 outlet (baris ambigu akan ditolak). Lihat sheet "Petunjuk Pengisian".');
+        $sheet->setCellValue('A2', '1 baris = 1 item invoice. Baris dengan tipe_invoice + klien + tanggal_invoice yang sama digabung menjadi 1 invoice. 1 klien (1 outlet) hanya boleh punya 1 invoice per hari. Kolom bertanda (*) wajib diisi di SETIAP baris, termasuk kode_resto (dipakai memvalidasi baris & menentukan outlet/Client AR tujuan — berlaku untuk B2B maupun B2C). B2B: isi juga no_invoice_resto & nama_resto. B2C: no_invoice_resto & nama_resto opsional (nomor/nama referensi asal). Lihat sheet "Petunjuk Pengisian".');
         $sheet->getStyle('A2')->applyFromArray([
             'font'      => ['italic' => true, 'size' => 9, 'color' => ['argb' => 'FF37474F']],
             'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFF3E5F5']],
@@ -572,12 +572,12 @@ class UnifiedMasterController extends Controller
         $steps = [
             '1. File ini berisi 4 sheet: "MASTER DATA" (Investor+Resto+Client AR), "MASTER BARANG" (Barang/Produk), "MASTER INVOICE" (Invoice B2B & B2C), dan "Petunjuk Pengisian".',
             '2. Urutan import: MASTER DATA → MASTER BARANG → MASTER INVOICE. Invoice dapat langsung memakai data master yang baru diimport.',
-            '3. Sheet MASTER DATA: isi satu baris per outlet. Satu baris = 1 Investor + 1 Resto + 1 Client AR.',
-            '4. Kolom tipe_klien (PT/RESTO) wajib jika ingin membuat/memperbarui Client AR. Kolom pic_ar wajib jika tipe_klien diisi.',
-            '5. Kolom nama_entitas WAJIB jika tipe_klien=PT. Nama Client AR otomatis: RESTO = nama_investor, PT = nama_entitas.',
+            '3. Sheet MASTER DATA: isi satu baris per outlet (1 Investor + 1 Resto + 1 Client AR). Kolom bertanda (*) pada header wajib diisi — sebagian bersifat kondisional mengikuti tipe_klien (lihat tabel Deskripsi Kolom di bawah).',
+            '4. tipe_klien=PT: nama_entitas & pic_ar wajib diisi (pic_ar menjadi PIC AR Client). tipe_klien=RESTO: nama_pic wajib diisi (menjadi PIC Resto sekaligus PIC AR Client); jika nama_pic kosong, pic_ar boleh dipakai sebagai pengganti. Jika nama_pic & pic_ar sama-sama diisi tapi menunjuk karyawan berbeda, baris akan ditolak.',
+            '5. Kolom nama_pic dan pic_ar boleh diisi NAMA KARYAWAN atau NIK karyawan — sistem mencari otomatis salah satunya. Nama Client AR otomatis: RESTO = nama_investor, PT = nama_entitas.',
             '6. Sheet MASTER BARANG: kode_barang wajib untuk barang baru. Kolom: kode_barang, nama_barang, spesifikasi, keterangan, status.',
             '7. Sheet MASTER INVOICE: 1 baris = 1 item. Baris dengan tipe_invoice + klien (outlet) + tanggal_invoice sama digabung jadi 1 invoice. 1 klien (1 outlet) = 1 invoice per hari. tipe_invoice: "B2C" atau "B2B".',
-            '8. Invoice B2C: isi kolom header + item (kode_barang/nama_barang, qty, satuan, harga_satuan). Kolom no_invoice_resto opsional. Kolom kode_resto opsional HANYA jika investor/klien tersebut punya 1 outlet; jika investor punya banyak outlet, kode_resto WAJIB diisi di setiap baris agar order masuk ke invoice outlet yang benar (baris tanpa kode_resto yang ambigu akan ditolak saat import).',
+            '8. Invoice B2C: isi kolom header + item (kode_barang/nama_barang, qty, satuan, harga_satuan). Kolom kode_resto WAJIB diisi pada setiap baris (dipakai memvalidasi baris terhadap MASTER DATA & menentukan outlet tujuan) — baris tanpa kode_resto akan ditolak. Kolom no_invoice_resto opsional.',
             '9. Invoice B2B (konsolidasi): sama seperti B2C, wajib isi no_invoice_resto, kode_resto, nama_resto di setiap item.',
             '10. Aturan update invoice: jika sudah ada → item lama dihapus, item baru masuk, keuangan dikalkulasi ulang. Invoice LUNAS atau periode EB Terkunci → dilewati.',
             '11. Setelah invoice berhasil disimpan, PDF otomatis diupload ke Google Drive (proses antrian). Link share muncul setelah antrian selesai.',
@@ -623,7 +623,7 @@ class UnifiedMasterController extends Controller
         $row++;
 
         $masterDataCols = [
-            ['nama_investor',   'Nama investor (upsert key bersama kode+id_cabang)',               'Ya (untuk Investor)',    'Budi Santoso'],
+            ['nama_investor',   'Nama investor (upsert key bersama kode+id_cabang)',               'Ya',    'Budi Santoso'],
             ['ktp',             'Nomor KTP investor (boleh sama antar cabang)',                    'Opsional',               '3273012345678901'],
             ['npwp',            'Nomor NPWP investor (boleh sama antar cabang)',                   'Opsional',               '12.345.678.9-012.000'],
             ['no_hp',           'Nomor HP investor',                                               'Opsional',               '08123456789'],
@@ -631,11 +631,11 @@ class UnifiedMasterController extends Controller
             ['no_hp_pengelola', 'Nomor HP pengelola investor',                                     'Opsional',               '08198765432'],
             ['kode_cabang',     'Kode cabang investor',                                            'Opsional',               'CB-001'],
             ['id_cabang',       'ID cabang investor',                                              'Opsional',               'ID-CB-001'],
-            ['kode_resto',      'Kode resto — wajib untuk Resto baru; tidak diupdate saat edit',  'Ya (Resto baru)',        'KD-001'],
-            ['nama_cabang',     'Nama cabang/resto (upsert key Resto)',                            'Ya (untuk Resto/Klien)', 'Warung Makan Enak'],
+            ['kode_resto',      'Kode resto — identitas unik outlet. Wajib untuk Resto baru; untuk edit resto lama boleh dikosongkan (fallback ke nama_cabang), tapi disarankan selalu diisi.', 'Ya', 'KD-001'],
+            ['nama_cabang',     'Nama cabang/resto (upsert key Resto)',                            'Ya', 'Warung Makan Enak'],
             ['nama_entitas',    'Nama perusahaan/singkatan (lookup) — WAJIB jika tipe_klien=PT',  'Ya (PT)',                'PT Maju Bersama'],
             ['nama_brand',      'Nama brand untuk Resto (lookup)',                                 'Opsional',               'Brand X'],
-            ['nama_pic',        'Nama PIC/karyawan untuk Data Resto (lookup). Jika kosong dan tipe_klien=PT, sistem memakai pic_ar sebagai fallback.', 'Opsional', 'Andi Wijaya'],
+            ['nama_pic',        'Nama PIC Resto — boleh diisi NAMA karyawan atau NIK (lookup). WAJIB jika tipe_klien=RESTO (sekaligus jadi PIC AR Client). Jika kosong, pic_ar dipakai sebagai pengganti (berlaku untuk PT maupun RESTO). Jika nama_pic & pic_ar sama-sama diisi tapi menunjuk karyawan berbeda, baris ditolak.', 'Ya (RESTO)', 'Andi Wijaya / 3273010101900001'],
             ['supervisor',      'Nama supervisor Resto',                                           'Opsional',               'Budi Supervisor'],
             ['no_hp_supervisor','Nomor HP supervisor',                                             'Opsional',               '08111222333'],
             ['stokis',          'Nama stokis Resto',                                               'Opsional',               'Stokis Utama'],
@@ -645,7 +645,7 @@ class UnifiedMasterController extends Controller
             ['no_telp',         'Nomor telepon Resto',                                             'Opsional',               '02112345678'],
             ['tgl_aktif',       'Tanggal aktif Resto (format: DD-MM-YYYY)',                        'Opsional',               '01-01-2026'],
             ['keterangan',      'Keterangan tambahan Resto',                                       'Opsional',               'Gerai pusat'],
-            ['pic_ar',          'Nama karyawan AR — wajib jika tipe_klien diisi. NPWP & kontak Client AR otomatis dari Investor baris ini (npwp → no_npwp, no_hp → no_wa) untuk semua tipe.', 'Ya (untuk Klien)', 'Siti Rahayu'],
+            ['pic_ar',          'Nama karyawan AR — boleh diisi NAMA karyawan atau NIK (lookup). WAJIB jika tipe_klien=PT (jadi PIC AR Client). Untuk tipe_klien=RESTO bersifat opsional (hanya dipakai sebagai pengganti jika nama_pic kosong). NPWP & kontak Client AR otomatis dari Investor baris ini (npwp → no_npwp, no_hp → no_wa) untuk semua tipe.', 'Ya (PT)', 'Siti Rahayu / 3273010101900002'],
             ['tipe_klien',      'Tipe Client AR: PT atau RESTO — kosongkan jika tidak membuat Klien', 'Ya (untuk Klien)',   'RESTO'],
             ['status',          '1 = Aktif (default), 0 = Nonaktif',                              'Opsional',               '1'],
         ];
@@ -747,7 +747,7 @@ class UnifiedMasterController extends Controller
             ['satuan',             'Satuan item (pcs, kg, lusin, dll).',                                                    'Opsional', 'pcs'],
             ['harga_satuan',       'Harga per satuan item.',                                                                'Ya',       '50000'],
             ['no_invoice_resto',   'Nomor invoice/referensi asal dari resto. Wajib untuk B2B; opsional untuk B2C (nomor asli untuk pencocokan data).', 'B2B, Opsional (B2C)', 'SI-RESTO-0001'],
-            ['kode_resto',         'Kode resto asal. Wajib untuk B2B. Untuk B2C: opsional HANYA jika klien/investor punya 1 outlet — wajib diisi jika klien tsb punya lebih dari 1 outlet, karena inilah yang menentukan invoice outlet mana yang dituju (baris ambigu tanpa kode_resto akan ditolak).', 'B2B, Kondisional (B2C)', 'KD-001'],
+            ['kode_resto',         'Kode resto asal — WAJIB diisi di setiap baris (B2B maupun B2C). Dipakai untuk memvalidasi baris terhadap MASTER DATA & menentukan outlet/Client AR tujuan invoice.', 'Ya', 'KD-001'],
             ['nama_resto',         'Nama resto asal. Wajib untuk B2B; opsional untuk B2C.',                                'B2B, Opsional (B2C)', 'Warung Makan Enak'],
         ];
 
