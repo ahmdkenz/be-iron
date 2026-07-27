@@ -591,7 +591,7 @@ class BankStatementService
         int $perPage = 50,
         ?int $picArKaryawanId = null,
     ): \Illuminate\Contracts\Pagination\LengthAwarePaginator {
-        $query = Invoice::with('klienAr.resto')
+        $query = Invoice::with(['klienAr.resto', 'resto'])
             ->whereNotIn('status', ['LUNAS', 'DRAFT'])
             ->where(function ($q) {
                 $q->where('is_opening_balance', false)
@@ -614,7 +614,9 @@ class BankStatementService
         if ($search) {
             $query->where(function ($q) use ($search) {
                 $q->where('no_invoice', 'LIKE', "%{$search}%")
-                  ->orWhereHas('klienAr', fn($q2) => $q2->where('nama_klien', 'LIKE', "%{$search}%"));
+                  ->orWhereHas('klienAr', fn($q2) => $q2->where('nama_klien', 'LIKE', "%{$search}%"))
+                  ->orWhereHas('klienAr.resto', fn($q2) => $q2->where('nama_resto', 'LIKE', "%{$search}%"))
+                  ->orWhereHas('resto', fn($q2) => $q2->where('nama_resto', 'LIKE', "%{$search}%"));
             });
         }
 
@@ -634,7 +636,7 @@ class BankStatementService
                 'sisa_tagihan'       => $sisaEfektif,
                 'status'             => $inv->status,
                 'nama_klien'         => $inv->klienAr?->nama_klien,
-                'nama_resto'         => $inv->klienAr?->resto?->nama_resto,
+                'nama_resto'         => $inv->klienAr?->resto?->nama_resto ?? $inv->resto?->nama_resto,
                 'is_opening_balance' => (bool) $inv->is_opening_balance,
             ];
         });
