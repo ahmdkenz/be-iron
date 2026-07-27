@@ -88,11 +88,10 @@ Route::get('/mutasi-piutang', [MutasiPiutangController::class, 'index']);
 Route::get('/mutasi-piutang/export-excel', [MutasiPiutangController::class, 'exportExcel']);
 
 // ─── Rekening Koran (Jurnal Umum Bank Statement) ──────────────────
-// Laporan global lintas PIC — hanya ADMIN/MANAGER/SUPERVISOR. Posting tetap
-// dibuka untuk AR karena dipakai dalam alur Rekonsiliasi Bank milik PIC AR.
+// Laporan global lintas PIC — hanya ADMIN/MANAGER/SUPERVISOR. Status posting
+// kini otomatis (lihat BankStatementService), tidak ada lagi endpoint manual.
 Route::get('/rekening-koran',                          [RekeningKoranController::class, 'index'])->middleware('role:ADMIN|MANAGER|SUPERVISOR');
 Route::get('/rekening-koran/pic-ar-list',              [RekeningKoranController::class, 'picArList'])->middleware('role:ADMIN|MANAGER|SUPERVISOR');
-Route::patch('/rekening-koran/{detail}/posting',       [RekeningKoranController::class, 'updatePosting'])->middleware('role:ADMIN|MANAGER|SUPERVISOR|AR');
 
 // ─── Jatuh Tempo ──────────────────────────────────────────────────
 Route::get('/jatuh-tempo', [JatuhTempoController::class, 'index']);

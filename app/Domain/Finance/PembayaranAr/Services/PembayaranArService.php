@@ -215,7 +215,13 @@ class PembayaranArService
                 ->unique()
                 ->all();
             BankStatementDetail::where('pembayaran_ar_id', $pembayaran->id)
-                ->update(['pembayaran_ar_id' => null, 'status_cocok' => 'UNMATCHED']);
+                ->update([
+                    'pembayaran_ar_id' => null,
+                    'status_cocok'     => 'UNMATCHED',
+                    'status_posting_2' => 'PENDING',
+                    'posted_at'        => null,
+                    'posted_by'        => null,
+                ]);
 
             $pembayaran->delete();
 

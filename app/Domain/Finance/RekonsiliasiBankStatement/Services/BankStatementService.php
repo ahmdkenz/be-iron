@@ -124,6 +124,7 @@ class BankStatementService
                 $detail->status_cocok     = 'MATCHED';
                 $detail->pembayaran_ar_id = $matched->id;
                 $detail->matched_by       = $statement->uploaded_by;
+                $detail->fill($this->postedPayload($statement->uploaded_by));
                 $usedPembayaranIds[]      = $matched->id;
             } else {
                 $detail->status_cocok     = 'UNMATCHED';
@@ -352,6 +353,7 @@ class BankStatementService
             'status_cocok'    => 'MATCHED',
             'pembayaran_ar_id'=> $pembayaranArId,
             'matched_by'      => auth()->id(),
+            ...$this->postedPayload(auth()->id()),
         ]);
 
         $this->refreshCounter($detail->bank_statement_id);
@@ -392,6 +394,8 @@ class BankStatementService
             $detail->update([
                 'status_cocok'    => 'UNMATCHED',
                 'pembayaran_ar_id'=> null,
+                'matched_by'      => null,
+                ...$this->pendingPayload(),
             ]);
 
             $this->refreshCounter($detail->bank_statement_id);
@@ -405,9 +409,37 @@ class BankStatementService
         $detail->update([
             'status_cocok'    => 'DIABAIKAN',
             'pembayaran_ar_id'=> null,
+            'matched_by'      => null,
+            ...$this->pendingPayload(),
         ]);
 
         $this->refreshCounter($detail->bank_statement_id);
+    }
+
+    /**
+     * Payload saat sebuah baris rekening koran otomatis di-posting (AR): dipanggil
+     * dari manualMatch/autoMatch, bukan lewat endpoint manual (sudah dihapus).
+     */
+    private function postedPayload(?int $userId): array
+    {
+        return [
+            'status_posting_2' => 'POSTED',
+            'posted_at'        => now(),
+            'posted_by'        => $userId,
+        ];
+    }
+
+    /**
+     * Payload reset saat pencocokan dibatalkan/diabaikan — status posting ikut
+     * kembali ke PENDING supaya tidak "menggantung" posted padahal sudah UNMATCHED.
+     */
+    private function pendingPayload(): array
+    {
+        return [
+            'status_posting_2' => 'PENDING',
+            'posted_at'        => null,
+            'posted_by'        => null,
+        ];
     }
 
     public function getInvoiceB2CKlien(BankStatementDetail $detail): \Illuminate\Support\Collection
