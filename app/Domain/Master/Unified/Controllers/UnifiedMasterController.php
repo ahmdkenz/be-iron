@@ -212,7 +212,7 @@ class UnifiedMasterController extends Controller
 
         // Row 2 — Subtitle
         $sheet->mergeCells("A2:{$lastCol}2");
-        $sheet->setCellValue('A2', 'Satu baris = 1 outlet (Investor + Resto + Client AR). Kolom bertanda (*) wajib diisi — sebagian bersifat kondisional: nama_entitas & pic_ar wajib jika tipe_klien=PT; nama_pic wajib jika tipe_klien=RESTO. Kolom nama_pic & pic_ar boleh diisi NAMA karyawan atau NIK. NPWP & kontak Client AR otomatis dari Investor baris ini (npwp → no_npwp, no_hp → no_wa) untuk semua tipe. Hanya role ADMIN/MANAGER/SUPERVISOR. Lihat sheet "Petunjuk Pengisian".');
+        $sheet->setCellValue('A2', 'Satu baris = 1 outlet (Investor + Resto + Client AR). Kolom bertanda (*) wajib diisi — sebagian bersifat kondisional: nama_entitas & pic_ar wajib jika tipe_klien=PT; nama_pic wajib jika tipe_klien=RESTO. Kolom nama_pic & pic_ar boleh diisi NAMA karyawan, NIK, atau kombinasi "Nama (NIK)"/"Nama - NIK"/"Nama / NIK". NPWP & kontak Client AR otomatis dari Investor baris ini (npwp → no_npwp, no_hp → no_wa) untuk semua tipe. Hanya role ADMIN/MANAGER/SUPERVISOR. Lihat sheet "Petunjuk Pengisian".');
         $sheet->getStyle('A2')->applyFromArray([
             'font'      => ['italic' => true, 'size' => 9, 'color' => ['argb' => 'FF37474F']],
             'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFE3F2FD']],
@@ -574,7 +574,7 @@ class UnifiedMasterController extends Controller
             '2. Urutan import: MASTER DATA → MASTER BARANG → MASTER INVOICE. Invoice dapat langsung memakai data master yang baru diimport.',
             '3. Sheet MASTER DATA: isi satu baris per outlet (1 Investor + 1 Resto + 1 Client AR). Kolom bertanda (*) pada header wajib diisi — sebagian bersifat kondisional mengikuti tipe_klien (lihat tabel Deskripsi Kolom di bawah).',
             '4. tipe_klien=PT: nama_entitas & pic_ar wajib diisi (pic_ar menjadi PIC AR Client). tipe_klien=RESTO: nama_pic wajib diisi (menjadi PIC Resto sekaligus PIC AR Client); jika nama_pic kosong, pic_ar boleh dipakai sebagai pengganti. Jika nama_pic & pic_ar sama-sama diisi tapi menunjuk karyawan berbeda, baris akan ditolak.',
-            '5. Kolom nama_pic dan pic_ar boleh diisi NAMA KARYAWAN atau NIK karyawan — sistem mencari otomatis salah satunya. Nama Client AR otomatis: RESTO = nama_investor, PT = nama_entitas.',
+            '5. Kolom nama_pic dan pic_ar boleh diisi NAMA KARYAWAN, NIK, atau kombinasi keduanya ("Andi Wijaya (3273010101900001)", "Andi Wijaya - 3273010101900001", atau "Andi Wijaya / 3273010101900001") — sistem mencari otomatis. Untuk format kombinasi, NIK dipakai sebagai identitas utama: jika NIK ditemukan tapi nama di Excel berbeda dari Master Karyawan, nama karyawan akan DIPERBARUI mengikuti Excel (NIK tidak pernah berubah, dan karyawan baru tidak akan dibuat otomatis). Nama Client AR otomatis: RESTO = nama_investor, PT = nama_entitas.',
             '6. Sheet MASTER BARANG: kode_barang wajib untuk barang baru. Kolom: kode_barang, nama_barang, spesifikasi, keterangan, status.',
             '7. Sheet MASTER INVOICE: 1 baris = 1 item. Baris dengan tipe_invoice + klien (outlet) + tanggal_invoice sama digabung jadi 1 invoice. 1 klien (1 outlet) = 1 invoice per hari. tipe_invoice: "B2C" atau "B2B".',
             '8. Invoice B2C: isi kolom header + item (kode_barang/nama_barang, qty, satuan, harga_satuan). Kolom kode_resto WAJIB diisi pada setiap baris (dipakai memvalidasi baris terhadap MASTER DATA & menentukan outlet tujuan) — baris tanpa kode_resto akan ditolak. Kolom no_invoice_resto opsional.',
@@ -635,7 +635,7 @@ class UnifiedMasterController extends Controller
             ['nama_cabang',     'Nama cabang/resto (upsert key Resto)',                            'Ya', 'Warung Makan Enak'],
             ['nama_entitas',    'Nama perusahaan/singkatan (lookup) — WAJIB jika tipe_klien=PT',  'Ya (PT)',                'PT Maju Bersama'],
             ['nama_brand',      'Nama brand untuk Resto (lookup)',                                 'Opsional',               'Brand X'],
-            ['nama_pic',        'Nama PIC Resto — boleh diisi NAMA karyawan atau NIK (lookup). WAJIB jika tipe_klien=RESTO (sekaligus jadi PIC AR Client). Jika kosong, pic_ar dipakai sebagai pengganti (berlaku untuk PT maupun RESTO). Jika nama_pic & pic_ar sama-sama diisi tapi menunjuk karyawan berbeda, baris ditolak.', 'Ya (RESTO)', 'Andi Wijaya / 3273010101900001'],
+            ['nama_pic',        'Nama PIC Resto — boleh diisi NAMA karyawan, NIK, atau kombinasi "Nama (NIK)"/"Nama - NIK"/"Nama / NIK" (lookup). Kombinasi memakai NIK sebagai identitas utama — kalau nama di Excel beda dari Master Karyawan, nama akan ditimpa mengikuti Excel. WAJIB jika tipe_klien=RESTO (sekaligus jadi PIC AR Client). Jika kosong, pic_ar dipakai sebagai pengganti (berlaku untuk PT maupun RESTO). Jika nama_pic & pic_ar sama-sama diisi tapi menunjuk karyawan berbeda, baris ditolak.', 'Ya (RESTO)', 'Andi Wijaya / 3273010101900001'],
             ['supervisor',      'Nama supervisor Resto',                                           'Opsional',               'Budi Supervisor'],
             ['no_hp_supervisor','Nomor HP supervisor',                                             'Opsional',               '08111222333'],
             ['stokis',          'Nama stokis Resto',                                               'Opsional',               'Stokis Utama'],
@@ -645,7 +645,7 @@ class UnifiedMasterController extends Controller
             ['no_telp',         'Nomor telepon Resto',                                             'Opsional',               '02112345678'],
             ['tgl_aktif',       'Tanggal aktif Resto (format: DD-MM-YYYY)',                        'Opsional',               '01-01-2026'],
             ['keterangan',      'Keterangan tambahan Resto',                                       'Opsional',               'Gerai pusat'],
-            ['pic_ar',          'Nama karyawan AR — boleh diisi NAMA karyawan atau NIK (lookup). WAJIB jika tipe_klien=PT (jadi PIC AR Client). Untuk tipe_klien=RESTO bersifat opsional (hanya dipakai sebagai pengganti jika nama_pic kosong). NPWP & kontak Client AR otomatis dari Investor baris ini (npwp → no_npwp, no_hp → no_wa) untuk semua tipe.', 'Ya (PT)', 'Siti Rahayu / 3273010101900002'],
+            ['pic_ar',          'Nama karyawan AR — boleh diisi NAMA karyawan, NIK, atau kombinasi "Nama (NIK)"/"Nama - NIK"/"Nama / NIK" (lookup). Kombinasi memakai NIK sebagai identitas utama — kalau nama di Excel beda dari Master Karyawan, nama akan ditimpa mengikuti Excel. WAJIB jika tipe_klien=PT (jadi PIC AR Client). Untuk tipe_klien=RESTO bersifat opsional (hanya dipakai sebagai pengganti jika nama_pic kosong). NPWP & kontak Client AR otomatis dari Investor baris ini (npwp → no_npwp, no_hp → no_wa) untuk semua tipe.', 'Ya (PT)', 'Siti Rahayu / 3273010101900002'],
             ['tipe_klien',      'Tipe Client AR: PT atau RESTO — kosongkan jika tidak membuat Klien', 'Ya (untuk Klien)',   'RESTO'],
             ['status',          '1 = Aktif (default), 0 = Nonaktif',                              'Opsional',               '1'],
         ];

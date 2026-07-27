@@ -843,6 +843,144 @@ class MasterImportServiceTest extends TestCase
     }
 
     // ──────────────────────────────────────────────────────────────
+    //  resolveKaryawanIdByNameOrNik — format kombinasi Nama+NIK
+    // ──────────────────────────────────────────────────────────────
+
+    public function test_resolve_karyawan_by_nama_slash_nik(): void
+    {
+        $karyawanMap    = ['andi wijaya' => 1];
+        $karyawanNikMap = ['3273010101900001' => 1];
+
+        $this->assertSame(1, $this->invoke('resolveKaryawanIdByNameOrNik', 'Andi Wijaya / 3273010101900001', $karyawanMap, $karyawanNikMap));
+    }
+
+    public function test_resolve_karyawan_by_nama_dash_nik(): void
+    {
+        $karyawanMap    = ['siti rahayu' => 2];
+        $karyawanNikMap = ['3273010101900002' => 2];
+
+        $this->assertSame(2, $this->invoke('resolveKaryawanIdByNameOrNik', 'Siti Rahayu - 3273010101900002', $karyawanMap, $karyawanNikMap));
+    }
+
+    public function test_resolve_karyawan_by_nama_paren_nik(): void
+    {
+        $karyawanMap    = ['andi wijaya' => 1];
+        $karyawanNikMap = ['3273010101900001' => 1];
+
+        $this->assertSame(1, $this->invoke('resolveKaryawanIdByNameOrNik', 'Andi Wijaya (3273010101900001)', $karyawanMap, $karyawanNikMap));
+    }
+
+    public function test_resolve_karyawan_combined_format_nik_not_found_returns_null(): void
+    {
+        $karyawanMap    = ['andi wijaya' => 1];
+        $karyawanNikMap = ['3273010101900001' => 1];
+
+        // NIK pada kombinasi tidak ada di master → tidak boleh diam-diam fallback ke nama
+        $this->assertNull($this->invoke('resolveKaryawanIdByNameOrNik', 'Andi Wijaya / 9999999999999999', $karyawanMap, $karyawanNikMap));
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    //  parsePicIdentifier
+    // ──────────────────────────────────────────────────────────────
+
+    public function test_parse_pic_identifier_nama_only(): void
+    {
+        $this->assertSame(['nama' => 'Andi Wijaya', 'nik' => null], $this->invoke('parsePicIdentifier', 'Andi Wijaya'));
+    }
+
+    public function test_parse_pic_identifier_nik_only(): void
+    {
+        $this->assertSame(['nama' => null, 'nik' => '3273010101900001'], $this->invoke('parsePicIdentifier', '3273010101900001'));
+    }
+
+    public function test_parse_pic_identifier_nama_slash_nik(): void
+    {
+        $this->assertSame(['nama' => 'Andi Wijaya', 'nik' => '3273010101900001'], $this->invoke('parsePicIdentifier', 'Andi Wijaya / 3273010101900001'));
+    }
+
+    public function test_parse_pic_identifier_nama_dash_nik(): void
+    {
+        $this->assertSame(['nama' => 'Siti Rahayu', 'nik' => '3273010101900002'], $this->invoke('parsePicIdentifier', 'Siti Rahayu - 3273010101900002'));
+    }
+
+    public function test_parse_pic_identifier_nama_paren_nik(): void
+    {
+        $this->assertSame(['nama' => 'Andi Wijaya', 'nik' => '3273010101900001'], $this->invoke('parsePicIdentifier', 'Andi Wijaya (3273010101900001)'));
+    }
+
+    public function test_parse_pic_identifier_empty_returns_null_pair(): void
+    {
+        $this->assertSame(['nama' => null, 'nik' => null], $this->invoke('parsePicIdentifier', ''));
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    //  resolveKaryawanNameSync — keputusan sinkron nama karyawan (pure, tanpa DB)
+    // ──────────────────────────────────────────────────────────────
+
+    public function test_karyawan_name_sync_nik_valid_and_nama_berbeda_menimpa_nama_karyawan(): void
+    {
+        $karyawanNameById = [1 => 'Andi Wijaya'];
+
+        $result = $this->invoke('resolveKaryawanNameSync', 'Andi Wijaya Baru (3273010101900001)', 1, $karyawanNameById);
+
+        $this->assertTrue($result['should_update']);
+        $this->assertSame('Andi Wijaya Baru', $result['nama_baru']);
+        $this->assertNull($result['error']);
+    }
+
+    public function test_karyawan_name_sync_nama_sama_tidak_perlu_update(): void
+    {
+        $karyawanNameById = [1 => 'Andi Wijaya'];
+
+        $result = $this->invoke('resolveKaryawanNameSync', 'Andi Wijaya / 3273010101900001', 1, $karyawanNameById);
+
+        $this->assertFalse($result['should_update']);
+        $this->assertNull($result['error']);
+    }
+
+    public function test_karyawan_name_sync_nama_only_tanpa_nik_tidak_pernah_update(): void
+    {
+        // Guardrail utama: tanpa NIK, sistem tidak boleh menebak orangnya meski nama beda.
+        $karyawanNameById = [1 => 'Andi Wijaya'];
+
+        $result = $this->invoke('resolveKaryawanNameSync', 'Andi Wijaya Baru', 1, $karyawanNameById);
+
+        $this->assertFalse($result['should_update']);
+        $this->assertNull($result['error']);
+    }
+
+    public function test_karyawan_name_sync_karyawan_id_null_tidak_update(): void
+    {
+        $result = $this->invoke('resolveKaryawanNameSync', 'Andi Wijaya / 3273010101900001', null, []);
+
+        $this->assertFalse($result['should_update']);
+        $this->assertNull($result['error']);
+    }
+
+    public function test_karyawan_name_sync_nama_terlalu_panjang_ditolak(): void
+    {
+        $namaPanjang      = str_repeat('A', 101);
+        $karyawanNameById = [1 => 'Andi Wijaya'];
+
+        $result = $this->invoke('resolveKaryawanNameSync', "{$namaPanjang} / 3273010101900001", 1, $karyawanNameById);
+
+        $this->assertFalse($result['should_update']);
+        $this->assertNull($result['nama_baru']);
+        $this->assertNotNull($result['error']);
+        $this->assertStringContainsString('100 karakter', $result['error']);
+    }
+
+    public function test_karyawan_name_sync_nik_only_tanpa_nama_tidak_update(): void
+    {
+        $karyawanNameById = [1 => 'Andi Wijaya'];
+
+        $result = $this->invoke('resolveKaryawanNameSync', '3273010101900001', 1, $karyawanNameById);
+
+        $this->assertFalse($result['should_update']);
+        $this->assertNull($result['error']);
+    }
+
+    // ──────────────────────────────────────────────────────────────
     //  resolvePicRestoForRow
     // ──────────────────────────────────────────────────────────────
 
@@ -851,11 +989,12 @@ class MasterImportServiceTest extends TestCase
         $karyawanMap    = ['siti rahayu' => 2];
         $karyawanNikMap = ['3273010101900002' => 2];
 
-        $result = $this->invoke('resolvePicRestoForRow', '', '3273010101900002', 'PT', $karyawanMap, $karyawanNikMap);
+        $result = $this->invoke('resolvePicRestoForRow', '', '3273010101900002', 'PT', $karyawanMap, $karyawanNikMap, [], 1);
 
         $this->assertSame(2, $result['karyawan_id']);
         $this->assertTrue($result['used_fallback']);
         $this->assertNull($result['conflict_error']);
+        $this->assertSame([], $result['name_sync_errors']);
     }
 
     public function test_pic_resto_resto_nama_pic_by_nik(): void
@@ -863,11 +1002,12 @@ class MasterImportServiceTest extends TestCase
         $karyawanMap    = ['andi wijaya' => 1];
         $karyawanNikMap = ['3273010101900001' => 1];
 
-        $result = $this->invoke('resolvePicRestoForRow', '3273010101900001', '', 'RESTO', $karyawanMap, $karyawanNikMap);
+        $result = $this->invoke('resolvePicRestoForRow', '3273010101900001', '', 'RESTO', $karyawanMap, $karyawanNikMap, [], 1);
 
         $this->assertSame(1, $result['karyawan_id']);
         $this->assertFalse($result['used_fallback']);
         $this->assertNull($result['conflict_error']);
+        $this->assertSame([], $result['name_sync_errors']);
     }
 
     public function test_pic_resto_resto_falls_back_to_pic_ar_when_nama_pic_kosong(): void
@@ -875,11 +1015,12 @@ class MasterImportServiceTest extends TestCase
         $karyawanMap    = ['siti rahayu' => 2];
         $karyawanNikMap = [];
 
-        $result = $this->invoke('resolvePicRestoForRow', '', 'Siti Rahayu', 'RESTO', $karyawanMap, $karyawanNikMap);
+        $result = $this->invoke('resolvePicRestoForRow', '', 'Siti Rahayu', 'RESTO', $karyawanMap, $karyawanNikMap, [], 1);
 
         $this->assertSame(2, $result['karyawan_id']);
         $this->assertTrue($result['used_fallback']);
         $this->assertNull($result['conflict_error']);
+        $this->assertSame([], $result['name_sync_errors']);
     }
 
     public function test_pic_resto_resto_conflict_when_nama_pic_and_pic_ar_differ(): void
@@ -887,7 +1028,7 @@ class MasterImportServiceTest extends TestCase
         $karyawanMap    = ['andi wijaya' => 1, 'siti rahayu' => 2];
         $karyawanNikMap = [];
 
-        $result = $this->invoke('resolvePicRestoForRow', 'Andi Wijaya', 'Siti Rahayu', 'RESTO', $karyawanMap, $karyawanNikMap);
+        $result = $this->invoke('resolvePicRestoForRow', 'Andi Wijaya', 'Siti Rahayu', 'RESTO', $karyawanMap, $karyawanNikMap, [], 1);
 
         $this->assertSame(1, $result['karyawan_id']);
         $this->assertFalse($result['used_fallback']);
@@ -902,7 +1043,7 @@ class MasterImportServiceTest extends TestCase
         $karyawanNikMap = ['3273010101900001' => 1];
 
         // nama_pic diisi nama, pic_ar diisi NIK — sama-sama menunjuk karyawan yang sama
-        $result = $this->invoke('resolvePicRestoForRow', 'Andi Wijaya', '3273010101900001', 'RESTO', $karyawanMap, $karyawanNikMap);
+        $result = $this->invoke('resolvePicRestoForRow', 'Andi Wijaya', '3273010101900001', 'RESTO', $karyawanMap, $karyawanNikMap, [], 1);
 
         $this->assertSame(1, $result['karyawan_id']);
         $this->assertNull($result['conflict_error']);
@@ -915,10 +1056,26 @@ class MasterImportServiceTest extends TestCase
         $karyawanMap    = ['andi wijaya' => 1, 'siti rahayu' => 2];
         $karyawanNikMap = [];
 
-        $result = $this->invoke('resolvePicRestoForRow', 'Andi Wijaya', 'Siti Rahayu', 'PT', $karyawanMap, $karyawanNikMap);
+        $result = $this->invoke('resolvePicRestoForRow', 'Andi Wijaya', 'Siti Rahayu', 'PT', $karyawanMap, $karyawanNikMap, [], 1);
 
         $this->assertSame(1, $result['karyawan_id']);
         $this->assertNull($result['conflict_error']);
+    }
+
+    public function test_pic_resto_combined_format_resolves_without_sync_when_nama_already_sama(): void
+    {
+        // RESTO: nama_pic = "Andi Wijaya (3273010101900001)" berhasil — nama di Excel sama
+        // dengan master, jadi tidak ada write yang perlu terjadi (aman diuji tanpa DB).
+        $karyawanMap      = ['andi wijaya' => 1];
+        $karyawanNikMap   = ['3273010101900001' => 1];
+        $karyawanNameById = [1 => 'Andi Wijaya'];
+
+        $result = $this->invoke('resolvePicRestoForRow', 'Andi Wijaya (3273010101900001)', '', 'RESTO', $karyawanMap, $karyawanNikMap, $karyawanNameById, 1);
+
+        $this->assertSame(1, $result['karyawan_id']);
+        $this->assertFalse($result['used_fallback']);
+        $this->assertNull($result['conflict_error']);
+        $this->assertSame([], $result['name_sync_errors']);
     }
 
     // ──────────────────────────────────────────────────────────────

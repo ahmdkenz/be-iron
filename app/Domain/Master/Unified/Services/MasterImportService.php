@@ -102,11 +102,16 @@ class MasterImportService
         $batch->update(['master_total' => count($rows)]);
 
         // Preload referensi
-        $actingUserId   = $batch->user_id;
-        $brandMap       = $this->buildLowerMap(Brand::all(['id', 'nama_brand']), 'nama_brand');
-        $karyawanMap    = $this->buildLowerMap(Karyawan::all(['id', 'nama_karyawan']), 'nama_karyawan');
-        $karyawanNikMap = $this->buildLowerMap(Karyawan::all(['id', 'nik']), 'nik');
-        $perusahaanMap  = $this->buildPerusahaanMap();
+        $actingUserId     = $batch->user_id;
+        $brandMap         = $this->buildLowerMap(Brand::all(['id', 'nama_brand']), 'nama_brand');
+        $karyawanRecords  = Karyawan::all(['id', 'nama_karyawan', 'nik']);
+        $karyawanMap      = $this->buildLowerMap($karyawanRecords, 'nama_karyawan');
+        $karyawanNikMap   = $this->buildLowerMap($karyawanRecords, 'nik');
+        // id => nama_karyawan tersimpan saat ini — dipakai resolveKaryawanNameSync() untuk
+        // mendeteksi perubahan nama via kombinasi Nama+NIK, DIPERBARUI runtime saat sinkron terjadi
+        // (lihat applyKaryawanNameSync()) supaya baris berikutnya di import yang sama ikut konsisten.
+        $karyawanNameById = $karyawanRecords->pluck('nama_karyawan', 'id')->all();
+        $perusahaanMap    = $this->buildPerusahaanMap();
 
         $invIns  = $invUpd  = $invFail  = 0;
         $resIns  = $resUpd  = $resFail  = 0;
@@ -213,14 +218,16 @@ class MasterImportService
                     $namaPicResto   = $this->importValue($col($row, 'nama_pic')) ?? '';
                     $picArRaw       = $this->importValue($col($row, 'pic_ar')) ?? '';
 
-                    $picResult        = $this->resolvePicRestoForRow($namaPicResto, $picArRaw, $tipeKlien, $karyawanMap, $karyawanNikMap);
+                    $picResult        = $this->resolvePicRestoForRow($namaPicResto, $picArRaw, $tipeKlien, $karyawanMap, $karyawanNikMap, $karyawanNameById, $actingUserId);
                     $karyawanId       = $picResult['karyawan_id'];
                     $picRestoFallback = $picResult['used_fallback'];
                     $picIdentifier    = $picResult['identifier'];
+                    $karyawanMap      = $picResult['karyawan_map'];
+                    $karyawanNameById = $picResult['karyawan_name_by_id'];
 
                     $perusahaanId = null;
                     $brandId      = null;
-                    $rowErrors    = [];
+                    $rowErrors    = $picResult['name_sync_errors'];
 
                     if ($namaPerusahaan) {
                         $perusahaanId = $perusahaanMap[strtolower($namaPerusahaan)] ?? null;
@@ -352,7 +359,16 @@ class MasterImportService
                         if (!$karyawanArId) $rowErrors[] = "PIC Resto (nama_pic atau pic_ar) wajib diisi untuk membuat Client AR tipe RESTO";
                     } elseif ($picArRaw !== '') {
                         $karyawanArId = $this->resolveKaryawanIdByNameOrNik($picArRaw, $karyawanMap, $karyawanNikMap);
-                        if (!$karyawanArId) $rowErrors[] = "Karyawan AR '{$picArRaw}' tidak ditemukan (nama atau NIK)";
+                        if (!$karyawanArId) {
+                            $rowErrors[] = "Karyawan AR '{$picArRaw}' tidak ditemukan (nama atau NIK)";
+                        } else {
+                            $nameSync = $this->resolveKaryawanNameSync($picArRaw, $karyawanArId, $karyawanNameById);
+                            if ($nameSync['error']) {
+                                $rowErrors[] = $nameSync['error'];
+                            } elseif ($nameSync['should_update']) {
+                                $this->applyKaryawanNameSync($karyawanArId, $nameSync['nama_baru'], $karyawanMap, $karyawanNameById, $actingUserId);
+                            }
+                        }
                     } else {
                         $rowErrors[] = "pic_ar wajib diisi untuk membuat Client AR";
                     }
@@ -923,23 +939,126 @@ class MasterImportService
         return trim(preg_replace('/\(\s*\*\s*\)\s*$/', '', $s));
     }
 
-    /** Resolve id karyawan dari input yang boleh berupa nama_karyawan ATAU nik (case-insensitive). */
+    /**
+     * Parse identifier PIC (nama_pic / pic_ar) menjadi [nama, nik]. Format yang didukung:
+     *   "Nama", "NIK", "Nama / NIK", "Nama - NIK", "Nama (NIK)".
+     * NIK dikenali sebagai token 6-30 digit angka murni (NIK Indonesia = 16 digit; rentang
+     * dilebarkan sedikit untuk toleransi data lama). Kalau tidak ada token NIK yang cocok,
+     * seluruh identifier dianggap nama saja (perilaku lama tidak berubah).
+     *
+     * @return array{nama: ?string, nik: ?string}
+     */
+    private function parsePicIdentifier(string $identifier): array
+    {
+        $identifier = trim($identifier);
+        if ($identifier === '') {
+            return ['nama' => null, 'nik' => null];
+        }
+
+        if (preg_match('/^\d{6,30}$/', $identifier)) {
+            return ['nama' => null, 'nik' => $identifier];
+        }
+
+        if (preg_match('/^(.+?)\s*\(\s*(\d{6,30})\s*\)$/', $identifier, $m)) {
+            return ['nama' => trim($m[1]) !== '' ? trim($m[1]) : null, 'nik' => $m[2]];
+        }
+
+        if (preg_match('/^(.+?)\s*[\/\-]\s*(\d{6,30})$/', $identifier, $m)) {
+            return ['nama' => trim($m[1]) !== '' ? trim($m[1]) : null, 'nik' => $m[2]];
+        }
+
+        return ['nama' => $identifier, 'nik' => null];
+    }
+
+    /**
+     * Resolve id karyawan dari input yang boleh berupa nama_karyawan, nik, ATAU kombinasi
+     * Nama+NIK (lihat parsePicIdentifier()) — case-insensitive untuk nama. Untuk kombinasi,
+     * NIK dipakai sebagai identitas utama (nama pada kombinasi tidak dipakai untuk lookup,
+     * hanya untuk sinkronisasi — lihat resolveKaryawanNameSync()).
+     */
     private function resolveKaryawanIdByNameOrNik(string $identifier, array $karyawanMap, array $karyawanNikMap): ?int
     {
-        $key = strtolower($identifier);
-        return $karyawanMap[$key] ?? $karyawanNikMap[$key] ?? null;
+        $parsed = $this->parsePicIdentifier($identifier);
+
+        if ($parsed['nik'] !== null) {
+            return $karyawanNikMap[$parsed['nik']] ?? null;
+        }
+
+        return $karyawanMap[strtolower($parsed['nama'] ?? '')] ?? null;
+    }
+
+    /**
+     * Tentukan apakah tb_karyawan.nama_karyawan perlu disinkronkan dari identifier PIC
+     * (nama_pic/pic_ar) yang memuat kombinasi Nama+NIK — murni pengambilan keputusan
+     * (read-only, tidak menyentuh DB), supaya bisa diuji tanpa DB.
+     *
+     * Guardrail: sinkronisasi HANYA layak terjadi kalau identifier memuat NIK valid yang
+     * sudah ter-resolve ke $karyawanId — nama-only tidak pernah memicu ini (mencegah sistem
+     * "menebak" orang dari nama saja).
+     *
+     * @param array<int,string> $karyawanNameById id => nama_karyawan tersimpan saat ini
+     * @return array{nama_baru: ?string, should_update: bool, error: ?string}
+     */
+    private function resolveKaryawanNameSync(string $identifier, ?int $karyawanId, array $karyawanNameById): array
+    {
+        if ($karyawanId === null) {
+            return ['nama_baru' => null, 'should_update' => false, 'error' => null];
+        }
+
+        $parsed = $this->parsePicIdentifier($identifier);
+        if ($parsed['nik'] === null || !$parsed['nama']) {
+            return ['nama_baru' => null, 'should_update' => false, 'error' => null];
+        }
+
+        $namaBaru = $parsed['nama'];
+        if (mb_strlen($namaBaru) > 100) {
+            return [
+                'nama_baru'     => null,
+                'should_update' => false,
+                'error'         => "Nama PIC '{$namaBaru}' (NIK {$parsed['nik']}) melebihi 100 karakter — nama karyawan tidak diperbarui.",
+            ];
+        }
+
+        $namaLama = $karyawanNameById[$karyawanId] ?? null;
+        if ($namaLama === $namaBaru) {
+            return ['nama_baru' => null, 'should_update' => false, 'error' => null];
+        }
+
+        return ['nama_baru' => $namaBaru, 'should_update' => true, 'error' => null];
+    }
+
+    /**
+     * Terapkan hasil resolveKaryawanNameSync(): update tb_karyawan.nama_karyawan (+updated_by)
+     * secara sempit (hanya 2 kolom ini — nik/perusahaan_id/relasi lain tidak tersentuh), lalu
+     * perbarui peta lookup runtime supaya baris berikutnya di import yang sama ikut konsisten.
+     * Side-effect DB, sengaja tidak diuji unit (pola sama dengan pemanggilan *Service->update()
+     * lain di file ini) — lihat catatan test DB di memory project.
+     */
+    private function applyKaryawanNameSync(int $karyawanId, string $namaBaru, array &$karyawanMap, array &$karyawanNameById, int $actingUserId): void
+    {
+        Karyawan::whereKey($karyawanId)->update([
+            'nama_karyawan' => $namaBaru,
+            'updated_by'    => $actingUserId,
+        ]);
+
+        $karyawanNameById[$karyawanId]      = $namaBaru;
+        $karyawanMap[strtolower($namaBaru)] = $karyawanId;
     }
 
     /**
      * Resolve PIC Resto (kolom nama_pic) untuk satu baris MASTER DATA, dengan aturan:
-     *   - nama_pic boleh diisi nama karyawan ATAU nik.
+     *   - nama_pic boleh diisi nama karyawan, NIK, ATAU kombinasi Nama+NIK (lihat
+     *     parsePicIdentifier()) — kombinasi men-sync nama_karyawan bila berbeda dari master
+     *     (lihat resolveKaryawanNameSync() / applyKaryawanNameSync()).
      *   - Jika nama_pic kosong dan tipe_klien PT/RESTO, pic_ar dipakai sebagai pengganti (fallback).
      *   - Khusus tipe_klien RESTO: jika nama_pic & pic_ar SAMA-SAMA diisi (bukan hasil fallback) dan
      *     keduanya berhasil di-resolve tapi menunjuk karyawan yang berbeda, baris dianggap ambigu.
      *     (Tidak berlaku untuk PT karena nama_pic = PIC Resto dan pic_ar = PIC AR Client memang dua
      *     peran berbeda yang boleh diisi orang berbeda.)
      *
-     * @return array{karyawan_id: ?int, identifier: string, used_fallback: bool, conflict_error: ?string}
+     * @param array<string,int> $karyawanMap lower(nama) => id (state awal; hasil sinkron dikembalikan lewat return, bukan by-ref, supaya method ini tetap pure/mudah diuji)
+     * @param array<int,string> $karyawanNameById id => nama_karyawan tersimpan saat ini
+     * @return array{karyawan_id: ?int, identifier: string, used_fallback: bool, conflict_error: ?string, name_sync_errors: string[], karyawan_map: array<string,int>, karyawan_name_by_id: array<int,string>}
      */
     private function resolvePicRestoForRow(
         string $namaPicResto,
@@ -947,6 +1066,8 @@ class MasterImportService
         string $tipeKlien,
         array $karyawanMap,
         array $karyawanNikMap,
+        array $karyawanNameById,
+        int $actingUserId,
     ): array {
         $identifier   = $namaPicResto;
         $usedFallback = false;
@@ -956,23 +1077,44 @@ class MasterImportService
             $usedFallback = true;
         }
 
-        $karyawanId = $identifier !== ''
-            ? $this->resolveKaryawanIdByNameOrNik($identifier, $karyawanMap, $karyawanNikMap)
-            : null;
+        $nameSyncErrors = [];
+        $karyawanId     = null;
+
+        if ($identifier !== '') {
+            $karyawanId = $this->resolveKaryawanIdByNameOrNik($identifier, $karyawanMap, $karyawanNikMap);
+
+            $sync = $this->resolveKaryawanNameSync($identifier, $karyawanId, $karyawanNameById);
+            if ($sync['error']) {
+                $nameSyncErrors[] = $sync['error'];
+            } elseif ($sync['should_update']) {
+                $this->applyKaryawanNameSync($karyawanId, $sync['nama_baru'], $karyawanMap, $karyawanNameById, $actingUserId);
+            }
+        }
 
         $conflictError = null;
         if ($tipeKlien === 'RESTO' && !$usedFallback && $namaPicResto !== '' && $picArRaw !== '' && $karyawanId) {
             $picArKaryawanId = $this->resolveKaryawanIdByNameOrNik($picArRaw, $karyawanMap, $karyawanNikMap);
+
+            $sync = $this->resolveKaryawanNameSync($picArRaw, $picArKaryawanId, $karyawanNameById);
+            if ($sync['error']) {
+                $nameSyncErrors[] = $sync['error'];
+            } elseif ($sync['should_update']) {
+                $this->applyKaryawanNameSync($picArKaryawanId, $sync['nama_baru'], $karyawanMap, $karyawanNameById, $actingUserId);
+            }
+
             if ($picArKaryawanId && $picArKaryawanId !== $karyawanId) {
                 $conflictError = "nama_pic ('{$namaPicResto}') dan pic_ar ('{$picArRaw}') menunjuk karyawan yang berbeda — isi salah satu saja atau samakan keduanya";
             }
         }
 
         return [
-            'karyawan_id'    => $karyawanId,
-            'identifier'     => $identifier,
-            'used_fallback'  => $usedFallback,
-            'conflict_error' => $conflictError,
+            'karyawan_id'         => $karyawanId,
+            'identifier'          => $identifier,
+            'used_fallback'       => $usedFallback,
+            'conflict_error'      => $conflictError,
+            'name_sync_errors'    => $nameSyncErrors,
+            'karyawan_map'        => $karyawanMap,
+            'karyawan_name_by_id' => $karyawanNameById,
         ];
     }
 
