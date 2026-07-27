@@ -21,6 +21,10 @@ Route::get('/invoices/print/{token}', [InvoiceController::class, 'publicPrint'])
     ->middleware(['signed', 'throttle:30,1'])
     ->name('invoice.public-print');
 
+Route::get('/invoices/bulk-print/{token}', [InvoiceController::class, 'publicBulkB2CPrint'])
+    ->middleware(['signed', 'throttle:30,1'])
+    ->name('invoice.bulk-b2c-print');
+
 Route::get('/tagihan-ap/print/{token}', [TagihanApController::class, 'publicPrint'])
     ->middleware(['signed', 'throttle:30,1'])
     ->name('tagihan-ap.public-print');

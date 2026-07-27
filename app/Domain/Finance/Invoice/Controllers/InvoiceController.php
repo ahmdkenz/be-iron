@@ -17,6 +17,7 @@ use App\Models\KlienAr;
 use App\Models\Resto;
 use Carbon\Carbon;
 use App\Support\Helpers\ArFilterScope;
+use App\Support\Helpers\BulkPrintTokenCodec;
 use App\Support\Helpers\RoleHelper;
 use App\Support\Helpers\SignatureBarcodeHelper;
 use App\Support\Traits\ApiResponse;
@@ -24,6 +25,7 @@ use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Facades\Validator;
@@ -880,6 +882,239 @@ class InvoiceController extends Controller
                 'dpi'                  => 96,
             ])
             ->stream($filename);
+    }
+
+    /**
+     * Preview kandidat Bulk Print per Investor: dari 1 invoice B2C anchor,
+     * kumpulkan invoice reguler B2C outlet lain milik investor yang sama
+     * dalam periode yang diminta. Tidak menyertakan share_url (murni review).
+     */
+    public function bulkB2CInvestorPreview(Request $request): JsonResponse
+    {
+        $context = $this->resolveBulkB2CInvestorContext($request);
+
+        return $this->successResponse($this->buildBulkB2CInvestorPayload($context, includeShareUrl: false));
+    }
+
+    /**
+     * Sama seperti preview, tapi sekaligus generate 1 signed URL PDF gabungan
+     * (dipakai FE untuk membangun pesan WhatsApp berisi 1 link).
+     */
+    public function bulkB2CInvestorLink(Request $request): JsonResponse
+    {
+        $context = $this->resolveBulkB2CInvestorContext($request);
+
+        return $this->successResponse($this->buildBulkB2CInvestorPayload($context, includeShareUrl: true));
+    }
+
+    /**
+     * Endpoint publik (signed URL, tanpa auth) untuk PDF gabungan bulk print
+     * per investor. Himpunan invoice_id dibaca dari token (snapshot saat
+     * link dibuat), tapi nilai tiap invoice selalu diambil ulang dari DB
+     * supaya statusnya terkini.
+     */
+    public function publicBulkB2CPrint(string $token): Response
+    {
+        try {
+            $payload = BulkPrintTokenCodec::decode($token);
+        } catch (\Throwable) {
+            abort(404, 'Dokumen tidak ditemukan atau tautan tidak valid');
+        }
+
+        $invoiceIds = $payload['invoice_ids'] ?? [];
+        abort_if(empty($invoiceIds), 404, 'Dokumen tidak ditemukan');
+
+        $invoices = $this->service->getBulkB2CInvestorInvoices(
+            investorIds: null,
+            onlyInvoiceIds: $invoiceIds,
+        );
+
+        abort_if($invoices->isEmpty(), 404, 'Dokumen tidak ditemukan');
+
+        $invoices->each(fn($inv) => $this->attachPrintItems($inv));
+        $signaturesById = $invoices
+            ->mapWithKeys(fn($inv) => [$inv->id => $this->buildSignatureData($inv)])
+            ->all();
+
+        $restoGroups = $this->groupInvoicesByResto($invoices);
+        $filenameBase = $payload['investor_nama'] ?? 'Investor';
+        $filename = 'Rekap-Invoice-' . str_replace(['/', '\\', ' '], '-', $filenameBase) . '.pdf';
+
+        return Pdf::loadView('finance.invoice-b2c-bulk-print', [
+            'payload'        => $payload,
+            'invoices'       => $invoices,
+            'signaturesById' => $signaturesById,
+            'restoGroups'    => $restoGroups,
+        ])
+            ->setPaper('a4', 'portrait')
+            ->setOptions([
+                'isHtml5ParserEnabled' => true,
+                'isRemoteEnabled'      => false,
+                'defaultFont'          => 'Arial',
+                'dpi'                  => 96,
+            ])
+            ->stream($filename);
+    }
+
+    private function resolveBulkB2CInvestorContext(Request $request): array
+    {
+        $data = $request->validate([
+            'anchor_invoice_id' => ['required', 'integer'],
+            'tanggal_dari'      => ['required', 'date'],
+            'tanggal_sampai'    => ['required', 'date', 'after_or_equal:tanggal_dari'],
+        ]);
+
+        $anchor = $this->service->findForPrintOrFail((int) $data['anchor_invoice_id']);
+
+        abort_if(
+            $anchor->is_opening_balance,
+            422,
+            'Invoice ini adalah Opening Balance, tidak didukung untuk bulk print per investor.'
+        );
+        abort_if(
+            strtoupper((string) $anchor->klienAr?->tipe_klien) !== 'RESTO',
+            422,
+            'Invoice ini bukan invoice B2C (RESTO).'
+        );
+
+        if ($anchor->klien_ar_id) {
+            $this->authorizeKlienArOwnership($anchor->klien_ar_id);
+        }
+
+        $investor = $anchor->klienAr?->resto?->investor;
+        abort_if(!$investor, 422, 'Outlet pada invoice ini belum terhubung ke data Investor.');
+
+        $investorIds = $this->service->resolveMatchingInvestorIds($investor);
+
+        $invoices = $this->service->getBulkB2CInvestorInvoices(
+            investorIds: $investorIds,
+            tanggalDari: $data['tanggal_dari'],
+            tanggalSampai: $data['tanggal_sampai'],
+            picArKaryawanId: RoleHelper::picArKaryawanIdFor(auth()->user()),
+        );
+
+        abort_if(
+            $invoices->count() > 200,
+            422,
+            'Jumlah invoice pada periode ini melebihi 200. Silakan persempit rentang tanggal.'
+        );
+
+        return [
+            'anchor'         => $anchor,
+            'investor'       => $investor,
+            'invoices'       => $invoices,
+            'tanggal_dari'   => $data['tanggal_dari'],
+            'tanggal_sampai' => $data['tanggal_sampai'],
+        ];
+    }
+
+    private function buildBulkB2CInvestorPayload(array $ctx, bool $includeShareUrl): array
+    {
+        $anchor    = $ctx['anchor'];
+        $investor  = $ctx['investor'];
+        $invoices  = $ctx['invoices'];
+
+        $restoGroups = $this->groupInvoicesByResto($invoices);
+
+        $totalTagihan    = (float) $invoices->sum(fn($inv) => (float) $inv->subtotal);
+        $totalPembayaran = (float) $invoices->sum(fn($inv) => (float) $inv->total_pembayaran);
+        $totalSisa       = (float) $invoices->sum(fn($inv) => max(
+            0,
+            (float) $inv->subtotal - (float) $inv->total_pembayaran - (float) $inv->total_penyesuaian
+        ));
+
+        $result = [
+            'investor' => [
+                'id'            => $investor->id,
+                'nama_investor' => $investor->nama_investor,
+            ],
+            'klien_anchor' => [
+                'id'         => $anchor->klienAr?->id,
+                'nama_klien' => $anchor->klienAr?->nama_klien,
+                'no_wa'      => $anchor->klienAr?->no_wa,
+            ],
+            'pic_ar' => [
+                'nama_karyawan' => $anchor->klienAr?->karyawanAr?->nama_karyawan,
+            ],
+            'periode' => [
+                'tanggal_dari'   => $ctx['tanggal_dari'],
+                'tanggal_sampai' => $ctx['tanggal_sampai'],
+            ],
+            'total_invoice'    => $invoices->count(),
+            'total_resto'      => count($restoGroups),
+            'total_tagihan'    => $totalTagihan,
+            'total_pembayaran' => $totalPembayaran,
+            'total_sisa'       => $totalSisa,
+            'resto_groups'     => array_map(fn($group) => [
+                'resto_id'            => $group['resto_id'],
+                'nama_resto'          => $group['nama_resto'],
+                'kode_resto'          => $group['kode_resto'],
+                'subtotal_tagihan'    => $group['subtotal_tagihan'],
+                'subtotal_pembayaran' => $group['subtotal_pembayaran'],
+                'subtotal_sisa'       => $group['subtotal_sisa'],
+                'invoices'            => array_map(fn($inv) => [
+                    'id'               => $inv->id,
+                    'no_invoice'       => $inv->no_invoice,
+                    'tanggal_invoice'  => $inv->tanggal_invoice?->format('d-m-Y'),
+                    'subtotal'         => (float) $inv->subtotal,
+                    'total_pembayaran' => (float) $inv->total_pembayaran,
+                    'sisa'             => max(0, (float) $inv->subtotal - (float) $inv->total_pembayaran - (float) $inv->total_penyesuaian),
+                    'status'           => $inv->status,
+                ], $group['invoices']),
+            ], $restoGroups),
+        ];
+
+        if ($includeShareUrl) {
+            $token = BulkPrintTokenCodec::encode([
+                'invoice_ids'       => $invoices->pluck('id')->all(),
+                'investor_id'       => $investor->id,
+                'investor_nama'     => $investor->nama_investor,
+                'klien_anchor_nama' => $anchor->klienAr?->nama_klien,
+                'pic_ar_nama'       => $anchor->klienAr?->karyawanAr?->nama_karyawan,
+                'tanggal_dari'      => $ctx['tanggal_dari'],
+                'tanggal_sampai'    => $ctx['tanggal_sampai'],
+            ]);
+
+            $result['share_url'] = URL::temporarySignedRoute(
+                'invoice.bulk-b2c-print', now()->addDays(30), ['token' => $token]
+            );
+        }
+
+        return $result;
+    }
+
+    /**
+     * @return array<int, array{resto_id:?int,nama_resto:string,kode_resto:?string,invoices:array,subtotal_tagihan:float,subtotal_pembayaran:float,subtotal_sisa:float}>
+     */
+    private function groupInvoicesByResto(Collection $invoices): array
+    {
+        $groups = [];
+
+        foreach ($invoices as $inv) {
+            $resto = $inv->klienAr?->resto ?? $inv->resto;
+            $key   = $resto?->id ?? 0;
+
+            if (!isset($groups[$key])) {
+                $groups[$key] = [
+                    'resto_id'            => $resto?->id,
+                    'nama_resto'          => $resto?->nama_resto ?? '-',
+                    'kode_resto'          => $resto?->kode_resto,
+                    'invoices'            => [],
+                    'subtotal_tagihan'    => 0.0,
+                    'subtotal_pembayaran' => 0.0,
+                    'subtotal_sisa'       => 0.0,
+                ];
+            }
+
+            $sisa = max(0, (float) $inv->subtotal - (float) $inv->total_pembayaran - (float) $inv->total_penyesuaian);
+
+            $groups[$key]['invoices'][]          = $inv;
+            $groups[$key]['subtotal_tagihan']    += (float) $inv->subtotal;
+            $groups[$key]['subtotal_pembayaran'] += (float) $inv->total_pembayaran;
+            $groups[$key]['subtotal_sisa']       += $sisa;
+        }
+
+        return array_values($groups);
     }
 
     public function exportB2BDelivery(Request $request): BinaryFileResponse|JsonResponse

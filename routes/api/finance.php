@@ -50,6 +50,8 @@ Route::prefix('invoices')->group(function () {
     Route::get('/outstanding', [InvoiceController::class, 'outstanding']);
     Route::get('/preview-no', [InvoiceController::class, 'previewNo']);
     Route::get('/preview-no-konsolidasi', [InvoiceController::class, 'previewConsolidatedNo']);
+    Route::post('/bulk-b2c-investor/preview', [InvoiceController::class, 'bulkB2CInvestorPreview']);
+    Route::post('/bulk-b2c-investor/link', [InvoiceController::class, 'bulkB2CInvestorLink']);
     Route::post('/', [InvoiceController::class, 'store']);
     Route::delete('/bulk', [InvoiceController::class, 'bulkDestroy']);
     Route::get('/{invoice}/settleable-originals', [InvoiceController::class, 'settleableOriginals']);
