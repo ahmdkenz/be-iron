@@ -15,6 +15,7 @@ class PerusahaanDTO
         public readonly ?string $email,
         public readonly ?string $no_npwp,
         public readonly ?string $keterangan,
+        public readonly ?array $segmen = null,
         public readonly bool $status = true,
     ) {}
 
@@ -31,6 +32,7 @@ class PerusahaanDTO
             email:                     $data['email'] ?? null,
             no_npwp:                   $data['no_npwp'] ?? null,
             keterangan:                $data['keterangan'] ?? null,
+            segmen:                    $data['segmen'] ?? null,
             status:                    isset($data['status']) ? (bool) $data['status'] : true,
         );
     }

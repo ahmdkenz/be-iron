@@ -33,6 +33,8 @@ class UpdatePerusahaanRequest extends FormRequest
             'no_npwp'                   => ['nullable', 'string', 'max:30'],
             'keterangan'                => ['nullable', 'string'],
             'nama_direktur'             => ['nullable', 'string', 'max:100'],
+            'segmen'                    => ['nullable', 'array'],
+            'segmen.*'                  => ['string', 'in:B2B,B2C'],
             'status'                    => ['nullable', 'boolean'],
         ];
     }

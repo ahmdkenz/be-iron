@@ -24,6 +24,7 @@ class Perusahaan extends Model
         'email',
         'no_npwp',
         'nama_direktur',
+        'segmen',
         'status',
         'keterangan',
         'created_by',
@@ -32,6 +33,7 @@ class Perusahaan extends Model
 
     protected $casts = [
         'status' => 'boolean',
+        'segmen' => 'array',
     ];
 
     public function createdBy()

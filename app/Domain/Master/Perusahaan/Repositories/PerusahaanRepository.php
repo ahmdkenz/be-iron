@@ -25,7 +25,7 @@ class PerusahaanRepository
     {
         return Perusahaan::where('status', true)
             ->orderBy('nama_perusahaan')
-            ->get(['id', 'kode_perusahaan', 'nama_perusahaan', 'nama_singkatan_perusahaan']);
+            ->get(['id', 'kode_perusahaan', 'nama_perusahaan', 'nama_singkatan_perusahaan', 'segmen']);
     }
 
     public function findById(int $id): ?Perusahaan

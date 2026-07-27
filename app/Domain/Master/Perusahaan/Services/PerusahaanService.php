@@ -39,6 +39,7 @@ class PerusahaanService
             'email'                     => $dto->email,
             'no_npwp'                   => $dto->no_npwp,
             'keterangan'                => $dto->keterangan,
+            'segmen'                    => $dto->segmen,
             'status'                    => $dto->status,
         ]);
     }
@@ -55,6 +56,7 @@ class PerusahaanService
             'email'                     => $dto->email,
             'no_npwp'                   => $dto->no_npwp,
             'keterangan'                => $dto->keterangan,
+            'segmen'                    => $dto->segmen,
             'status'                    => $dto->status,
         ]);
     }
