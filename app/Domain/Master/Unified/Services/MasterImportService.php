@@ -2,8 +2,6 @@
 
 namespace App\Domain\Master\Unified\Services;
 
-use App\Domain\Finance\Invoice\Services\InvoiceGroupProcessor;
-use App\Domain\Finance\Invoice\Services\ProcessGroupResult;
 use App\Domain\Finance\KlienAr\DTO\KlienArDTO;
 use App\Domain\Finance\KlienAr\Services\KlienArService;
 use App\Domain\Master\Investor\DTO\InvestorDTO;
@@ -19,7 +17,6 @@ use App\Models\KlienAr;
 use App\Models\Perusahaan;
 use App\Models\Resto;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 use PhpOffice\PhpSpreadsheet\IOFactory;
@@ -31,16 +28,20 @@ use PhpOffice\PhpSpreadsheet\Shared\Date as PhpSpreadsheetDate;
  *   - "MASTER BARANG": Barang
  *
  * Pola upsert, chunked commit, dan progress polling sama dengan service individual.
+ *
+ * Sheet "MASTER INVOICE" SENGAJA tidak lagi diproses di sini. Import invoice pindah
+ * ke tab "Import Master Invoice" (InvoiceImportService) yang punya alur aman
+ * preview → klasifikasi → proses aman → review penyesuaian, supaya reupload data
+ * lapangan tidak menimpa invoice yang sudah ditagih/dibayar.
  */
 class MasterImportService
 {
     private const CHUNK = 100;
 
     public function __construct(
-        private readonly InvestorService      $investorService,
-        private readonly RestoService         $restoService,
-        private readonly KlienArService       $klienArService,
-        private readonly InvoiceGroupProcessor $invoiceGroupProcessor,
+        private readonly InvestorService $investorService,
+        private readonly RestoService    $restoService,
+        private readonly KlienArService  $klienArService,
     ) {}
 
     public function process(ImportMasterBatch $batch): void
@@ -59,7 +60,7 @@ class MasterImportService
 
         $this->processMasterDataSheet($spreadsheet, $batch, $errors);
         $this->processMasterBarangSheet($spreadsheet, $batch, $errors);
-        $this->processMasterInvoiceSheet($spreadsheet, $batch, $errors);
+        $this->noticeInvoiceSheetIgnored($spreadsheet, $errors);
 
         $batch->update([
             'status'  => 'completed',
@@ -638,238 +639,26 @@ class MasterImportService
     }
 
     // ──────────────────────────────────────────────────────────────
-    //  Sheet 3: MASTER INVOICE (Invoice B2B + B2C)
+    //  Sheet MASTER INVOICE — tidak diproses di sini
     // ──────────────────────────────────────────────────────────────
 
-    private function processMasterInvoiceSheet(\PhpOffice\PhpSpreadsheet\Spreadsheet $spreadsheet, ImportMasterBatch $batch, array &$errors): void
+    /**
+     * File template lama masih memuat sheet MASTER INVOICE. Diamkan saja akan
+     * membingungkan (user mengira invoice ikut terimport), jadi beri pemberitahuan
+     * eksplisit bahwa sheet itu diabaikan dan harus lewat tab Import Master Invoice.
+     */
+    private function noticeInvoiceSheetIgnored(\PhpOffice\PhpSpreadsheet\Spreadsheet $spreadsheet, array &$errors): void
     {
-        // Support nama sheet lama (MASTER INVOICE) dan nama baru
-        $sheetIndex = $this->findSheetIndex($spreadsheet, 'MASTER INVOICE')
-            ?? $this->findSheetIndex($spreadsheet, 'Master Invoice');
-
+        $sheetIndex = $this->findSheetIndex($spreadsheet, 'MASTER INVOICE');
         if ($sheetIndex === null) {
-            return; // Sheet tidak ada → tidak dianggap error (file lama tetap aman)
-        }
-
-        $sheet = $spreadsheet->getSheet($sheetIndex);
-        $rows  = $this->parseSheet($sheet, 'nama_klien', 14);
-
-        if (empty($rows)) {
-            $errors[] = ['sheet' => 'MASTER INVOICE', 'row' => 0, 'message' => 'Header "nama_klien" tidak ditemukan di sheet MASTER INVOICE.'];
             return;
         }
 
-        // Preload klien (nama + resto/outlet) dan barang map
-        [$namaMap, $restoMap, $restoNameMap, $restoNameCount] = $this->buildKlienMapsForInvoice();
-        $barangMap = $this->buildBarangMapForInvoice();
-
-        // Preload acuan MASTER DATA per kode_resto — dipakai memvalidasi tiap baris
-        // MASTER INVOICE sebelum di-resolve (lihat validateInvoiceRowAgainstMasterData()).
-        $restoMasterMap = $this->buildRestoMasterMapForInvoice();
-
-        // Preload EB locked
-        $lockedEbMap = $this->invoiceGroupProcessor->buildLockedEbMap();
-
-        // ── Group rows by (tipe_invoice + klien_ar_id + tanggal_invoice) ──
-        // Klien di-resolve DI SINI (per baris, sebelum grouping) supaya B2C dari
-        // outlet berbeda milik investor yang sama tidak ikut tergabung jadi 1 invoice.
-        $groups      = [];   // key => ['tipe_invoice', 'klien', 'header', 'first_line', 'items']
-        $lineNumber  = 0;
-        $headerSkipped = false;
-        $invFail     = 0;
-
-        foreach ($rows as $row) {
-            $lineNumber++;
-            $firstCell = trim((string) ($row[0] ?? ''));
-            $tipeCell  = trim((string) ($row[13] ?? ''));
-            if (!$headerSkipped) { $headerSkipped = true; continue; }
-            if (str_starts_with($firstCell, '#')) continue;
-            if (str_starts_with($tipeCell, '[CONTOH]')) continue;
-            if ($firstCell === '' && count(array_filter(array_map('strval', $row))) === 0) continue;
-
-            $tipeInvoice = strtoupper(trim((string) ($row[13] ?? '')));
-            $namaKlien   = $this->importValue($row[0] ?? '');
-            $tanggal     = $this->importDate($row[1] ?? '');
-            $kodeResto   = $this->importValue($row[6] ?? '');
-
-            if (!$tipeInvoice || !$namaKlien || !$tanggal) {
-                $errors[] = ['sheet' => 'MASTER INVOICE', 'row' => $lineNumber, 'message' => 'tipe_invoice, nama_klien, dan tanggal_invoice wajib diisi.'];
-                $invFail++;
-                continue;
-            }
-
-            if (!in_array($tipeInvoice, ['B2B', 'B2C'])) {
-                $errors[] = ['sheet' => 'MASTER INVOICE', 'row' => $lineNumber, 'message' => "tipe_invoice '{$tipeInvoice}' tidak valid. Harus 'B2B' atau 'B2C'."];
-                $invFail++;
-                continue;
-            }
-
-            $masterValidationError = $this->validateInvoiceRowAgainstMasterData($tipeInvoice, $namaKlien, $kodeResto, $restoMasterMap);
-            if ($masterValidationError) {
-                $errors[] = ['sheet' => 'MASTER INVOICE', 'row' => $lineNumber, 'message' => $masterValidationError];
-                $invFail++;
-                continue;
-            }
-
-            [$klien, $klienError] = $this->resolveKlienForInvoiceRow(
-                $tipeInvoice, $namaKlien, $kodeResto,
-                $namaMap, $restoMap, $restoNameMap, $restoNameCount,
-            );
-
-            if (!$klien) {
-                $errors[] = ['sheet' => 'MASTER INVOICE', 'row' => $lineNumber, 'message' => $klienError];
-                $invFail++;
-                continue;
-            }
-
-            $key = $tipeInvoice . '||' . $klien->id . '||' . $tanggal;
-
-            if (!isset($groups[$key])) {
-                $groups[$key] = [
-                    'tipe_invoice' => $tipeInvoice,
-                    'klien'        => $klien,
-                    'header'       => $row,
-                    'first_line'   => $lineNumber,
-                    'items'        => [],
-                ];
-            }
-
-            // Tambah item dari baris ini
-            $groups[$key]['items'][] = [
-                'row'              => $lineNumber,
-                'no_invoice_resto' => $this->importValue($row[5] ?? ''),
-                'kode_resto'       => $kodeResto,
-                'nama_resto'       => $this->importValue($row[7] ?? ''),
-                'kode_barang'      => $this->importValue($row[8] ?? ''),
-                'nama_barang'      => $this->importValue($row[9] ?? ''),
-                'qty'              => $this->importNum($row[10] ?? ''),
-                'satuan'           => $this->importValue($row[11] ?? ''),
-                'harga_satuan'     => $this->importNum($row[12] ?? ''),
-            ];
-        }
-
-        $totalGrup = count($groups);
-        $batch->update(['invoice_total' => $totalGrup]);
-
-        $invIns  = 0;
-        $invUpd  = 0;
-        $invSkip = 0;
-        $processed   = 0;
-        $newInvoices = [];
-
-        foreach ($groups as $key => $group) {
-            $processed++;
-            $tipeInvoice = $group['tipe_invoice'];
-            $headerRow   = $group['header'];
-            $firstLine   = $group['first_line'];
-            $klien       = $group['klien'];
-            $namaKlien   = $this->importValue($headerRow[0] ?? '');
-            $tanggal     = $this->importDate($headerRow[1] ?? '');
-
-            // Validasi item
-            $items     = [];
-            $itemError = null;
-            foreach ($group['items'] as $itemRaw) {
-                if (!$itemRaw['nama_barang']) {
-                    $itemError = "Baris {$itemRaw['row']}: nama_barang wajib diisi.";
-                    break;
-                }
-                if ($itemRaw['qty'] <= 0) {
-                    $itemError = "Baris {$itemRaw['row']}: qty harus lebih dari 0.";
-                    break;
-                }
-
-                $barangId = null;
-                if ($itemRaw['kode_barang']) {
-                    $barangId = $barangMap[strtoupper($itemRaw['kode_barang'])] ?? null;
-                }
-
-                $items[] = [
-                    'barang_id'        => $barangId,
-                    'kode_barang'      => $itemRaw['kode_barang'],
-                    'nama_barang'      => $itemRaw['nama_barang'],
-                    'qty'              => $itemRaw['qty'],
-                    'satuan'           => $itemRaw['satuan'],
-                    'harga_satuan'     => $itemRaw['harga_satuan'],
-                    'no_invoice_resto' => $itemRaw['no_invoice_resto'],
-                    'kode_resto'       => $itemRaw['kode_resto'],
-                    'nama_resto'       => $itemRaw['nama_resto'],
-                ];
-            }
-
-            if ($itemError) {
-                $errors[] = ['sheet' => 'MASTER INVOICE', 'row' => $firstLine, 'message' => $itemError];
-                $invFail++;
-                continue;
-            }
-
-            if (empty($items)) {
-                $errors[] = ['sheet' => 'MASTER INVOICE', 'row' => $firstLine, 'message' => "Invoice '{$namaKlien}' ({$tanggal}) tidak memiliki item."];
-                $invFail++;
-                continue;
-            }
-
-            $headerData = [
-                'klien_ar_id'        => $klien->id,
-                'tanggal_invoice'    => $tanggal,
-                'tanggal_jatuh_tempo'=> $this->importDate($headerRow[2] ?? ''),
-                'no_surat_jalan'     => $this->importValue($headerRow[3] ?? ''),
-                'keterangan'         => $this->importValue($headerRow[4] ?? ''),
-            ];
-
-            try {
-                $result = $this->invoiceGroupProcessor->processGroup(
-                    $tipeInvoice,
-                    $headerData,
-                    $items,
-                    $lockedEbMap,
-                );
-
-                match (true) {
-                    $result->isInserted() => (function () use (&$invIns, &$newInvoices, $result) {
-                        $invIns++;
-                        $newInvoices[] = $result->invoice;
-                    })(),
-                    $result->isUpdated()  => $invUpd++,
-                    $result->isSkipped()  => (function () use (&$invSkip, &$errors, $firstLine, $result) {
-                        $invSkip++;
-                        $errors[] = ['sheet' => 'MASTER INVOICE', 'row' => $firstLine, 'message' => 'Dilewati: ' . $result->error];
-                    })(),
-                    default               => (function () use (&$invFail, &$errors, $firstLine, $result) {
-                        $invFail++;
-                        $errors[] = ['sheet' => 'MASTER INVOICE', 'row' => $firstLine, 'message' => $result->error];
-                    })(),
-                };
-            } catch (\Throwable $e) {
-                $invFail++;
-                $errors[] = ['sheet' => 'MASTER INVOICE', 'row' => $firstLine, 'message' => 'Error tak terduga: ' . $e->getMessage()];
-                Log::error('MasterImportService: processMasterInvoiceSheet error', ['key' => $key, 'error' => $e->getMessage()]);
-            }
-
-            // Update progress setiap CHUNK grup
-            if ($processed % self::CHUNK === 0) {
-                $batch->update([
-                    'invoice_processed' => $processed,
-                    'invoice_inserted'  => $invIns,
-                    'invoice_updated'   => $invUpd,
-                    'invoice_skipped'   => $invSkip,
-                    'invoice_failed'    => $invFail,
-                ]);
-            }
-        }
-
-        // Propagasi carryover untuk invoice baru setelah semua grup selesai
-        if (!empty($newInvoices)) {
-            $this->invoiceGroupProcessor->propagateCarryoverForNew($newInvoices);
-        }
-
-        $batch->update([
-            'invoice_processed' => $totalGrup,
-            'invoice_inserted'  => $invIns,
-            'invoice_updated'   => $invUpd,
-            'invoice_skipped'   => $invSkip,
-            'invoice_failed'    => $invFail,
-        ]);
+        $errors[] = [
+            'sheet'   => 'MASTER INVOICE',
+            'row'     => 0,
+            'message' => 'Diabaikan: sheet MASTER INVOICE tidak lagi diproses di Import Master Data. Upload invoice lewat tab "Import Master Invoice" agar perubahan pada invoice yang sudah ditagih/dibayar ditinjau lebih dulu.',
+        ];
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -1150,233 +939,7 @@ class MasterImportService
                 $batch->barang_inserted, $batch->barang_updated, $batch->barang_skipped, $batch->barang_failed,
             );
         }
-        if ($batch->invoice_total > 0) {
-            $parts[] = sprintf(
-                'MASTER INVOICE: Invoice +%d ~%d ⊘%d ✗%d',
-                $batch->invoice_inserted, $batch->invoice_updated,
-                $batch->invoice_skipped,  $batch->invoice_failed,
-            );
-        }
         return implode(' | ', $parts) ?: 'Import selesai.';
-    }
-
-    /**
-     * @return array{0: array<string, KlienAr>, 1: array<string, KlienAr>, 2: array<string, KlienAr>, 3: array<string, int>}
-     *   [0] namaMap        lower(nama_klien) => KlienAr AKTIF (semua tipe, first match) — dipakai B2B.
-     *   [1] restoMap       upper(kode_resto) => KlienAr tipe RESTO AKTIF — jalur utama B2C.
-     *   [2] restoNameMap   lower(nama_klien) => KlienAr tipe RESTO AKTIF — fallback B2C saat kode_resto kosong.
-     *   [3] restoNameCount lower(nama_klien) => jumlah KlienAr tipe RESTO AKTIF dengan nama tsb (guard ambiguitas).
-     *
-     * Hanya KlienAr berstatus aktif yang disertakan — supaya Client AR yang sudah
-     * dinonaktifkan (mis. karena outlet-nya beralih segmen PT/RESTO) tidak lagi
-     * dipakai untuk resolusi invoice baru.
-     */
-    private function buildKlienMapsForInvoice(): array
-    {
-        $namaMap        = [];
-        $restoMap       = [];
-        $restoNameMap   = [];
-        $restoNameCount = [];
-
-        $klienList = KlienAr::with('resto:id,kode_resto')
-            ->where('status', true)
-            ->get(['id', 'nama_klien', 'tipe_klien', 'resto_id', 'perusahaan_id', 'karyawan_ar_id']);
-
-        foreach ($klienList as $klien) {
-            if ($klien->nama_klien === null) {
-                continue;
-            }
-            $namaKey = strtolower($klien->nama_klien);
-
-            if (!isset($namaMap[$namaKey])) {
-                $namaMap[$namaKey] = $klien;
-            }
-
-            if ($klien->tipe_klien === 'RESTO') {
-                $restoNameCount[$namaKey] = ($restoNameCount[$namaKey] ?? 0) + 1;
-                if (!isset($restoNameMap[$namaKey])) {
-                    $restoNameMap[$namaKey] = $klien;
-                }
-
-                $kodeResto = $klien->resto?->kode_resto;
-                if ($kodeResto !== null && $kodeResto !== '') {
-                    $restoKey = strtoupper($kodeResto);
-                    if (!isset($restoMap[$restoKey])) {
-                        $restoMap[$restoKey] = $klien;
-                    }
-                }
-            }
-        }
-
-        return [$namaMap, $restoMap, $restoNameMap, $restoNameCount];
-    }
-
-    /**
-     * Bangun peta acuan MASTER DATA per kode_resto — dipakai untuk memvalidasi baris
-     * MASTER INVOICE (lihat validateInvoiceRowAgainstMasterData()) sebelum di-resolve.
-     *
-     * Untuk tiap outlet (kode_resto), tentukan segmen yang SEDANG AKTIF saat ini:
-     *   - RESTO, jika outlet itu punya KlienAr tipe RESTO aktif (resto_id).
-     *   - PT,    jika tidak, tapi entitas (perusahaan_id) outlet itu punya KlienAr tipe PT aktif.
-     * Outlet tanpa keduanya (belum onboarding AR / gagal saat MASTER DATA) tidak masuk peta,
-     * sehingga baris invoice untuk kode_resto tsb akan gagal validasi dengan pesan jelas.
-     *
-     * @return array<string, array{tipe_klien: string, nama_klien: string, klien_id: int}>
-     *   upper(kode_resto) => info Client AR aktif yang berlaku untuk outlet tsb.
-     */
-    private function buildRestoMasterMapForInvoice(): array
-    {
-        $map = [];
-
-        $restos = Resto::whereNotNull('kode_resto')
-            ->where('kode_resto', '!=', '')
-            ->get(['id', 'kode_resto', 'perusahaan_id']);
-
-        if ($restos->isEmpty()) {
-            return $map;
-        }
-
-        $restoKlienByRestoId = [];
-        foreach (
-            KlienAr::where('tipe_klien', 'RESTO')
-                ->where('status', true)
-                ->whereIn('resto_id', $restos->pluck('id'))
-                ->get(['id', 'resto_id', 'nama_klien']) as $klien
-        ) {
-            if (!isset($restoKlienByRestoId[$klien->resto_id])) {
-                $restoKlienByRestoId[$klien->resto_id] = $klien;
-            }
-        }
-
-        $ptKlienByPerusahaanId = [];
-        foreach (
-            KlienAr::where('tipe_klien', 'PT')
-                ->where('status', true)
-                ->whereIn('perusahaan_id', $restos->pluck('perusahaan_id')->filter()->unique())
-                ->get(['id', 'perusahaan_id', 'nama_klien']) as $klien
-        ) {
-            if (!isset($ptKlienByPerusahaanId[$klien->perusahaan_id])) {
-                $ptKlienByPerusahaanId[$klien->perusahaan_id] = $klien;
-            }
-        }
-
-        foreach ($restos as $resto) {
-            $kodeKey = strtoupper($resto->kode_resto);
-
-            if (isset($restoKlienByRestoId[$resto->id])) {
-                $klien = $restoKlienByRestoId[$resto->id];
-                $map[$kodeKey] = ['tipe_klien' => 'RESTO', 'nama_klien' => $klien->nama_klien, 'klien_id' => $klien->id];
-                continue;
-            }
-
-            if ($resto->perusahaan_id && isset($ptKlienByPerusahaanId[$resto->perusahaan_id])) {
-                $klien = $ptKlienByPerusahaanId[$resto->perusahaan_id];
-                $map[$kodeKey] = ['tipe_klien' => 'PT', 'nama_klien' => $klien->nama_klien, 'klien_id' => $klien->id];
-            }
-        }
-
-        return $map;
-    }
-
-    /**
-     * Validasi 1 baris MASTER INVOICE terhadap MASTER DATA (via $restoMasterMap).
-     * kode_resto adalah acuan utama — tipe_invoice & nama_klien pada baris invoice
-     * wajib konsisten dengan segmen yang tercatat di MASTER DATA untuk outlet tsb.
-     *
-     * @param array<string, array{tipe_klien: string, nama_klien: string, klien_id: int}> $restoMasterMap
-     * @return string|null pesan error, atau null jika valid.
-     */
-    private function validateInvoiceRowAgainstMasterData(
-        string $tipeInvoice,
-        string $namaKlien,
-        ?string $kodeResto,
-        array $restoMasterMap,
-    ): ?string {
-        if (!$kodeResto) {
-            return 'kode_resto wajib diisi.';
-        }
-
-        $entry = $restoMasterMap[strtoupper($kodeResto)] ?? null;
-        if (!$entry) {
-            return "kode_resto '{$kodeResto}' tidak ditemukan di MASTER DATA atau belum memiliki Client AR aktif.";
-        }
-
-        $expectedTipeInvoice = $entry['tipe_klien'] === 'PT' ? 'B2B' : 'B2C';
-        if ($tipeInvoice !== $expectedTipeInvoice) {
-            return "kode_resto '{$kodeResto}' terdaftar sebagai {$entry['tipe_klien']} di MASTER DATA — tipe_invoice seharusnya '{$expectedTipeInvoice}', bukan '{$tipeInvoice}'.";
-        }
-
-        if (strtolower($namaKlien) !== strtolower($entry['nama_klien'])) {
-            return "nama_klien '{$namaKlien}' tidak sesuai MASTER DATA untuk kode_resto '{$kodeResto}' (seharusnya '{$entry['nama_klien']}').";
-        }
-
-        return null;
-    }
-
-    /**
-     * Resolve KlienAr untuk satu baris import MASTER INVOICE.
-     *
-     * B2B selalu resolve via nama_klien (perilaku konsolidasi multi-outlet tidak berubah).
-     * B2C dengan kode_resto terisi resolve via outlet — tidak fallback ke nama, supaya
-     * kode_resto yang salah ketik tidak diam-diam nyasar ke klien/outlet lain.
-     * B2C dengan kode_resto kosong resolve via nama HANYA jika investor itu memiliki
-     * tepat satu outlet; jika ambigu (>1 outlet), baris wajib diisi kode_resto.
-     *
-     * @return array{0: ?KlienAr, 1: ?string} [klien, pesan error]
-     */
-    private function resolveKlienForInvoiceRow(
-        string $tipeInvoice,
-        string $namaKlien,
-        ?string $kodeResto,
-        array $namaMap,
-        array $restoMap,
-        array $restoNameMap,
-        array $restoNameCount,
-    ): array {
-        $namaKey = strtolower($namaKlien);
-
-        if ($tipeInvoice === 'B2B') {
-            $klien = $namaMap[$namaKey] ?? null;
-            return $klien ? [$klien, null] : [null, "Klien '{$namaKlien}' tidak ditemukan di sistem."];
-        }
-
-        // B2C
-        if ($kodeResto) {
-            $klien = $restoMap[strtoupper($kodeResto)] ?? null;
-            if (!$klien) {
-                return [null, "kode_resto '{$kodeResto}' tidak ditemukan atau belum terhubung ke Client AR tipe RESTO."];
-            }
-            return [$klien, null];
-        }
-
-        $count = $restoNameCount[$namaKey] ?? 0;
-        if ($count === 0) {
-            return [null, "Klien '{$namaKlien}' tidak ditemukan di sistem."];
-        }
-        if ($count > 1) {
-            return [null, "Klien '{$namaKlien}' memiliki {$count} outlet berbeda. Isi kolom kode_resto pada baris ini untuk menentukan outlet yang dituju."];
-        }
-
-        return [$restoNameMap[$namaKey], null];
-    }
-
-    /** @return array<string, int> upper(kode_barang) => id */
-    private function buildBarangMapForInvoice(): array
-    {
-        $map = [];
-        foreach (Barang::all(['id', 'kode_barang']) as $barang) {
-            if ($barang->kode_barang !== null && !isset($map[strtoupper($barang->kode_barang)])) {
-                $map[strtoupper($barang->kode_barang)] = $barang->id;
-            }
-        }
-        return $map;
-    }
-
-    private function importNum(mixed $val): float
-    {
-        $s = trim((string) $val);
-        $s = str_replace(['.', ','], ['', '.'], $s);
-        return is_numeric($s) ? (float) $s : 0.0;
     }
 
     private function xlsxCellToString(\PhpOffice\PhpSpreadsheet\Cell\Cell $cell): string

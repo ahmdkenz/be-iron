@@ -5,6 +5,7 @@ use App\Domain\Finance\Dashboard\Controllers\DashboardController;
 use App\Domain\Finance\EndingBalance\Controllers\EndingBalanceController;
 use App\Domain\Finance\EndingBalance\Controllers\EndingBalanceKoreksiController;
 use App\Domain\Finance\Invoice\Controllers\InvoiceController;
+use App\Domain\Finance\Invoice\Controllers\InvoiceImportController;
 use App\Domain\Finance\JatuhTempo\Controllers\JatuhTempoController;
 use App\Domain\Finance\JurnalPic\Controllers\JurnalPicController;
 use App\Domain\Finance\KinerjaAr\Controllers\KinerjaArController;
@@ -39,6 +40,16 @@ Route::prefix('klien-ar')->group(function () {
 
 // ─── Invoice ──────────────────────────────────────────────────────
 Route::prefix('invoices')->group(function () {
+    // Import invoice (tab "Import Master Invoice"). Harus terdaftar sebelum
+    // rute /{invoice} di bawah — kalau tidak, "import" akan ditangkap sebagai
+    // parameter {invoice} dan tidak pernah sampai ke sini.
+    Route::get('/import-template',                  [InvoiceImportController::class, 'template']);
+    Route::post('/import',                          [InvoiceImportController::class, 'store']);
+    Route::get('/import/{batch}/status',            [InvoiceImportController::class, 'status']);
+    Route::get('/import/{batch}/review',            [InvoiceImportController::class, 'review']);
+    Route::post('/import/{batch}/apply-safe',       [InvoiceImportController::class, 'applySafe']);
+    Route::post('/import/{batch}/submit-adjustments', [InvoiceImportController::class, 'submitAdjustments']);
+
     Route::get('/', [InvoiceController::class, 'index']);
     Route::get('/summary', [InvoiceController::class, 'summary']);
     Route::get('/rekap-klien', [InvoiceController::class, 'rekapKlien']);
