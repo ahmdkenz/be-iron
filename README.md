@@ -41,23 +41,27 @@ php artisan boost:install
 
 Boost provides your agent 15+ tools and skills that help agents build Laravel applications while following best practices.
 
-## Menjalankan Queue Worker (Import Batch)
+## Menjalankan Queue Worker & Scheduler (Import Batch, Sinkron SHZ360)
 
 Fitur import (Import Master Data, Import Rekening Koran, dsb.) berjalan sebagai background job (`QUEUE_CONNECTION=database`). Tanpa worker aktif, job hanya akan tertahan di status `queued`/`processing` dan tidak pernah selesai.
 
 Import Rekening Koran (Rekonsiliasi Bank) dijalankan di queue bernama `bank-statement` (terpisah dari `default`) — worker **wajib** menyertakan `--queue=bank-statement,default`, kalau tidak job import rekening koran tidak akan pernah diambil.
 
+Selain worker, project ini juga punya **Laravel Scheduler** (`bootstrap/app.php` → `withSchedule()`) untuk task terjadwal lain (mis. sinkron PO/Terima PO SHZ360 tiap 5 menit). Worker queue di atas **juga didaftarkan lewat scheduler yang sama** (`queue:work ... --stop-when-empty` tiap menit) — jadi di produksi cukup **satu** cron job (`schedule:run`) yang menjalankan semuanya, tidak perlu cron job terpisah untuk worker.
+
 **Lokal (development):**
-- Cara termudah: `composer run dev` — sudah menyalakan `queue:listen --queue=bank-statement,default` bersama server & vite.
+- Cara termudah: `composer run dev` — sudah menyalakan `queue:listen --queue=bank-statement,default` bersama server & vite (langsung, tanpa lewat scheduler).
 - Atau manual di terminal terpisah: `php artisan queue:work database --queue=bank-statement,default --tries=1 --timeout=1800`
+- Untuk mengecek/testing scheduler lokal: `php artisan schedule:list` (lihat semua task terjadwal) atau `php artisan schedule:work` (jalankan scheduler terus-menerus di lokal).
 
 **Produksi (cPanel / shared hosting):**
-Daemon jangka panjang (`queue:work` tanpa henti) biasanya tidak diizinkan di shared hosting. Gunakan **Cron Job** cPanel yang jalan tiap menit dan berhenti sendiri saat antrian kosong:
+Daemon jangka panjang (`queue:work` tanpa henti) biasanya tidak diizinkan di shared hosting, begitu juga scheduler Laravel butuh crontab asli untuk memicunya tiap menit. Karena queue worker sudah didaftarkan lewat scheduler (lihat `bootstrap/app.php`), **cukup satu Cron Job** di cPanel:
 1. cPanel → Cron Jobs → tambah job baru, jadwal `* * * * *` (every minute).
 2. Command (sesuaikan path PHP & path project):
    ```
-   /usr/local/bin/php /home/<user>/<path-to>/be-iron/artisan queue:work database --queue=bank-statement,default --stop-when-empty --tries=1 --timeout=1800 >> /home/<user>/<path-to>/be-iron/storage/logs/queue-worker.log 2>&1
+   /usr/local/bin/php /home/<user>/<path-to>/be-iron/artisan schedule:run >> /home/<user>/<path-to>/be-iron/storage/logs/scheduler.log 2>&1
    ```
+3. Baris ini otomatis menjalankan **semua** task terjadwal setiap kali due — sinkron SHZ360 (tiap 5 menit) maupun queue worker (tiap menit, berhenti sendiri saat antrian kosong lewat `--stop-when-empty`). Verifikasi task apa saja yang terdaftar dengan `php artisan schedule:list`.
 
 ## Contributing
 
