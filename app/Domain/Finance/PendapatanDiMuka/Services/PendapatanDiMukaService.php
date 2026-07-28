@@ -250,6 +250,41 @@ class PendapatanDiMukaService
         ];
     }
 
+    /**
+     * Seluruh baris (tanpa paginasi) dalam bentuk array yang sama dengan
+     * getReport() — dipakai Export Data supaya kolomnya identik dengan layar.
+     */
+    public function getAllFormatted(array $filters): array
+    {
+        return PendapatanDiMuka::query()
+            ->with(['klienAr', 'investor', 'sumberPembayaran.alokasiKelebihan', 'createdBy.karyawan'])
+            ->when(
+                $filters['tanggal_dari'] ?? null,
+                fn(Builder $q, string $v) => $q->whereDate('tanggal_pencatatan', '>=', $v)
+            )
+            ->when(
+                $filters['tanggal_sampai'] ?? null,
+                fn(Builder $q, string $v) => $q->whereDate('tanggal_pencatatan', '<=', $v)
+            )
+            ->when(
+                $filters['investor_id'] ?? null,
+                fn(Builder $q, int $v) => $q->where('investor_id', $v)
+            )
+            ->when(
+                $filters['klien_ar_id'] ?? null,
+                fn(Builder $q, int $v) => $q->where('klien_ar_id', $v)
+            )
+            ->when(
+                $filters['status'] ?? null,
+                fn(Builder $q, string $v) => $q->where('status', $v)
+            )
+            ->latest('tanggal_pencatatan')
+            ->get()
+            ->map(fn(PendapatanDiMuka $pdm) => $this->formatRow($pdm))
+            ->values()
+            ->all();
+    }
+
     public function getAll(array $filters): \Illuminate\Database\Eloquent\Collection
     {
         return PendapatanDiMuka::query()

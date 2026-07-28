@@ -101,6 +101,8 @@ Route::get('/mutasi-piutang/export-excel', [MutasiPiutangController::class, 'exp
 // ─── Rekening Koran (Jurnal Umum Bank Statement) ──────────────────
 // Laporan global lintas PIC — hanya ADMIN/MANAGER/SUPERVISOR. Status posting
 // kini otomatis (lihat BankStatementService), tidak ada lagi endpoint manual.
+// Rute export-excel-nya terdaftar di routes/api.php (grup throttle:10,1) bersama
+// export laporan lain, bukan di sini.
 Route::get('/rekening-koran',                          [RekeningKoranController::class, 'index'])->middleware('role:ADMIN|MANAGER|SUPERVISOR');
 Route::get('/rekening-koran/pic-ar-list',              [RekeningKoranController::class, 'picArList'])->middleware('role:ADMIN|MANAGER|SUPERVISOR');
 

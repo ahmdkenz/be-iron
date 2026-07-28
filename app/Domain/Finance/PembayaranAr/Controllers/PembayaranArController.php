@@ -7,6 +7,7 @@ use App\Domain\Finance\Invoice\Services\InvoiceService;
 use App\Domain\Finance\PembayaranAr\Requests\StorePembayaranArRequest;
 use App\Domain\Finance\PembayaranAr\Resources\PembayaranArResource;
 use App\Domain\Finance\PembayaranAr\Services\PembayaranArService;
+use App\Domain\Finance\PembayaranAr\Services\RiwayatPembayaranService;
 use App\Http\Controllers\Controller;
 use App\Models\PembayaranAr;
 use App\Support\Helpers\RoleHelper;
@@ -24,55 +25,18 @@ class PembayaranArController extends Controller
     public function __construct(
         private readonly PembayaranArService $service,
         private readonly InvoiceService $invoiceService,
+        private readonly RiwayatPembayaranService $riwayatService,
     ) {}
 
     public function index(Request $request): JsonResponse
     {
-        $user = auth()->user()->load('karyawan');
+        $user    = $request->user();
+        $filters = $request->only([
+            'klien_ar_id', 'karyawan_id', 'metode_pembayaran', 'tanggal_dari', 'tanggal_sampai', 'segment',
+        ]);
 
-        $segmentTypes = match(strtoupper($request->segment ?? '')) {
-            'B2B'   => ['PT'],
-            'B2C'   => ['RESTO'],
-            default => null,
-        };
-
-        $query = PembayaranAr::with([
-            'invoice.klienAr',
-            'invoice.perusahaan',
-            'invoice.karyawan',
-            'createdBy.karyawan',
-            'bankStatementDetail',
-            'sumberPembayaran.bankStatementDetail',
-        ])
-            ->when($request->klien_ar_id, fn($q, $v) =>
-                $q->whereHas('invoice', fn($q) => $q->where('klien_ar_id', $v))
-            )
-            ->when($request->karyawan_id, fn($q, $v) =>
-                $q->whereHas('invoice', fn($q) => $q->where('karyawan_id', $v))
-            )
-            ->when($request->metode_pembayaran, fn($q, $v) => $q->where('metode_pembayaran', $v))
-            ->when($request->tanggal_dari, fn($q, $v) => $q->whereDate('tanggal_pembayaran', '>=', $v))
-            ->when($request->tanggal_sampai, fn($q, $v) => $q->whereDate('tanggal_pembayaran', '<=', $v))
-            ->when($segmentTypes, fn($q) =>
-                $q->whereHas('invoice', fn($q) =>
-                    $q->whereHas('klienAr', fn($q) => $q->whereIn('tipe_klien', $segmentTypes))
-                )
-            );
-
-        if ($user->karyawan && !RoleHelper::hasGlobalArAccess($user)) {
-            $query->whereHas('invoice', fn($q) =>
-                $q->where('perusahaan_id', $user->karyawan->perusahaan_id)
-            );
-        }
-
-        if (RoleHelper::isArOnly($user) && $user->karyawan) {
-            $query->whereHas('invoice.klienAr', fn($q) =>
-                $q->where('karyawan_ar_id', $user->karyawan->id)
-            );
-        }
-
-        $totalJumlah = (clone $query)->sum('jumlah_pembayaran');
-        $list        = $query->latest('tanggal_pembayaran')->paginate($request->per_page ?? 20);
+        $totalJumlah = $this->riwayatService->totalJumlah($filters, $user);
+        $list        = $this->riwayatService->paginate($filters, $user, (int) ($request->per_page ?? 20));
 
         return response()->json([
             'success' => true,

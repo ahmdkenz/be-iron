@@ -34,7 +34,12 @@ Route::prefix('v1')->group(function () {
                 Route::get('rekap-pembayaran/export-excel',[\App\Domain\Finance\RekapPembayaran\Controllers\RekapPembayaranController::class, 'exportExcel']);
                 Route::get('kinerja-ar/export-excel',      [\App\Domain\Finance\KinerjaAr\Controllers\KinerjaArController::class, 'exportExcel'])->middleware('role:ADMIN|MANAGER|SUPERVISOR');
                 Route::get('pendapatan-di-muka/export-excel', [\App\Domain\Finance\PendapatanDiMuka\Controllers\PendapatanDiMukaController::class, 'exportExcel'])->middleware('role:ADMIN|MANAGER|SUPERVISOR');
+                Route::get('rekening-koran/export-excel',  [\App\Domain\Finance\RekeningKoran\Controllers\RekeningKoranController::class, 'exportExcel'])->middleware('role:ADMIN|MANAGER|SUPERVISOR');
                 Route::get('opening-balance/export',       [\App\Domain\Finance\OpeningBalance\Controllers\OpeningBalanceController::class, 'export']);
+
+                // Pusat export multi-laporan (Export Data) — satu request, satu file
+                // .xlsx berisi satu sheet per laporan yang dipilih.
+                Route::post('export-data/export-excel',    [\App\Domain\Finance\ExportData\Controllers\ExportDataController::class, 'exportExcel'])->middleware('role:ADMIN|MANAGER|SUPERVISOR');
             });
 
             Route::group([], base_path('routes/api/finance.php'));
