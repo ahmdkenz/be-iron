@@ -90,6 +90,45 @@ class InvoiceController extends Controller
     }
 
     /**
+     * Scoping akses invoice per-ID, mencerminkan aturan yang sama dengan
+     * ArFilterScope::apply() yang dipakai daftar invoice (index/summary/export):
+     * AR murni dibatasi ke Client yang ditugaskan kepadanya, user non-global-AR
+     * lain (yang punya data karyawan) dibatasi ke perusahaan miliknya sendiri,
+     * dan ADMIN/MANAGER/SUPERVISOR tetap bebas akses. Dipakai untuk menutup
+     * celah endpoint detail invoice (show/items/pembayaran/approvalLogs/koreksi/
+     * print) yang sebelumnya bisa diakses siapa saja lewat ID langsung.
+     */
+    private function authorizeInvoiceAccess(Invoice $invoice): void
+    {
+        $user = auth()->user();
+        $user->loadMissing('karyawan');
+
+        if (!$user->karyawan || RoleHelper::hasGlobalArAccess($user)) {
+            return;
+        }
+
+        if (RoleHelper::isArOnly($user)) {
+            $klienKaryawanArId = $invoice->klien_ar_id
+                ? KlienAr::withTrashed()->whereKey($invoice->klien_ar_id)->value('karyawan_ar_id')
+                : null;
+
+            abort_if(
+                $klienKaryawanArId === null || (int) $klienKaryawanArId !== $user->karyawan->id,
+                403,
+                'Anda hanya dapat mengakses data invoice Client yang ditugaskan kepada Anda'
+            );
+
+            return;
+        }
+
+        abort_if(
+            (int) $invoice->perusahaan_id !== (int) $user->karyawan->perusahaan_id,
+            403,
+            'Anda tidak memiliki akses ke invoice ini'
+        );
+    }
+
+    /**
      * Batch-load id invoice yang berada dalam periode ending balance LOCKED,
      * satu query untuk seluruh halaman (hindari N+1 per baris).
      */
@@ -294,6 +333,7 @@ class InvoiceController extends Controller
     public function show(int $id): JsonResponse
     {
         $invoice = $this->service->findHeaderOrFail($id);
+        $this->authorizeInvoiceAccess($invoice);
         return $this->successResponse(new InvoiceResource($invoice));
     }
 
@@ -304,6 +344,7 @@ class InvoiceController extends Controller
         ]);
 
         $invoice = Invoice::findOrFail($id);
+        $this->authorizeInvoiceAccess($invoice);
         $query   = $invoice->items()->with('barang')->orderBy('id');
 
         if ($request->boolean('all')) {
@@ -319,6 +360,7 @@ class InvoiceController extends Controller
     public function pembayaran(int $id): JsonResponse
     {
         $invoice = Invoice::findOrFail($id);
+        $this->authorizeInvoiceAccess($invoice);
         $rows    = $invoice->pembayarans()->with('createdBy')->get();
 
         return $this->successResponse($rows->map(fn($p) => [
@@ -343,6 +385,7 @@ class InvoiceController extends Controller
     public function approvalLogs(int $id): JsonResponse
     {
         $invoice = Invoice::findOrFail($id);
+        $this->authorizeInvoiceAccess($invoice);
         $logs    = $invoice->approvalLogs()->with('actor')->get();
 
         return $this->successResponse($logs->map(fn($log) => [
@@ -358,6 +401,7 @@ class InvoiceController extends Controller
     public function koreksi(int $id): JsonResponse
     {
         $invoice = Invoice::findOrFail($id);
+        $this->authorizeInvoiceAccess($invoice);
         $rows    = $invoice->endingBalanceKoreksi()->with(['submittedBy', 'spv', 'manager'])->get();
 
         return $this->successResponse($rows->map(fn($k) => [
@@ -817,9 +861,7 @@ class InvoiceController extends Controller
     {
         $invoice = $this->service->findForPrintOrFail($id);
 
-        if ($invoice->is_opening_balance && $invoice->klien_ar_id) {
-            $this->authorizeKlienArOwnership($invoice->klien_ar_id);
-        }
+        $this->authorizeInvoiceAccess($invoice);
 
         abort_if(
             $invoice->requiresApproval() && !$invoice->isApprovedForFinanceFlow(),

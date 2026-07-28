@@ -53,6 +53,7 @@ class RekapPembayaranService
                 'tb_pembayaran_ar.id',
                 'tb_pembayaran_ar.tanggal_pembayaran',
                 'tb_klien_ar.nama_klien',
+                'tb_invoice.id as invoice_id',
                 'tb_invoice.no_invoice',
                 'tb_pembayaran_ar.no_referensi',
                 'tb_pembayaran_ar.metode_pembayaran',
@@ -64,6 +65,7 @@ class RekapPembayaranService
                 'tb_pembayaran_ar.id',
                 'tb_pembayaran_ar.tanggal_pembayaran',
                 'tb_klien_ar.nama_klien',
+                'tb_invoice.id',
                 'tb_invoice.no_invoice',
                 'tb_pembayaran_ar.no_referensi',
                 'tb_pembayaran_ar.metode_pembayaran',
@@ -87,6 +89,8 @@ class RekapPembayaranService
         ];
 
         $rows = $perRecord->map(fn($r) => [
+            'id'          => $r->id,
+            'invoice_id'  => $r->invoice_id,
             'tanggal'     => $r->tanggal_pembayaran,
             'client'      => $r->nama_klien,
             'invoice'     => $r->no_invoice,

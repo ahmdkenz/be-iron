@@ -194,6 +194,19 @@ class BankStatementService
         ];
     }
 
+    /**
+     * Bentuk payload 1 baris detail persis seperti kontrak paginateDetails(),
+     * dipakai controller supaya response match/catat-bayar/catat-voucher-AP
+     * tidak duplikasi shape sendiri-sendiri (dan otomatis ikut membawa
+     * invoice_id/no_invoice saat baris terkait invoice AR).
+     */
+    public function presentDetail(BankStatementDetail $detail): array
+    {
+        $detail->load($this->detailEagerLoads());
+
+        return $this->formatDetailRow($detail);
+    }
+
     private function detailEagerLoads(): array
     {
         return [
@@ -299,6 +312,8 @@ class BankStatementService
                 'jumlah_pembayaran'  => $pembayaran->jumlah_pembayaran,
                 'metode_pembayaran'  => $pembayaran->metode_pembayaran,
                 'klien'              => $invoice?->klienAr?->nama_klien ?? $pdmTanpaInvoice?->klienAr?->nama_klien,
+                'invoice_id'         => $invoice?->id,
+                'no_invoice'         => $invoice?->no_invoice,
             ] : ($voucherAp ? [
                 'id'                 => $voucherAp->id,
                 'no_referensi'       => $voucherAp->no_referensi,
