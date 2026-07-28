@@ -3,11 +3,12 @@
 namespace App\Domain\Finance\RekonsiliasiBankStatement\Controllers;
 
 use App\Domain\Finance\RekonsiliasiBankStatement\BankTemplateGenerator;
-use App\Domain\Finance\RekonsiliasiBankStatement\Exceptions\DuplicateStatementException;
+use App\Domain\Finance\RekonsiliasiBankStatement\Jobs\ImportBankStatementJob;
 use App\Domain\Finance\RekonsiliasiBankStatement\Services\BankStatementService;
 use App\Http\Controllers\Controller;
 use App\Models\BankStatement;
 use App\Models\BankStatementDetail;
+use App\Models\BankStatementImportBatch;
 use App\Models\Invoice;
 use App\Models\KlienAr;
 use App\Models\PendapatanDiMuka;
@@ -54,36 +55,97 @@ class BankStatementController extends Controller
         $request->validate([
             'bank_type' => ['nullable', 'in:BCA,MANDIRI,CIMB,BSI,GENERAL'],
             'file'      => ['required', 'file', 'mimes:xlsx,xls', 'max:10240'],
-            'force'     => ['sometimes', 'boolean'],
         ]);
 
-        try {
-            $statement = $this->service->upload(
-                $request->file('file'),
-                $request->input('bank_type', 'GENERAL'),
-                auth()->id(),
-                $request->boolean('force', false),
-            );
+        BankStatementImportBatch::failStale();
 
-            return $this->successResponse([
-                'id'               => $statement->id,
-                'total_transaksi'  => $statement->total_transaksi,
-                'jumlah_matched'   => $statement->jumlah_matched,
-                'jumlah_unmatched' => $statement->jumlah_unmatched,
-            ], 'File berhasil diupload dan diproses.');
-        } catch (DuplicateStatementException $e) {
-            $s = $e->getStatement();
+        $path = $request->file('file')->store('bank-statement-imports');
 
-            return $this->errorResponse('Rekening koran sudah diupload untuk periode ini.', 409, [
-                'existing' => [
-                    'id'           => $s->id,
-                    'periode_awal' => $s->periode_awal?->toDateString(),
-                    'periode_akhir'=> $s->periode_akhir?->toDateString(),
-                ],
-            ]);
-        } catch (\RuntimeException $e) {
-            return $this->errorResponse($e->getMessage(), 422);
+        $batch = BankStatementImportBatch::create([
+            'user_id'           => auth()->id(),
+            'bank_type'         => $request->input('bank_type', 'GENERAL'),
+            'original_filename' => $request->file('file')->getClientOriginalName(),
+            'file_path'         => $path,
+            'status'            => 'queued',
+            'phase'             => 'queued',
+        ]);
+
+        ImportBankStatementJob::dispatch($batch->id);
+
+        return $this->successResponse([
+            'batch_id' => $batch->id,
+            'status'   => $batch->status,
+        ], 'File diterima. Import sedang diproses di latar belakang.', 202);
+    }
+
+    public function importStatus(string $batch): JsonResponse
+    {
+        BankStatementImportBatch::failStale();
+
+        $b = BankStatementImportBatch::find($batch);
+        if (!$b) {
+            return $this->notFoundResponse('Batch import tidak ditemukan.');
         }
+
+        $this->authorizeBatchAccess($b);
+
+        return $this->successResponse([
+            'batch_id'          => $b->id,
+            'status'            => $b->status,
+            'phase'             => $b->phase,
+            'message'           => $b->message,
+            'periode_awal'      => $b->periode_awal?->toDateString(),
+            'periode_akhir'     => $b->periode_akhir?->toDateString(),
+            'total_rows'        => $b->total_rows,
+            'processed_rows'    => $b->processed_rows,
+            'inserted_rows'     => $b->inserted_rows,
+            'matched_rows'      => $b->matched_rows,
+            'unmatched_rows'    => $b->unmatched_rows,
+            'ignored_rows'      => $b->ignored_rows,
+            'error_rows'        => $b->error_rows,
+            'total_kredit'      => $b->total_kredit,
+            'bank_statement_id' => $b->bank_statement_id,
+            'overlaps'          => $b->overlaps ?? [],
+            'errors'            => $b->errors ?? [],
+        ]);
+    }
+
+    public function confirmReplace(string $batch): JsonResponse
+    {
+        $b = BankStatementImportBatch::find($batch);
+        if (!$b) {
+            return $this->notFoundResponse('Batch import tidak ditemukan.');
+        }
+
+        $this->authorizeBatchAccess($b);
+
+        if ($b->status !== 'needs_confirmation') {
+            return $this->errorResponse('Batch ini tidak sedang menunggu konfirmasi.', 422);
+        }
+
+        $b->update([
+            'force_replace' => true,
+            'status'        => 'queued',
+            'phase'         => 'queued',
+            'message'       => null,
+        ]);
+
+        ImportBankStatementJob::dispatch($b->id);
+
+        return $this->successResponse([
+            'batch_id' => $b->id,
+            'status'   => $b->status,
+        ], 'Import dilanjutkan.');
+    }
+
+    private function authorizeBatchAccess(BankStatementImportBatch $batch): void
+    {
+        $user = auth()->user();
+        abort_unless(
+            $batch->user_id === $user->id || RoleHelper::hasAnyRole($user, ['ADMIN', 'MANAGER', 'SUPERVISOR']),
+            403,
+            'Anda tidak memiliki akses ke batch import ini.'
+        );
     }
 
     public function show(BankStatement $bankStatement): JsonResponse

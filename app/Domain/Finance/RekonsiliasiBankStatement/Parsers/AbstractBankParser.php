@@ -5,17 +5,75 @@ namespace App\Domain\Finance\RekonsiliasiBankStatement\Parsers;
 use Carbon\Carbon;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Shared\Date as ExcelDate;
+use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 
 abstract class AbstractBankParser implements BankParserInterface
 {
-    // ── XLSX loader ───────────────────────────────────────────────────
+    // ── XLSX chunked reader ──────────────────────────────────────────
+    //
+    // Sengaja TIDAK memakai toArray() satu sheet penuh (lihat versi lama parser
+    // ini) — untuk rekening koran 1 tahun dengan puluhan ribu baris, toArray()
+    // membangun satu array PHP raksasa DI ATAS cell collection PhpSpreadsheet
+    // yang sudah ada di memori (dobel). Di sini sheet dimuat sekali dengan
+    // setReadDataOnly(true) (skip style), lalu dibaca per rentang $chunkSize
+    // baris via rangeToArray(), dan baris yang sudah diproses langsung dilepas
+    // dari cell collection lewat removeRow() supaya memori tidak menumpuk
+    // seiring baris yang dibaca.
 
-    protected function loadXlsx(string $filePath): array
+    /**
+     * @param callable $onPreview  fn(array $previewRows): array{headerRowIdx:int, colMap:array}
+     *                             — dipanggil sekali dengan baris-baris awal sheet (maks 50)
+     *                             untuk deteksi header. Harus throw RuntimeException jika
+     *                             header tidak ditemukan.
+     * @param callable $onChunk    fn(array $rangeRows, int $startRow, array $colMap): void
+     *                             — dipanggil per chunk dengan baris mentah (0-indexed kolom)
+     *                             beserta nomor baris awal (1-indexed, sesuai file asli).
+     */
+    protected function chunkedXlsxRows(string $filePath, int $chunkSize, callable $onPreview, callable $onChunk): void
     {
-        $spreadsheet = IOFactory::load($filePath);
-        // formatData=false → nilai mentah (int/float/string) tanpa format locale.
-        // Menghindari ambiguitas "1,413,590.00" vs "1.413.590,00" dari locale Excel.
-        return $spreadsheet->getActiveSheet()->toArray(null, true, false, false);
+        $reader = IOFactory::createReaderForFile($filePath);
+        $reader->setReadDataOnly(true);
+        $spreadsheet = $reader->load($filePath);
+
+        try {
+            $sheet = $spreadsheet->getActiveSheet();
+            $this->runChunkedRows($sheet, $chunkSize, $onPreview, $onChunk);
+        } finally {
+            $spreadsheet->disconnectWorksheets();
+            unset($spreadsheet);
+        }
+    }
+
+    private function runChunkedRows(Worksheet $sheet, int $chunkSize, callable $onPreview, callable $onChunk): void
+    {
+        $highestRow    = $sheet->getHighestRow();
+        $highestColumn = $sheet->getHighestColumn();
+
+        $previewEnd = min(50, $highestRow);
+        $preview    = $sheet->rangeToArray("A1:{$highestColumn}{$previewEnd}", null, true, false, false);
+
+        $detected = $onPreview($preview);
+        $dataStart = $detected['headerRowIdx'] + 2; // rowIdx 0-based -> baris data pertama (1-based, lewati header)
+        $colMap    = $detected['colMap'];
+
+        // removeRow() (dipakai untuk melepas memori per chunk) menggeser semua baris
+        // di bawahnya naik seperti "Delete Row" — bukan sekadar mengosongkan nilainya.
+        // Karena itu chunk berikutnya SELALU dibaca ulang dari posisi tetap $dataStart
+        // (bukan $start += $chunkSize), sementara nomor baris asli (untuk pesan error)
+        // dilacak terpisah lewat $originalRow yang berjalan maju sesuai baris yang
+        // benar-benar sudah diproses.
+        $originalRow = $dataStart;
+
+        while (($currentHighest = $sheet->getHighestRow()) >= $dataStart) {
+            $end   = min($dataStart + $chunkSize - 1, $currentHighest);
+            $count = $end - $dataStart + 1;
+            $rows  = $sheet->rangeToArray("A{$dataStart}:{$highestColumn}{$end}", null, true, false, false);
+
+            $onChunk($rows, $originalRow, $colMap);
+
+            $sheet->removeRow($dataStart, $count);
+            $originalRow += $count;
+        }
     }
 
     // ── Header detection (scoring) ────────────────────────────────────
@@ -66,6 +124,81 @@ abstract class AbstractBankParser implements BankParserInterface
         }
 
         return ['rowIdx' => $bestRowIdx, 'colMap' => $bestColMap];
+    }
+
+    // ── Ekstraksi & validasi baris (dipakai oleh parser berbasis colMap) ──
+
+    /**
+     * Ekstrak satu baris mentah (array 0-indexed kolom) menjadi baris ternormalisasi,
+     * atau tandai sebagai error jika baris tidak kosong tapi gagal divalidasi.
+     * Baris yang benar-benar kosong (semua kolom relevan kosong) dilewati diam-diam
+     * (row=null, error=null) — bukan error.
+     *
+     * @return array{row: ?array, error: ?array}
+     */
+    protected function extractOrValidateRow(int $rowNumber, array $row, array $colMap): array
+    {
+        $tanggalRaw = trim((string) ($row[$colMap['tanggal']    ?? -1] ?? ''));
+        $ketRaw     = trim((string) ($row[$colMap['keterangan'] ?? -1] ?? ''));
+        $debitRaw   = trim((string) ($row[$colMap['debit']      ?? -1] ?? ''));
+        $kreditRaw  = trim((string) ($row[$colMap['kredit']     ?? -1] ?? ''));
+        $saldoRaw   = trim((string) ($row[$colMap['saldo']      ?? -1] ?? ''));
+
+        if ($tanggalRaw === '' && $ketRaw === '' && $debitRaw === '' && $kreditRaw === '' && $saldoRaw === '') {
+            return ['row' => null, 'error' => null];
+        }
+
+        if (!$this->isValidNominalRaw($debitRaw) || !$this->isValidNominalRaw($kreditRaw) || !$this->isValidNominalRaw($saldoRaw)) {
+            return ['row' => null, 'error' => ['row' => $rowNumber, 'message' => 'Nominal Debit/Kredit/Saldo tidak valid.']];
+        }
+
+        $debit  = $this->parseAngka($debitRaw !== '' ? $debitRaw : '0');
+        $kredit = $this->parseAngka($kreditRaw !== '' ? $kreditRaw : '0');
+
+        if ($debit > 0 && $kredit > 0) {
+            return ['row' => null, 'error' => ['row' => $rowNumber, 'message' => 'Debit dan Kredit tidak boleh sama-sama terisi.']];
+        }
+
+        if ($tanggalRaw === '') {
+            // Tanpa nominal maupun tanggal: kemungkinan baris catatan/footer → lewati diam-diam.
+            if ($debit == 0 && $kredit == 0) {
+                return ['row' => null, 'error' => null];
+            }
+            return ['row' => null, 'error' => ['row' => $rowNumber, 'message' => 'Tanggal kosong padahal ada nominal transaksi.']];
+        }
+
+        $tanggal = $this->parseTanggal($tanggalRaw);
+        if ($tanggal === null) {
+            return ['row' => null, 'error' => ['row' => $rowNumber, 'message' => "Tanggal tidak valid: \"{$tanggalRaw}\"."]];
+        }
+
+        if ($debit == 0 && $kredit == 0) {
+            return ['row' => null, 'error' => null];
+        }
+
+        return [
+            'row' => [
+                'tanggal'         => $tanggal,
+                'waktu_transaksi' => isset($colMap['waktu']) ? $this->parseWaktu(trim((string) ($row[$colMap['waktu']] ?? ''))) : null,
+                'keterangan'      => $ketRaw,
+                'no_referensi'    => isset($colMap['no_referensi']) ? (trim((string) ($row[$colMap['no_referensi']] ?? '')) ?: null) : null,
+                'debit'           => $debit,
+                'kredit'          => $kredit,
+                'saldo'           => $this->parseAngka($saldoRaw !== '' ? $saldoRaw : '0'),
+            ],
+            'error' => null,
+        ];
+    }
+
+    protected function isValidNominalRaw(string $raw): bool
+    {
+        $raw = trim($raw);
+        if ($raw === '' || is_numeric($raw)) return true;
+
+        // Boleh mengandung simbol "Rp" dan spasi selain digit/pemisah ribuan-desimal/minus.
+        $stripped = preg_replace('/(rp\.?|\s)/i', '', $raw);
+
+        return (bool) preg_match('/^-?[\d.,]+$/', (string) $stripped);
     }
 
     // ── Shared helpers ────────────────────────────────────────────────

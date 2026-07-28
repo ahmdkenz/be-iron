@@ -5,8 +5,6 @@ namespace App\Domain\Finance\RekonsiliasiBankStatement\Services;
 use App\Domain\Finance\Invoice\Services\InvoiceService;
 use App\Domain\Finance\PembayaranAp\Services\PembayaranApService;
 use App\Domain\Finance\PembayaranAr\Services\PembayaranArService;
-use App\Domain\Finance\RekonsiliasiBankStatement\Exceptions\DuplicateStatementException;
-use App\Domain\Finance\RekonsiliasiBankStatement\Parsers\BankParserFactory;
 use App\Models\BankStatement;
 use App\Models\BankStatementDetail;
 use App\Models\Invoice;
@@ -27,115 +25,115 @@ class BankStatementService
         private readonly InvoiceService $invoiceService,
     ) {}
 
-    public function upload(UploadedFile $file, string $bankType, int $userId, bool $force = false): BankStatement
-    {
-        $parser = BankParserFactory::make($bankType);
-        $rows   = $parser->parse($file->getPathname());
-
-        if (empty($rows)) {
-            throw new \RuntimeException('File tidak mengandung transaksi yang dapat dibaca. Pastikan format file sesuai dengan bank yang dipilih.');
-        }
-
-        $tanggalList  = array_column($rows, 'tanggal');
-        sort($tanggalList);
-        $periodeAwal  = $tanggalList[0];
-        $periodeAkhir = end($tanggalList);
-
-        $existing = BankStatement::where('bank_type', $bankType)
-            ->where('periode_awal', '<=', $periodeAkhir)
-            ->where('periode_akhir', '>=', $periodeAwal)
-            ->first();
-
-        if ($existing && !$force) {
-            throw new DuplicateStatementException($existing);
-        }
-
-        return DB::transaction(function () use ($rows, $bankType, $file, $userId, $existing, $periodeAwal, $periodeAkhir) {
-            if ($existing) {
-                $existing->details()->delete();
-                $existing->delete();
-            }
-
-            $statement = BankStatement::create([
-                'bank_type'       => $bankType,
-                'nama_file'       => $file->getClientOriginalName(),
-                'periode_awal'    => $periodeAwal,
-                'periode_akhir'   => $periodeAkhir,
-                'total_transaksi' => count($rows),
-                'total_kredit'    => array_sum(array_column($rows, 'kredit')),
-                'jumlah_matched'  => 0,
-                'jumlah_unmatched'=> 0,
-                'uploaded_by'     => $userId,
-            ]);
-
-            foreach ($rows as $row) {
-                BankStatementDetail::create([
-                    'bank_statement_id' => $statement->id,
-                    'tanggal'           => $row['tanggal'],
-                    'waktu_transaksi'   => $row['waktu_transaksi'] ?? null,
-                    'keterangan'        => $row['keterangan'],
-                    'no_referensi'      => $row['no_referensi'] ?? null,
-                    'debit'             => $row['debit'],
-                    'kredit'            => $row['kredit'],
-                    'saldo'             => $row['saldo'],
-                    'status_cocok'      => ($row['debit'] == 0 && $row['kredit'] == 0) ? 'DIABAIKAN' : 'UNMATCHED',
-                    'pembayaran_ar_id'  => null,
-                    'pembayaran_ap_id'  => null,
-                ]);
-            }
-
-            $this->autoMatch($statement);
-
-            return $statement->fresh();
-        });
-    }
-
+    /**
+     * Cocokkan seluruh baris kredit sebuah rekening koran dengan PembayaranAr
+     * berdasarkan no_referensi, secara batch — bukan 1 query SELECT per baris
+     * seperti versi lama (mahal untuk rekening koran 1 tahun berisi ribuan baris
+     * kredit). Kandidat PembayaranAr diambil sekaligus lewat satu whereIn(), lalu
+     * update ke tb_bank_statement_detail dikelompokkan jadi beberapa bulk UPDATE
+     * (CASE WHEN per 500 baris) alih-alih save() satu-satu.
+     */
     public function autoMatch(BankStatement $statement, bool $onlyUnmatched = false): void
     {
         $usedPembayaranIds = BankStatementDetail::where('bank_statement_id', $statement->id)
             ->where('status_cocok', 'MATCHED')
             ->whereNotNull('pembayaran_ar_id')
             ->pluck('pembayaran_ar_id')
-            ->toArray();
+            ->all();
 
         $query = BankStatementDetail::where('bank_statement_id', $statement->id)
             ->where('kredit', '>', 0)
-            ->orderBy('tanggal');
+            ->orderBy('tanggal')
+            ->orderBy('id');
 
         if ($onlyUnmatched) {
             $query->where('status_cocok', 'UNMATCHED');
         }
 
-        $details = $query->get();
+        $details = $query->get(['id', 'no_referensi']);
+
+        $refs = $details->pluck('no_referensi')
+            ->map(fn($v) => trim((string) $v))
+            ->filter(fn($v) => $v !== '')
+            ->unique()
+            ->values();
+
+        $candidatesByRef = $refs->isEmpty()
+            ? collect()
+            : PembayaranAr::whereIn('no_referensi', $refs)
+                ->whereNotIn('id', $usedPembayaranIds)
+                ->orderBy('id')
+                ->get(['id', 'no_referensi'])
+                ->groupBy('no_referensi');
+
+        $usedInThisRun = [];
+        $matchedMap    = []; // detailId => pembayaranArId
+        $unmatchedIds  = [];
 
         foreach ($details as $detail) {
-            if (empty(trim((string) $detail->no_referensi))) {
-                $detail->status_cocok     = 'UNMATCHED';
-                $detail->pembayaran_ar_id = null;
-                $detail->save();
-                continue;
-            }
+            $ref = trim((string) $detail->no_referensi);
+            $candidate = $ref !== ''
+                ? ($candidatesByRef[$ref] ?? collect())->first(fn($c) => !in_array($c->id, $usedInThisRun, true))
+                : null;
 
-            $matched = PembayaranAr::where('no_referensi', $detail->no_referensi)
-                ->whereNotIn('id', $usedPembayaranIds)
-                ->first();
-
-            if ($matched) {
-                $detail->status_cocok     = 'MATCHED';
-                $detail->pembayaran_ar_id = $matched->id;
-                $detail->matched_by       = $statement->uploaded_by;
-                $detail->fill($this->postedPayload($statement->uploaded_by));
-                $usedPembayaranIds[]      = $matched->id;
+            if ($candidate) {
+                $usedInThisRun[]           = $candidate->id;
+                $matchedMap[$detail->id]   = $candidate->id;
             } else {
-                $detail->status_cocok     = 'UNMATCHED';
-                $detail->pembayaran_ar_id = null;
+                $unmatchedIds[] = $detail->id;
             }
+        }
 
-            $detail->save();
+        if (!empty($unmatchedIds)) {
+            foreach (array_chunk($unmatchedIds, 500) as $chunk) {
+                BankStatementDetail::whereIn('id', $chunk)->update([
+                    'status_cocok'     => 'UNMATCHED',
+                    'pembayaran_ar_id' => null,
+                ]);
+            }
+        }
+
+        if (!empty($matchedMap)) {
+            $now = now();
+            foreach (array_chunk($matchedMap, 500, true) as $chunk) {
+                $this->bulkUpdateMatched($chunk, $statement->uploaded_by, $now);
+            }
         }
 
         $this->refreshCounter($statement->id);
         $statement->refresh();
+    }
+
+    /**
+     * Satu UPDATE ber-CASE WHEN untuk sekelompok (maks 500) baris detail dengan
+     * pembayaran_ar_id yang berbeda-beda per baris — menghindari N query UPDATE
+     * terpisah untuk hasil auto-match yang jumlahnya bisa ribuan.
+     */
+    private function bulkUpdateMatched(array $detailIdToPembayaranId, ?int $userId, \Illuminate\Support\Carbon $now): void
+    {
+        $cases    = [];
+        $bindings = [];
+        foreach ($detailIdToPembayaranId as $detailId => $pembayaranId) {
+            $cases[]    = 'WHEN ? THEN ?';
+            $bindings[] = $detailId;
+            $bindings[] = $pembayaranId;
+        }
+
+        $ids          = array_keys($detailIdToPembayaranId);
+        $caseSql      = 'CASE id ' . implode(' ', $cases) . ' END';
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+
+        DB::update(
+            "UPDATE tb_bank_statement_detail
+                SET pembayaran_ar_id = {$caseSql},
+                    status_cocok = 'MATCHED',
+                    matched_by = ?,
+                    status_posting_2 = 'POSTED',
+                    posted_at = ?,
+                    posted_by = ?
+              WHERE id IN ({$placeholders})",
+            [...$bindings, $userId, $now, $userId, ...$ids]
+        );
     }
 
     public function getDetail(int $bankStatementId): array

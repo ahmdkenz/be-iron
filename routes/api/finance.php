@@ -109,6 +109,10 @@ Route::prefix('rekonsiliasi-bank')->middleware('role:ADMIN|MANAGER|SUPERVISOR|AR
     Route::get('/',                                  [BankStatementController::class, 'index']);
     Route::post('/upload',                           [BankStatementController::class, 'upload'])->middleware('role:ADMIN|MANAGER|SUPERVISOR');
     Route::get('/template/{bankType}',               [BankStatementController::class, 'downloadTemplate']);
+    // Harus terdaftar sebelum /{bankStatement} — kalau tidak, "imports" akan
+    // ditangkap sebagai parameter {bankStatement} dan tidak pernah sampai ke sini.
+    Route::get('/imports/{batch}/status',            [BankStatementController::class, 'importStatus'])->middleware('role:ADMIN|MANAGER|SUPERVISOR');
+    Route::post('/imports/{batch}/confirm-replace',  [BankStatementController::class, 'confirmReplace'])->middleware('role:ADMIN|MANAGER|SUPERVISOR');
     Route::get('/{bankStatement}',                   [BankStatementController::class, 'show']);
     Route::get('/{bankStatement}/header',            [BankStatementController::class, 'header']);
     Route::get('/{bankStatement}/details',           [BankStatementController::class, 'paginatedDetails']);

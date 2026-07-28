@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Domain\Finance\Invoice\Services\InvoiceService;
 use App\Domain\Finance\PembayaranAp\Services\PembayaranApService;
 use App\Domain\Finance\PembayaranAr\Services\PembayaranArService;
 use App\Domain\Finance\RekonsiliasiBankStatement\Services\BankStatementService;
@@ -30,6 +31,7 @@ class BankStatementServiceVoucherApValidationTest extends TestCase
         return new BankStatementService(
             $this->createMock(PembayaranArService::class),
             $pembayaranApService ?? $this->createMock(PembayaranApService::class),
+            $this->createMock(InvoiceService::class),
         );
     }
 

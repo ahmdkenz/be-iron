@@ -9,11 +9,13 @@ namespace App\Domain\Finance\RekonsiliasiBankStatement\Parsers;
  */
 class BsiAdapter extends AbstractBankParser
 {
-    public function parse(string $filePath): array
+    public function parseInChunks(string $filePath, callable $onChunk, int $chunkSize = 750): void
     {
-        return $this->isCsv($filePath)
-            ? $this->parseCsv($filePath)
-            : $this->parseXlsx($filePath);
+        if ($this->isCsv($filePath)) {
+            $this->parseCsvInChunks($filePath, $onChunk, $chunkSize);
+        } else {
+            $this->parseXlsxInChunks($filePath, $onChunk, $chunkSize);
+        }
     }
 
     private function isCsv(string $filePath): bool
@@ -23,7 +25,7 @@ class BsiAdapter extends AbstractBankParser
 
     // ── CSV path ──────────────────────────────────────────────────────
 
-    private function parseCsv(string $filePath): array
+    private function parseCsvInChunks(string $filePath, callable $onChunk, int $chunkSize): void
     {
         $content = file_get_contents($filePath);
         $content = preg_replace('/^\xEF\xBB\xBF/', '', $content);
@@ -34,7 +36,6 @@ class BsiAdapter extends AbstractBankParser
         $lines     = explode("\n", str_replace("\r\n", "\n", $content));
         $delimiter = $this->detectDelimiter($lines);
 
-        // Bangun 2D array untuk detectHeaderRow()
         $data = [];
         foreach ($lines as $line) {
             $line = trim($line);
@@ -47,34 +48,34 @@ class BsiAdapter extends AbstractBankParser
             throw new \RuntimeException('Format CSV BSI tidak dikenali: baris header tidak ditemukan.');
         }
 
-        $colMap = $detected['colMap'];
-        $rows   = [];
+        $colMap    = $detected['colMap'];
+        $totalRows = count($data);
+        $buffer    = [];
+        $errors    = [];
+        $scanned   = 0;
 
-        for ($i = $detected['rowIdx'] + 1; $i < count($data); $i++) {
-            $cols = $data[$i];
+        for ($i = $detected['rowIdx'] + 1; $i < $totalRows; $i++) {
+            $rowNumber = $i + 1;
+            $result    = $this->extractOrValidateRow($rowNumber, $data[$i], $colMap);
+            $scanned++;
 
-            $tanggalRaw = trim($cols[$colMap['tanggal'] ?? -1] ?? '');
-            if ($tanggalRaw === '') continue;
+            if ($result['error'] !== null) {
+                $errors[] = $result['error'];
+            } elseif ($result['row'] !== null) {
+                $buffer[] = $result['row'];
+            }
 
-            $tanggal = $this->parseTanggal($tanggalRaw);
-            if ($tanggal === null) continue;
-
-            $debit  = $this->parseAngka($cols[$colMap['debit']  ?? -1] ?? '0');
-            $kredit = $this->parseAngka($cols[$colMap['kredit'] ?? -1] ?? '0');
-            if ($debit == 0 && $kredit == 0) continue;
-
-            $rows[] = [
-                'tanggal'         => $tanggal,
-                'waktu_transaksi' => isset($colMap['waktu']) ? $this->parseWaktu(trim($cols[$colMap['waktu']] ?? '')) : null,
-                'keterangan'      => trim($cols[$colMap['keterangan'] ?? -1] ?? ''),
-                'no_referensi'    => isset($colMap['no_referensi']) ? (trim($cols[$colMap['no_referensi']] ?? '') ?: null) : null,
-                'debit'           => $debit,
-                'kredit'          => $kredit,
-                'saldo'           => $this->parseAngka($cols[$colMap['saldo'] ?? -1] ?? '0'),
-            ];
+            if ($scanned >= $chunkSize) {
+                $onChunk($buffer, $errors, $scanned);
+                $buffer  = [];
+                $errors  = [];
+                $scanned = 0;
+            }
         }
 
-        return $rows;
+        if ($scanned > 0) {
+            $onChunk($buffer, $errors, $scanned);
+        }
     }
 
     private function detectDelimiter(array $lines): string
@@ -88,42 +89,37 @@ class BsiAdapter extends AbstractBankParser
 
     // ── XLSX path ─────────────────────────────────────────────────────
 
-    private function parseXlsx(string $filePath): array
+    private function parseXlsxInChunks(string $filePath, callable $onChunk, int $chunkSize): void
     {
-        $data = $this->loadXlsx($filePath);
+        $this->chunkedXlsxRows(
+            $filePath,
+            $chunkSize,
+            function (array $preview) {
+                $detected = $this->detectHeaderRow($preview, minScore: 3);
+                if ($detected['rowIdx'] === -1) {
+                    throw new \RuntimeException('Format file BSI tidak dikenali: baris header tidak ditemukan.');
+                }
 
-        $detected = $this->detectHeaderRow($data, minScore: 3);
-        if ($detected['rowIdx'] === -1) {
-            throw new \RuntimeException('Format file BSI tidak dikenali: baris header tidak ditemukan.');
-        }
+                return [
+                    'headerRowIdx' => $detected['rowIdx'],
+                    'colMap'       => $detected['colMap'],
+                ];
+            },
+            function (array $rangeRows, int $startRow, array $colMap) use ($onChunk) {
+                $validRows = [];
+                $errors    = [];
 
-        $colMap = $detected['colMap'];
-        $rows   = [];
+                foreach ($rangeRows as $offset => $row) {
+                    $result = $this->extractOrValidateRow($startRow + $offset, $row, $colMap);
+                    if ($result['error'] !== null) {
+                        $errors[] = $result['error'];
+                    } elseif ($result['row'] !== null) {
+                        $validRows[] = $result['row'];
+                    }
+                }
 
-        for ($i = $detected['rowIdx'] + 1; $i < count($data); $i++) {
-            $row = $data[$i];
-
-            $tanggalRaw = trim((string) ($row[$colMap['tanggal'] ?? -1] ?? ''));
-            if ($tanggalRaw === '') continue;
-
-            $tanggal = $this->parseTanggal($tanggalRaw);
-            if ($tanggal === null) continue;
-
-            $debit  = $this->parseAngka((string) ($row[$colMap['debit']  ?? -1] ?? '0'));
-            $kredit = $this->parseAngka((string) ($row[$colMap['kredit'] ?? -1] ?? '0'));
-            if ($debit == 0 && $kredit == 0) continue;
-
-            $rows[] = [
-                'tanggal'         => $tanggal,
-                'waktu_transaksi' => isset($colMap['waktu']) ? $this->parseWaktu(trim((string) ($row[$colMap['waktu']] ?? ''))) : null,
-                'keterangan'      => trim((string) ($row[$colMap['keterangan'] ?? -1] ?? '')),
-                'no_referensi'    => isset($colMap['no_referensi']) ? (trim((string) ($row[$colMap['no_referensi']] ?? '')) ?: null) : null,
-                'debit'           => $debit,
-                'kredit'          => $kredit,
-                'saldo'           => $this->parseAngka((string) ($row[$colMap['saldo'] ?? -1] ?? '0')),
-            ];
-        }
-
-        return $rows;
+                $onChunk($validRows, $errors, count($rangeRows));
+            }
+        );
     }
 }
