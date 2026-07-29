@@ -3,6 +3,7 @@
 namespace App\Domain\Finance\EndingBalanceAp\Services;
 
 use App\Domain\Finance\TagihanAp\Services\TagihanApService;
+use App\Domain\Notification\Services\FinanceNotificationService;
 use App\Models\EndingBalanceAp;
 use App\Models\EndingBalanceApKoreksi;
 use App\Models\EndingBalanceApKoreksiItem;
@@ -15,6 +16,7 @@ class EndingBalanceApKoreksiService
     public function __construct(
         private readonly EndingBalanceApService $ebService,
         private readonly TagihanApService $tagihanApService,
+        private readonly FinanceNotificationService $financeNotificationService,
     ) {}
 
     /**
@@ -70,7 +72,10 @@ class EndingBalanceApKoreksiService
                 $this->createKoreksiItems($koreksi, $data['items']);
             }
 
-            return $koreksi->fresh(['items']);
+            $submitted = $koreksi->fresh(['items']);
+            $this->financeNotificationService->ebKoreksiApSubmitted($submitted);
+
+            return $submitted;
         });
     }
 
@@ -95,7 +100,10 @@ class EndingBalanceApKoreksiService
 
             $this->ebService->recomputeFinal($koreksi->endingBalanceAp);
 
-            return $koreksi->fresh();
+            $approved = $koreksi->fresh();
+            $this->financeNotificationService->ebKoreksiApApproved($approved);
+
+            return $approved;
         });
     }
 
@@ -114,7 +122,10 @@ class EndingBalanceApKoreksiService
             'updated_by'    => $approverId,
         ]);
 
-        return $koreksi->fresh();
+        $rejected = $koreksi->fresh();
+        $this->financeNotificationService->ebKoreksiApRejected($rejected, $note);
+
+        return $rejected;
     }
 
     /**

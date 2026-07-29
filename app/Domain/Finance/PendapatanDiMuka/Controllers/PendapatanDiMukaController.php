@@ -3,6 +3,7 @@
 namespace App\Domain\Finance\PendapatanDiMuka\Controllers;
 
 use App\Domain\Finance\PendapatanDiMuka\Services\PendapatanDiMukaService;
+use App\Domain\Notification\Services\FinanceNotificationService;
 use App\Http\Controllers\Controller;
 use App\Models\BankStatementDetail;
 use App\Models\PendapatanDiMuka;
@@ -21,7 +22,10 @@ class PendapatanDiMukaController extends Controller
 {
     use ApiResponse;
 
-    public function __construct(private readonly PendapatanDiMukaService $service) {}
+    public function __construct(
+        private readonly PendapatanDiMukaService $service,
+        private readonly FinanceNotificationService $financeNotificationService,
+    ) {}
 
     public function index(Request $request): JsonResponse
     {
@@ -72,7 +76,18 @@ class PendapatanDiMukaController extends Controller
 
     public function cancel(PendapatanDiMuka $pdm): JsonResponse
     {
+        $pdm->loadMissing('klienAr');
+        $klienArId = $pdm->klien_ar_id;
+        $namaKlien = $pdm->klienAr?->nama_klien;
+
         $this->service->cancel($pdm);
+
+        $this->financeNotificationService->bankReconciliationAction(
+            'batal_pdm',
+            'Pendapatan di Muka dibatalkan',
+            sprintf('%s membatalkan Pendapatan di Muka untuk klien %s.', auth()->user()?->name ?? '-', $namaKlien ?? '-'),
+            klienArId: $klienArId,
+        );
 
         return $this->successResponse(null, 'Pendapatan di Muka berhasil dibatalkan.');
     }

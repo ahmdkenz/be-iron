@@ -18,6 +18,7 @@ Route::prefix('v1')->group(function () {
 
         Route::prefix('master')->group(base_path('routes/api/master.php'));
         Route::prefix('iam')->group(base_path('routes/api/iam.php'));
+        Route::prefix('notifications')->group(base_path('routes/api/notification.php'));
 
         Route::prefix('finance')->group(function () {
             // Export & import: rate limit ketat untuk mencegah exfiltrasi & DoS

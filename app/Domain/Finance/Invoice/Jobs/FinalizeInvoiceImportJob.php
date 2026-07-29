@@ -3,6 +3,7 @@
 namespace App\Domain\Finance\Invoice\Jobs;
 
 use App\Domain\Finance\Invoice\Services\InvoiceImportService;
+use App\Domain\Notification\Services\FinanceNotificationService;
 use App\Models\InvoiceImportBatch;
 use App\Models\User;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -32,7 +33,7 @@ class FinalizeInvoiceImportJob implements ShouldQueue
         $this->onQueue('invoice-import');
     }
 
-    public function handle(InvoiceImportService $service): void
+    public function handle(InvoiceImportService $service, FinanceNotificationService $notifications): void
     {
         $batch = InvoiceImportBatch::find($this->batchId);
         if (!$batch) {
@@ -57,7 +58,22 @@ class FinalizeInvoiceImportJob implements ShouldQueue
                 'finished_at' => now(),
             ]);
         } finally {
-            $this->cleanup($batch->fresh());
+            $final = $batch->fresh();
+            $this->cleanup($final);
+            $this->notifyOutcome($notifications, $final);
+        }
+    }
+
+    private function notifyOutcome(FinanceNotificationService $notifications, ?InvoiceImportBatch $batch): void
+    {
+        if (!$batch) {
+            return;
+        }
+
+        if ($batch->status === 'completed') {
+            $notifications->importCompleted('invoice', $batch->user_id, 'Import Invoice', $batch->message ?? 'Import invoice selesai.');
+        } elseif ($batch->status === 'failed') {
+            $notifications->importFailed('invoice', $batch->user_id, 'Import Invoice', $batch->message ?? 'Import invoice gagal.');
         }
     }
 

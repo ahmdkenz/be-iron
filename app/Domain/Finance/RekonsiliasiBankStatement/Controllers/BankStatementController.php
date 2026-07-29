@@ -5,6 +5,7 @@ namespace App\Domain\Finance\RekonsiliasiBankStatement\Controllers;
 use App\Domain\Finance\RekonsiliasiBankStatement\BankTemplateGenerator;
 use App\Domain\Finance\RekonsiliasiBankStatement\Jobs\ImportBankStatementJob;
 use App\Domain\Finance\RekonsiliasiBankStatement\Services\BankStatementService;
+use App\Domain\Notification\Services\FinanceNotificationService;
 use App\Http\Controllers\Controller;
 use App\Models\BankStatement;
 use App\Models\BankStatementDetail;
@@ -23,7 +24,10 @@ class BankStatementController extends Controller
 {
     use ApiResponse;
 
-    public function __construct(private readonly BankStatementService $service) {}
+    public function __construct(
+        private readonly BankStatementService $service,
+        private readonly FinanceNotificationService $financeNotificationService,
+    ) {}
 
     public function index(Request $request): JsonResponse
     {
@@ -243,6 +247,12 @@ class BankStatementController extends Controller
         try {
             $this->service->unmatch($detail);
 
+            $this->financeNotificationService->bankReconciliationAction(
+                'unmatch',
+                'Cocok transaksi dibatalkan',
+                sprintf('%s membatalkan cocok transaksi bank sebesar %s.', auth()->user()?->name ?? '-', number_format((float) $detail->kredit ?: (float) $detail->debit, 0, ',', '.')),
+            );
+
             return $this->successResponse(null, 'Cocok transaksi berhasil dibatalkan.');
         } catch (\Symfony\Component\HttpKernel\Exception\HttpException $e) {
             return $this->errorResponse($e->getMessage(), $e->getStatusCode());
@@ -369,6 +379,13 @@ class BankStatementController extends Controller
                 $request->file('bukti_pembayaran'),
             );
 
+            $this->financeNotificationService->bankReconciliationAction(
+                'catat_bayar',
+                'Pembayaran AR dicatat',
+                sprintf('%s mencatat pembayaran untuk invoice %s.', auth()->user()?->name ?? '-', $invoice->no_invoice),
+                klienArId: $invoice->klien_ar_id,
+            );
+
             return $this->successResponse(
                 $this->service->presentDetail($updated),
                 'Pembayaran berhasil dicatat dan dicocokkan.'
@@ -400,6 +417,13 @@ class BankStatementController extends Controller
             );
 
             $pdm = PendapatanDiMuka::where('sumber_pembayaran_ar_id', $updated->pembayaran_ar_id)->first();
+
+            $this->financeNotificationService->bankReconciliationAction(
+                'catat_pdm',
+                'Pendapatan di Muka dicatat',
+                sprintf('%s mencatat Pendapatan di Muka untuk klien %s.', auth()->user()?->name ?? '-', $klienAr->nama_klien),
+                klienArId: $klienAr->id,
+            );
 
             return $this->successResponse([
                 'id'           => $updated->id,
@@ -446,6 +470,14 @@ class BankStatementController extends Controller
 
             $updated->load(['pembayaranAp.items.tagihanAp.vendorAp', 'matchedBy.karyawan']);
             $voucher = $updated->pembayaranAp;
+
+            $vendorApIds = TagihanAp::whereIn('id', $tagihanIds)->pluck('vendor_ap_id')->unique()->filter()->all();
+            $this->financeNotificationService->bankReconciliationAction(
+                'catat_voucher_ap',
+                'Payment Voucher AP dicatat',
+                sprintf('%s mencatat Payment Voucher AP untuk %d tagihan.', auth()->user()?->name ?? '-', count($tagihanIds)),
+                vendorApIds: $vendorApIds,
+            );
 
             return $this->successResponse([
                 'id'           => $updated->id,

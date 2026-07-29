@@ -5,6 +5,7 @@ namespace App\Domain\Finance\TagihanAp\Services;
 use App\Domain\Finance\EndingBalanceAp\Services\EndingBalanceApService;
 use App\Domain\Finance\TagihanAp\DTO\TagihanApDTO;
 use App\Domain\Finance\TagihanAp\Repositories\TagihanApRepository;
+use App\Domain\Notification\Services\FinanceNotificationService;
 use App\Models\Karyawan;
 use App\Models\TagihanAp;
 use App\Models\TagihanApApprovalLog;
@@ -19,6 +20,7 @@ class TagihanApService
     public function __construct(
         private readonly TagihanApRepository $repository,
         private readonly EndingBalanceApService $endingBalanceApService,
+        private readonly FinanceNotificationService $financeNotificationService,
     ) {}
 
     /**
@@ -140,7 +142,10 @@ class TagihanApService
                 $this->syncOpeningBalanceDetails($tagihan, $data['details']);
             }
 
-            return $this->findOrFail($tagihan->id);
+            $submitted = $this->findOrFail($tagihan->id);
+            $this->financeNotificationService->obApSubmitted($submitted);
+
+            return $submitted;
         });
     }
 
@@ -262,7 +267,10 @@ class TagihanApService
 
             $this->createApprovalLog($tagihan, 'APPROVED', $note);
 
-            return $this->findOrFail($tagihan->id);
+            $approved = $this->findOrFail($tagihan->id);
+            $this->financeNotificationService->obApApproved($approved);
+
+            return $approved;
         });
     }
 
@@ -283,7 +291,10 @@ class TagihanApService
 
             $this->createApprovalLog($tagihan, 'REJECTED', $note);
 
-            return $this->findOrFail($tagihan->id);
+            $rejected = $this->findOrFail($tagihan->id);
+            $this->financeNotificationService->obApRejected($rejected, $note);
+
+            return $rejected;
         });
     }
 

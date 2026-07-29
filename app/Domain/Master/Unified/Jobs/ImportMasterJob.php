@@ -3,6 +3,7 @@
 namespace App\Domain\Master\Unified\Jobs;
 
 use App\Domain\Master\Unified\Services\MasterImportService;
+use App\Domain\Notification\Services\FinanceNotificationService;
 use App\Models\ImportMasterBatch;
 use App\Models\User;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -28,7 +29,7 @@ class ImportMasterJob implements ShouldQueue
 
     public function __construct(private readonly string $batchId) {}
 
-    public function handle(MasterImportService $service): void
+    public function handle(MasterImportService $service, FinanceNotificationService $notifications): void
     {
         $batch = ImportMasterBatch::find($this->batchId);
         if (!$batch) {
@@ -53,7 +54,9 @@ class ImportMasterJob implements ShouldQueue
                 'message' => 'Terjadi kesalahan sistem saat proses import: ' . $e->getMessage(),
             ]);
         } finally {
-            $this->cleanupFile($batch->fresh());
+            $final = $batch->fresh();
+            $this->cleanupFile($final);
+            $this->notifyOutcome($notifications, $final);
         }
     }
 
@@ -66,6 +69,20 @@ class ImportMasterJob implements ShouldQueue
                 'message' => 'Job import gagal: ' . $e->getMessage(),
             ]);
             $this->cleanupFile($batch);
+            app(FinanceNotificationService::class)->importFailed('master', $batch->user_id, 'Import Master Data', $batch->message ?? 'Import gagal.');
+        }
+    }
+
+    private function notifyOutcome(FinanceNotificationService $notifications, ?ImportMasterBatch $batch): void
+    {
+        if (!$batch) {
+            return;
+        }
+
+        if ($batch->status === 'completed') {
+            $notifications->importCompleted('master', $batch->user_id, 'Import Master Data', $batch->message ?? 'Import master data selesai.');
+        } elseif ($batch->status === 'failed') {
+            $notifications->importFailed('master', $batch->user_id, 'Import Master Data', $batch->message ?? 'Import master data gagal.');
         }
     }
 

@@ -8,6 +8,7 @@ use App\Domain\Finance\PembayaranAr\Requests\StorePembayaranArRequest;
 use App\Domain\Finance\PembayaranAr\Resources\PembayaranArResource;
 use App\Domain\Finance\PembayaranAr\Services\PembayaranArService;
 use App\Domain\Finance\PembayaranAr\Services\RiwayatPembayaranService;
+use App\Domain\Notification\Services\FinanceNotificationService;
 use App\Http\Controllers\Controller;
 use App\Models\PembayaranAr;
 use App\Support\Helpers\RoleHelper;
@@ -26,6 +27,7 @@ class PembayaranArController extends Controller
         private readonly PembayaranArService $service,
         private readonly InvoiceService $invoiceService,
         private readonly RiwayatPembayaranService $riwayatService,
+        private readonly FinanceNotificationService $financeNotificationService,
     ) {}
 
     public function index(Request $request): JsonResponse
@@ -91,7 +93,18 @@ class PembayaranArController extends Controller
         $pembayaran = PembayaranAr::with('invoice')->find($id);
         abort_if(!$pembayaran, 404, 'Data pembayaran tidak ditemukan');
 
+        $noInvoice = $pembayaran->invoice?->no_invoice;
+        $klienArId = $pembayaran->invoice?->klien_ar_id;
+
         $this->service->delete($pembayaran);
+
+        $this->financeNotificationService->bankReconciliationAction(
+            'batal_pembayaran_ar',
+            'Pembayaran AR dibatalkan',
+            sprintf('%s membatalkan pembayaran untuk invoice %s.', auth()->user()?->name ?? '-', $noInvoice ?? '-'),
+            klienArId: $klienArId,
+        );
+
         return $this->successResponse(null, 'Pembayaran berhasil dihapus');
     }
 

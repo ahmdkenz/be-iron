@@ -12,6 +12,20 @@ return Application::configure(basePath: dirname(__DIR__))
         commands: __DIR__.'/../routes/console.php',
         health: '/up',
     )
+    // Route /broadcasting/auth lewat middleware 'api' (EnsureFrontendRequestsAreStateful +
+    // InjectCookieToken ikut prepend otomatis, lihat withMiddleware() di bawah) + auth:sanctum,
+    // BUKAN default group 'web' bawaan Broadcast::routes(). Auth aplikasi ini pakai bearer
+    // token di cookie httpOnly 'auth_token' (lihat InjectCookieToken), bukan session guard
+    // 'web', jadi channel authorization wajib melalui middleware yang sama dengan routes/api.php.
+    // Prefix disamakan (api/v1) supaya masuk pola CORS paths 'api/*' yang sudah ada tanpa
+    // perlu menambah config/cors.php.
+    ->withBroadcasting(
+        __DIR__.'/../routes/channels.php',
+        [
+            'prefix' => 'api/v1',
+            'middleware' => ['api', 'throttle:60,1', 'auth:sanctum'],
+        ],
+    )
     ->withSchedule(function (Schedule $schedule): void {
         // Tarik PO & Terima PO dari SHZ360 untuk staging AP. Butuh crontab asli
         // di hosting (`* * * * * php artisan schedule:run`) — ini penggunaan

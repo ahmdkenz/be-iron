@@ -5,6 +5,7 @@ namespace App\Domain\Finance\Invoice\Services;
 use App\Domain\Finance\EndingBalance\Services\EndingBalanceService;
 use App\Domain\Finance\Invoice\DTO\InvoiceDTO;
 use App\Domain\Finance\Invoice\Repositories\InvoiceRepository;
+use App\Domain\Notification\Services\FinanceNotificationService;
 use App\Models\Invoice;
 use App\Models\InvoiceApprovalLog;
 use App\Models\Investor;
@@ -26,6 +27,7 @@ class InvoiceService
     public function __construct(
         private readonly InvoiceRepository $repository,
         private readonly EndingBalanceService $endingBalanceService,
+        private readonly FinanceNotificationService $financeNotificationService,
     ) {}
 
     /**
@@ -326,7 +328,10 @@ class InvoiceService
                 $this->syncOpeningBalanceDetails($invoice, $data['details']);
             }
 
-            return $this->findOrFail($invoice->id);
+            $submitted = $this->findOrFail($invoice->id);
+            $this->financeNotificationService->obArSubmitted($submitted);
+
+            return $submitted;
         });
     }
 
@@ -452,6 +457,8 @@ class InvoiceService
 
             $this->propagateCarryover($approved);
 
+            $this->financeNotificationService->obArApproved($approved);
+
             return $approved;
         });
     }
@@ -473,7 +480,10 @@ class InvoiceService
 
             $this->createApprovalLog($invoice, 'REJECTED', $note);
 
-            return $this->findOrFail($invoice->id);
+            $rejected = $this->findOrFail($invoice->id);
+            $this->financeNotificationService->obArRejected($rejected, $note);
+
+            return $rejected;
         });
     }
 

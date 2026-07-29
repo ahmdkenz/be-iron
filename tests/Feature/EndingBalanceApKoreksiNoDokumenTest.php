@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Domain\Finance\EndingBalanceAp\Services\EndingBalanceApKoreksiService;
 use App\Domain\Finance\EndingBalanceAp\Services\EndingBalanceApService;
 use App\Domain\Finance\TagihanAp\Services\TagihanApService;
+use App\Domain\Notification\Services\FinanceNotificationService;
 use Tests\TestCase;
 
 /**
@@ -28,6 +29,7 @@ class EndingBalanceApKoreksiNoDokumenTest extends TestCase
         $this->service = new EndingBalanceApKoreksiService(
             $this->createMock(EndingBalanceApService::class),
             $this->createMock(TagihanApService::class),
+            $this->createMock(FinanceNotificationService::class),
         );
         $this->ref = new \ReflectionClass($this->service);
     }

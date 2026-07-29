@@ -8,6 +8,7 @@ use App\Domain\Finance\PembayaranAp\Resources\PembayaranApResource;
 use App\Domain\Finance\PembayaranAp\Services\PembayaranApExportService;
 use App\Domain\Finance\PembayaranAp\Services\PembayaranApService;
 use App\Domain\Finance\TagihanAp\Services\TagihanApService;
+use App\Domain\Notification\Services\FinanceNotificationService;
 use App\Http\Controllers\Controller;
 use App\Models\PembayaranAp;
 use App\Models\User;
@@ -34,6 +35,7 @@ class PembayaranApController extends Controller
         private readonly PembayaranApService $service,
         private readonly TagihanApService $tagihanApService,
         private readonly PembayaranApExportService $exportService,
+        private readonly FinanceNotificationService $financeNotificationService,
     ) {}
 
     public function index(Request $request): JsonResponse
@@ -254,10 +256,23 @@ class PembayaranApController extends Controller
     {
         $this->authorizeOperate();
 
-        $pembayaran = PembayaranAp::with('tagihanAp')->find($id);
+        $pembayaran = PembayaranAp::with(['tagihanAp', 'items.tagihanAp'])->find($id);
         abort_if(!$pembayaran, 404, 'Data pembayaran tidak ditemukan');
 
+        $noReferensi = $pembayaran->no_referensi;
+        $vendorApIds = $pembayaran->items->isNotEmpty()
+            ? $pembayaran->items->pluck('tagihanAp.vendor_ap_id')->unique()->filter()->all()
+            : array_filter([$pembayaran->tagihanAp?->vendor_ap_id]);
+
         $this->service->delete($pembayaran);
+
+        $this->financeNotificationService->bankReconciliationAction(
+            'batal_voucher_ap',
+            'Payment Voucher AP dibatalkan',
+            sprintf('%s membatalkan Payment Voucher AP %s.', auth()->user()?->name ?? '-', $noReferensi ?? '-'),
+            vendorApIds: $vendorApIds,
+        );
+
         return $this->successResponse(null, 'Pembayaran berhasil dihapus');
     }
 

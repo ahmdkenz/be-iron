@@ -248,7 +248,8 @@ class EndingBalanceApRoleAccessTest extends TestCase
     {
         $ebService      = Mockery::mock(EndingBalanceApService::class);
         $tagihanService = Mockery::mock(\App\Domain\Finance\TagihanAp\Services\TagihanApService::class);
-        $service        = new EndingBalanceApKoreksiService($ebService, $tagihanService);
+        $notifications  = Mockery::mock(\App\Domain\Notification\Services\FinanceNotificationService::class);
+        $service        = new EndingBalanceApKoreksiService($ebService, $tagihanService, $notifications);
 
         $result = $service->pendingForUser('AP');
 

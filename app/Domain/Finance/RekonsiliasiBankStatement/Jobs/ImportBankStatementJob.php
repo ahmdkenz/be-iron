@@ -3,6 +3,7 @@
 namespace App\Domain\Finance\RekonsiliasiBankStatement\Jobs;
 
 use App\Domain\Finance\RekonsiliasiBankStatement\Services\BankStatementImportService;
+use App\Domain\Notification\Services\FinanceNotificationService;
 use App\Models\BankStatementImportBatch;
 use App\Models\BankStatementImportRow;
 use App\Models\User;
@@ -32,7 +33,7 @@ class ImportBankStatementJob implements ShouldQueue
         $this->onQueue('bank-statement');
     }
 
-    public function handle(BankStatementImportService $service): void
+    public function handle(BankStatementImportService $service, FinanceNotificationService $notifications): void
     {
         $batch = BankStatementImportBatch::find($this->batchId);
         if (!$batch) {
@@ -59,7 +60,9 @@ class ImportBankStatementJob implements ShouldQueue
                 'finished_at' => now(),
             ]);
         } finally {
-            $this->cleanup($batch->fresh());
+            $final = $batch->fresh();
+            $this->cleanup($final);
+            $this->notifyOutcome($notifications, $final);
         }
     }
 
@@ -74,7 +77,22 @@ class ImportBankStatementJob implements ShouldQueue
                 'finished_at' => now(),
             ]);
             $this->cleanup($batch);
+            app(FinanceNotificationService::class)->importFailed('bank', $batch->user_id, 'Import Rekening Koran', $batch->message ?? 'Import gagal.');
         }
+    }
+
+    private function notifyOutcome(FinanceNotificationService $notifications, ?BankStatementImportBatch $batch): void
+    {
+        if (!$batch) {
+            return;
+        }
+
+        match ($batch->status) {
+            'completed'           => $notifications->importCompleted('bank', $batch->user_id, 'Import Rekening Koran', $batch->message ?? 'Import rekening koran selesai.'),
+            'failed'              => $notifications->importFailed('bank', $batch->user_id, 'Import Rekening Koran', $batch->message ?? 'Import rekening koran gagal.'),
+            'needs_confirmation'  => $notifications->bankImportNeedsConfirmation($batch->user_id, $batch->message ?? 'Periode rekening koran bertumpang tindih dengan data yang sudah ada.'),
+            default               => null,
+        };
     }
 
     /**

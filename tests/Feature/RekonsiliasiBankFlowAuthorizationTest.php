@@ -46,7 +46,10 @@ class RekonsiliasiBankFlowAuthorizationTest extends TestCase
 
     private function controller(): BankStatementController
     {
-        return new BankStatementController($this->createMock(BankStatementService::class));
+        return new BankStatementController(
+            $this->createMock(BankStatementService::class),
+            $this->createMock(\App\Domain\Notification\Services\FinanceNotificationService::class),
+        );
     }
 
     private function invokePrivate(BankStatementController $controller, string $method, mixed ...$args): mixed

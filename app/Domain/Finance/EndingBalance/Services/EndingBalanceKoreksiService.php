@@ -3,6 +3,7 @@
 namespace App\Domain\Finance\EndingBalance\Services;
 
 use App\Domain\Finance\Invoice\Services\InvoiceService;
+use App\Domain\Notification\Services\FinanceNotificationService;
 use App\Models\EndingBalance;
 use App\Models\EndingBalanceKoreksi;
 use App\Models\EndingBalanceKoreksiItem;
@@ -15,6 +16,7 @@ class EndingBalanceKoreksiService
     public function __construct(
         private readonly EndingBalanceService $ebService,
         private readonly InvoiceService $invoiceService,
+        private readonly FinanceNotificationService $financeNotificationService,
     ) {}
 
     /**
@@ -70,7 +72,10 @@ class EndingBalanceKoreksiService
                 $this->createKoreksiItems($koreksi, $data['items']);
             }
 
-            return $koreksi->fresh(['items']);
+            $submitted = $koreksi->fresh(['items']);
+            $this->financeNotificationService->ebKoreksiArSubmitted($submitted);
+
+            return $submitted;
         });
     }
 
@@ -89,7 +94,10 @@ class EndingBalanceKoreksiService
             'updated_by'      => $spvId,
         ]);
 
-        return $koreksi->fresh();
+        $updated = $koreksi->fresh();
+        $this->financeNotificationService->ebKoreksiArNeedsManager($updated);
+
+        return $updated;
     }
 
     /**
@@ -107,7 +115,10 @@ class EndingBalanceKoreksiService
             'updated_by'      => $spvId,
         ]);
 
-        return $koreksi->fresh();
+        $updated = $koreksi->fresh();
+        $this->financeNotificationService->ebKoreksiArRejected($updated, $note, 'spv');
+
+        return $updated;
     }
 
     /**
@@ -131,7 +142,10 @@ class EndingBalanceKoreksiService
 
             $this->ebService->recomputeFinal($koreksi->endingBalance);
 
-            return $koreksi->fresh();
+            $approved = $koreksi->fresh();
+            $this->financeNotificationService->ebKoreksiArApproved($approved);
+
+            return $approved;
         });
     }
 
@@ -150,7 +164,10 @@ class EndingBalanceKoreksiService
             'updated_by'          => $managerId,
         ]);
 
-        return $koreksi->fresh();
+        $rejected = $koreksi->fresh();
+        $this->financeNotificationService->ebKoreksiArRejected($rejected, $note, 'manager');
+
+        return $rejected;
     }
 
     /**
