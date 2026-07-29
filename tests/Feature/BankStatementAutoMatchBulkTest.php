@@ -52,6 +52,8 @@ class BankStatementAutoMatchBulkTest extends TestCase
             $table->unsignedInteger('jumlah_matched')->default(0);
             $table->unsignedInteger('jumlah_unmatched')->default(0);
             $table->unsignedBigInteger('uploaded_by')->nullable();
+            $table->boolean('is_committed')->default(true);
+            $table->uuid('import_batch_id')->nullable();
             $table->timestamps();
         });
 

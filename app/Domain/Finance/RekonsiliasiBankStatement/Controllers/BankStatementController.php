@@ -62,6 +62,7 @@ class BankStatementController extends Controller
         ]);
 
         BankStatementImportBatch::failStale();
+        BankStatementImportBatch::cancelAbandonedConfirmations();
 
         $path = $request->file('file')->store('bank-statement-imports');
 
@@ -85,6 +86,7 @@ class BankStatementController extends Controller
     public function importStatus(string $batch): JsonResponse
     {
         BankStatementImportBatch::failStale();
+        BankStatementImportBatch::cancelAbandonedConfirmations();
 
         $b = BankStatementImportBatch::find($batch);
         if (!$b) {
@@ -140,6 +142,29 @@ class BankStatementController extends Controller
             'batch_id' => $b->id,
             'status'   => $b->status,
         ], 'Import dilanjutkan.');
+    }
+
+    /**
+     * Dipanggil saat user menutup dialog overlap tanpa memilih "Ganti dengan
+     * File Baru" — tanpa endpoint ini, file upload & staging rows batch tersebut
+     * akan menggantung permanen (lihat BankStatementImportBatch::cancel()).
+     */
+    public function cancelImport(string $batch): JsonResponse
+    {
+        $b = BankStatementImportBatch::find($batch);
+        if (!$b) {
+            return $this->notFoundResponse('Batch import tidak ditemukan.');
+        }
+
+        $this->authorizeBatchAccess($b);
+
+        if ($b->status !== 'needs_confirmation') {
+            return $this->errorResponse('Batch ini tidak dapat dibatalkan.', 422);
+        }
+
+        $b->cancel('Import dibatalkan oleh pengguna.');
+
+        return $this->successResponse(null, 'Import dibatalkan.');
     }
 
     private function authorizeBatchAccess(BankStatementImportBatch $batch): void

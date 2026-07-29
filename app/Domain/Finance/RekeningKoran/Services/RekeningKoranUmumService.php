@@ -72,6 +72,11 @@ class RekeningKoranUmumService
         $query = BankStatementDetail::query()
             ->with(self::EAGER_LOADS)
             ->join('tb_bank_statement', 'tb_bank_statement_detail.bank_statement_id', '=', 'tb_bank_statement.id')
+            // Raw join ke tb_bank_statement tidak lewat Eloquent BankStatement, jadi
+            // global scope 'committed' model itu tidak otomatis berlaku di sini —
+            // filter eksplisit supaya laporan ini tidak pernah ikut menampilkan
+            // baris dari statement yang masih draft (belum selesai auto_matching).
+            ->where('tb_bank_statement.is_committed', true)
             ->select('tb_bank_statement_detail.*');
 
         // Filter periode berdasarkan tanggal transaksi bank

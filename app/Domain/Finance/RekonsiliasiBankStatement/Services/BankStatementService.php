@@ -859,7 +859,11 @@ class BankStatementService
         $matched   = BankStatementDetail::where('bank_statement_id', $statementId)->where('status_cocok', 'MATCHED')->count();
         $unmatched = BankStatementDetail::where('bank_statement_id', $statementId)->where('status_cocok', 'UNMATCHED')->count();
 
-        BankStatement::where('id', $statementId)->update([
+        // withoutGlobalScope('committed'): dipanggil juga oleh autoMatch() saat
+        // statement masih draft (is_committed=false, dalam transaksi
+        // BankStatementImportService::finalize()) — counter tetap harus ter-update
+        // meski statement belum "committed".
+        BankStatement::withoutGlobalScope('committed')->where('id', $statementId)->update([
             'jumlah_matched'   => $matched,
             'jumlah_unmatched' => $unmatched,
         ]);

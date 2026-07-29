@@ -93,4 +93,47 @@ class BankStatementImportBatch extends Model
                 'finished_at' => now(),
             ]);
     }
+
+    /**
+     * Batch yang berhenti di needs_confirmation (menunggu user memilih "Ganti
+     * dengan File Baru" di dialog overlap) tidak otomatis dibersihkan oleh
+     * ImportBankStatementJob::cleanup() — file upload & staging rows
+     * (tb_bank_statement_import_rows) sengaja dipertahankan untuk redispatch via
+     * confirm-replace. Kalau user menutup tab tanpa konfirmasi/batal, keduanya
+     * akan menggantung permanen. Safety net ini membersihkannya setelah dianggap
+     * ditinggalkan (default 60 menit sejak update terakhir).
+     */
+    public static function cancelAbandonedConfirmations(int $minutes = 60): int
+    {
+        $stale = static::where('status', 'needs_confirmation')
+            ->where('updated_at', '<', now()->subMinutes($minutes))
+            ->get();
+
+        foreach ($stale as $batch) {
+            $batch->cancel('Import dibatalkan otomatis karena tidak ada konfirmasi dalam ' . $minutes . ' menit.');
+        }
+
+        return $stale->count();
+    }
+
+    /**
+     * Hapus file upload + staging rows lalu tandai batch gagal dengan phase
+     * khusus 'canceled' (status tetap memakai enum 'failed' yang sudah ada —
+     * tidak perlu ALTER enum baru — dibedakan lewat phase & message).
+     */
+    public function cancel(string $message): void
+    {
+        if ($this->file_path) {
+            \Illuminate\Support\Facades\Storage::disk('local')->delete($this->file_path);
+        }
+
+        $this->rows()->delete();
+
+        $this->update([
+            'status'      => 'failed',
+            'phase'       => 'canceled',
+            'message'     => $message,
+            'finished_at' => now(),
+        ]);
+    }
 }

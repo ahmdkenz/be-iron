@@ -164,7 +164,15 @@ class BankStatementImportService
     {
         $batch->update(['phase' => 'saving']);
 
-        $statement = DB::transaction(function () use ($batch, $overlaps) {
+        // Seluruh alur create+insert+auto_matching+penandaan batch "completed"
+        // dibungkus SATU transaksi supaya atomic end-to-end: kalau worker mati di
+        // titik manapun sebelum commit, transaksi rollback total (tidak ada
+        // statement "setengah jadi" yang bocor), dan batch tetap di status lama
+        // sehingga BankStatementImportBatch::failStale() akan menandainya failed.
+        // is_committed=false→true di dalam transaksi yang sama juga jadi guardrail
+        // eksplisit tambahan (lihat global scope di model BankStatement) untuk
+        // seluruh query list/detail/laporan lain di luar modul ini.
+        DB::transaction(function () use ($batch, $overlaps) {
             if ($batch->force_replace) {
                 foreach ($overlaps as $existing) {
                     // Lepas tautan pembayaran/PDM/voucher AP yang sudah MATCHED lewat
@@ -189,6 +197,8 @@ class BankStatementImportService
                 'jumlah_matched'   => 0,
                 'jumlah_unmatched' => 0,
                 'uploaded_by'      => $batch->user_id,
+                'import_batch_id'  => $batch->id,
+                'is_committed'     => false,
             ]);
 
             $now = now();
@@ -218,18 +228,19 @@ class BankStatementImportService
 
             $this->bankStatementService->autoMatch($statement);
 
-            return $statement->fresh();
-        });
+            $statement->refresh();
+            $statement->update(['is_committed' => true]);
 
-        $batch->update([
-            'status'         => 'completed',
-            'phase'          => 'completed',
-            'inserted_rows'  => $statement->total_transaksi,
-            'matched_rows'   => $statement->jumlah_matched,
-            'unmatched_rows' => $statement->jumlah_unmatched,
-            'ignored_rows'   => max(0, $statement->total_transaksi - $statement->jumlah_matched - $statement->jumlah_unmatched),
-            'message'        => "Import berhasil: {$statement->total_transaksi} transaksi diproses.",
-            'finished_at'    => now(),
-        ]);
+            $batch->update([
+                'status'         => 'completed',
+                'phase'          => 'completed',
+                'inserted_rows'  => $statement->total_transaksi,
+                'matched_rows'   => $statement->jumlah_matched,
+                'unmatched_rows' => $statement->jumlah_unmatched,
+                'ignored_rows'   => max(0, $statement->total_transaksi - $statement->jumlah_matched - $statement->jumlah_unmatched),
+                'message'        => "Import berhasil: {$statement->total_transaksi} transaksi diproses.",
+                'finished_at'    => now(),
+            ]);
+        });
     }
 }

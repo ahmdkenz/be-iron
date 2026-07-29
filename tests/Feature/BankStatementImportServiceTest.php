@@ -103,6 +103,8 @@ class BankStatementImportServiceTest extends TestCase
             $table->unsignedInteger('jumlah_matched')->default(0);
             $table->unsignedInteger('jumlah_unmatched')->default(0);
             $table->unsignedBigInteger('uploaded_by')->nullable();
+            $table->boolean('is_committed')->default(true);
+            $table->uuid('import_batch_id')->nullable();
             $table->timestamps();
         });
 
@@ -204,6 +206,8 @@ class BankStatementImportServiceTest extends TestCase
         $this->assertSame(2, $statement->total_transaksi);
         $this->assertSame('2026-01-01', $statement->periode_awal->toDateString());
         $this->assertSame('2026-01-02', $statement->periode_akhir->toDateString());
+        $this->assertTrue((bool) $statement->is_committed);
+        $this->assertSame($batch->id, $statement->import_batch_id);
 
         $details = DB::table('tb_bank_statement_detail')->where('bank_statement_id', $statement->id)->get();
         $this->assertCount(2, $details);
@@ -286,5 +290,63 @@ class BankStatementImportServiceTest extends TestCase
 
         $newStatement = BankStatement::find($batch->bank_statement_id);
         $this->assertSame(2, $newStatement->total_transaksi);
+        $this->assertTrue((bool) $newStatement->is_committed);
+    }
+
+    public function test_cancel_marks_batch_failed_and_cleans_staging_and_file(): void
+    {
+        $path = $this->storeXlsx([
+            ['05/01/2026', 'Transfer masuk baru', 'TRF-NEW-1', '', '700000', '700000'],
+        ]);
+        $batch = $this->makeBatch($path, [
+            'status' => 'needs_confirmation',
+            'phase'  => 'needs_confirmation',
+        ]);
+        BankStatementImportRow::insert([
+            'batch_id' => $batch->id, 'row_number' => 1, 'tanggal' => '2026-01-05',
+            'keterangan' => 'x', 'debit' => 0, 'kredit' => 700000, 'saldo' => 700000,
+        ]);
+
+        $this->assertTrue(Storage::disk('local')->exists($path));
+        $this->assertSame(1, BankStatementImportRow::where('batch_id', $batch->id)->count());
+
+        $batch->cancel('Import dibatalkan oleh pengguna.');
+        $batch->refresh();
+
+        $this->assertSame('failed', $batch->status);
+        $this->assertSame('canceled', $batch->phase);
+        $this->assertSame('Import dibatalkan oleh pengguna.', $batch->message);
+        $this->assertNotNull($batch->finished_at);
+        $this->assertFalse(Storage::disk('local')->exists($path));
+        $this->assertSame(0, BankStatementImportRow::where('batch_id', $batch->id)->count());
+    }
+
+    public function test_cancel_abandoned_confirmations_cleans_up_stale_batches(): void
+    {
+        $path = $this->storeXlsx([
+            ['05/01/2026', 'Transfer masuk baru', 'TRF-NEW-1', '', '700000', '700000'],
+        ]);
+        $batch = $this->makeBatch($path, [
+            'status' => 'needs_confirmation',
+            'phase'  => 'needs_confirmation',
+        ]);
+        BankStatementImportRow::insert([
+            'batch_id' => $batch->id, 'row_number' => 1, 'tanggal' => '2026-01-05',
+            'keterangan' => 'x', 'debit' => 0, 'kredit' => 700000, 'saldo' => 700000,
+        ]);
+
+        // Simulasikan batch yang sudah lama ditinggal (updated_at melewati ambang).
+        DB::table('tb_bank_statement_import_batch')->where('id', $batch->id)
+            ->update(['updated_at' => now()->subMinutes(90)]);
+
+        $count = BankStatementImportBatch::cancelAbandonedConfirmations(60);
+
+        $this->assertSame(1, $count);
+
+        $batch->refresh();
+        $this->assertSame('failed', $batch->status);
+        $this->assertSame('canceled', $batch->phase);
+        $this->assertFalse(Storage::disk('local')->exists($path));
+        $this->assertSame(0, BankStatementImportRow::where('batch_id', $batch->id)->count());
     }
 }
