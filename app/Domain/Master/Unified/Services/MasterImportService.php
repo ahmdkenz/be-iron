@@ -148,7 +148,13 @@ class MasterImportService
 
                 $namaInvestor  = trim($firstCell);
                 $namaCabang    = trim((string) $col($row, 'nama_cabang'));
-                $tipeKlien     = strtoupper(trim((string) $col($row, 'tipe_klien')));
+                $tipeKlienRaw  = trim((string) $col($row, 'tipe_klien'));
+                $tipeKlienNorm = $this->normalizeTipeKlien($tipeKlienRaw);
+                $tipeKlien     = $tipeKlienNorm['value'] ?? '';
+                if ($tipeKlienNorm['error']) {
+                    $errors[] = ['sheet' => 'MASTER DATA', 'row' => $lineNumber, 'message' => '[Client] ' . $tipeKlienNorm['error']];
+                    $kliFail++;
+                }
                 $status        = $this->parseStatus(trim((string) $col($row, 'status')));
                 $investorFailed = false;
 
@@ -991,6 +997,31 @@ class MasterImportService
     {
         if ($raw === '') return true;
         return in_array(strtolower($raw), ['aktif', '1', 'true', 'yes', 'ya']);
+    }
+
+    /**
+     * Normalisasi alias B2C/B2B pada kolom Excel tipe_klien menjadi kontrak internal
+     * RESTO/PT yang dipakai KlienAr.tipe_klien di seluruh sistem — B2C selalu berarti
+     * RESTO, B2B selalu berarti PT. Kosong tetap valid (baris ini tidak membuat Client AR);
+     * hanya nilai non-kosong yang tidak dikenali yang dianggap error.
+     *
+     * @return array{value: ?string, error: ?string}
+     */
+    private function normalizeTipeKlien(string $raw): array
+    {
+        $s = strtoupper(trim($raw));
+        if ($s === '') {
+            return ['value' => '', 'error' => null];
+        }
+
+        if (in_array($s, ['RESTO', 'B2C', 'RESTO/B2C', 'B2C/RESTO'], true)) {
+            return ['value' => 'RESTO', 'error' => null];
+        }
+        if (in_array($s, ['PT', 'B2B', 'PT/B2B', 'B2B/PT'], true)) {
+            return ['value' => 'PT', 'error' => null];
+        }
+
+        return ['value' => null, 'error' => "tipe_klien harus RESTO/B2C atau PT/B2B (nilai '{$raw}' tidak dikenali)"];
     }
 
     private function normalizeStr(mixed $val): ?string

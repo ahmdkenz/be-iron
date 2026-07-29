@@ -539,6 +539,46 @@ class MasterImportServiceTest extends TestCase
     }
 
     // ──────────────────────────────────────────────────────────────
+    //  normalizeTipeKlien — alias B2C/B2B untuk RESTO/PT
+    // ──────────────────────────────────────────────────────────────
+
+    public function test_normalize_tipe_klien_resto_aliases(): void
+    {
+        foreach (['RESTO', 'B2C', 'RESTO/B2C', 'B2C/RESTO', 'resto', 'b2c'] as $raw) {
+            $result = $this->invoke('normalizeTipeKlien', $raw);
+            $this->assertSame('RESTO', $result['value'], "gagal untuk input '{$raw}'");
+            $this->assertNull($result['error']);
+        }
+    }
+
+    public function test_normalize_tipe_klien_pt_aliases(): void
+    {
+        foreach (['PT', 'B2B', 'PT/B2B', 'B2B/PT', 'pt', 'b2b'] as $raw) {
+            $result = $this->invoke('normalizeTipeKlien', $raw);
+            $this->assertSame('PT', $result['value'], "gagal untuk input '{$raw}'");
+            $this->assertNull($result['error']);
+        }
+    }
+
+    public function test_normalize_tipe_klien_empty_is_valid_and_means_no_klien(): void
+    {
+        $result = $this->invoke('normalizeTipeKlien', '');
+
+        $this->assertSame('', $result['value']);
+        $this->assertNull($result['error']);
+    }
+
+    public function test_normalize_tipe_klien_invalid_value_returns_error(): void
+    {
+        $result = $this->invoke('normalizeTipeKlien', 'CV');
+
+        $this->assertNull($result['value']);
+        $this->assertNotNull($result['error']);
+        $this->assertStringContainsString('RESTO/B2C', $result['error']);
+        $this->assertStringContainsString('PT/B2B', $result['error']);
+    }
+
+    // ──────────────────────────────────────────────────────────────
     //  normalizeHeaderName
     // ──────────────────────────────────────────────────────────────
 
