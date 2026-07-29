@@ -123,11 +123,27 @@ class BankStatementController extends Controller
             return $this->errorResponse('Batch ini tidak sedang menunggu konfirmasi.', 422);
         }
 
+        // Reset counter juga di sini (bukan cuma di awal run()) supaya polling
+        // pertama SETELAH klik "Ganti dengan File Baru" — sebelum job baru
+        // sempat dieksekusi worker — tidak sempat menampilkan sisa angka dari
+        // proses sebelumnya (mis. total_rows/processed_rows lama).
         $b->update([
-            'force_replace' => true,
-            'status'        => 'queued',
-            'phase'         => 'queued',
-            'message'       => null,
+            'force_replace'     => true,
+            'status'            => 'queued',
+            'phase'             => 'queued',
+            'message'           => null,
+            'total_rows'        => 0,
+            'processed_rows'    => 0,
+            'inserted_rows'     => 0,
+            'matched_rows'      => 0,
+            'unmatched_rows'    => 0,
+            'ignored_rows'      => 0,
+            'error_rows'        => 0,
+            'total_kredit'      => 0,
+            'bank_statement_id' => null,
+            'overlaps'          => null,
+            'errors'            => null,
+            'finished_at'       => null,
         ]);
 
         ImportBankStatementJob::dispatch($b->id);

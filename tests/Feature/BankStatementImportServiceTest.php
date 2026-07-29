@@ -293,6 +293,42 @@ class BankStatementImportServiceTest extends TestCase
         $this->assertTrue((bool) $newStatement->is_committed);
     }
 
+    public function test_run_resets_stale_counters_left_over_from_a_previous_run(): void
+    {
+        // Simulasikan batch yang sebelumnya sempat diproses (mis. file besar lalu
+        // confirm-replace) sehingga menyisakan counter besar di kolom-kolom ini.
+        // Tanpa reset di awal run(), counter lama ini akan ikut terbaca FE lewat
+        // polling sebelum job baru sempat menimpanya — sumber bug "24020 / 15770".
+        $path  = $this->storeXlsx([
+            ['01/01/2026', 'Transfer masuk', 'TRF001', '', '500000', '500000'],
+            ['02/01/2026', 'Transfer keluar', 'TRF002', '50000', '', '450000'],
+        ]);
+        $batch = $this->makeBatch($path, [
+            'total_rows'     => 15770,
+            'processed_rows' => 24020,
+            'inserted_rows'  => 15770,
+            'matched_rows'   => 9000,
+            'unmatched_rows' => 6770,
+            'ignored_rows'   => 100,
+            'error_rows'     => 3,
+            'total_kredit'   => 999999999,
+            'errors'         => [['row' => 1, 'message' => 'error lama']],
+        ]);
+
+        $this->service()->run($batch);
+        $batch->refresh();
+
+        $this->assertSame('completed', $batch->status);
+        $this->assertSame(2, $batch->total_rows);
+        $this->assertSame(2, $batch->processed_rows);
+        $this->assertSame(2, $batch->inserted_rows);
+        $this->assertSame(0, $batch->matched_rows);
+        $this->assertSame(2, $batch->unmatched_rows);
+        $this->assertSame(0, $batch->error_rows);
+        $this->assertEmpty($batch->errors);
+        $this->assertEqualsWithDelta(500000.0, (float) $batch->total_kredit, 0.01);
+    }
+
     public function test_cancel_marks_batch_failed_and_cleans_staging_and_file(): void
     {
         $path = $this->storeXlsx([

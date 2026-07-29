@@ -31,11 +31,28 @@ class BankStatementImportService
 
     public function run(BankStatementImportBatch $batch): void
     {
+        // Reset penuh counter batch di setiap run() — termasuk saat confirm-replace
+        // mendispatch job ulang untuk batch yang sama. Tanpa ini, sisa counter dari
+        // proses sebelumnya (mis. processed_rows dari scan file, total_rows dari
+        // parse lama) ikut terbaca FE sebelum job baru sempat menimpanya, sehingga
+        // muncul angka tidak masuk akal seperti "24020 / 15770".
         $batch->update([
-            'status'      => 'processing',
-            'phase'       => 'parsing',
-            'started_at'  => $batch->started_at ?? now(),
-            'message'     => null,
+            'status'            => 'processing',
+            'phase'             => 'parsing',
+            'started_at'        => now(),
+            'finished_at'       => null,
+            'message'           => null,
+            'total_rows'        => 0,
+            'processed_rows'    => 0,
+            'inserted_rows'     => 0,
+            'matched_rows'      => 0,
+            'unmatched_rows'    => 0,
+            'ignored_rows'      => 0,
+            'error_rows'        => 0,
+            'total_kredit'      => 0,
+            'bank_statement_id' => null,
+            'overlaps'          => null,
+            'errors'            => null,
         ]);
 
         // Job tidak retry-safe (tries=1) dan confirm-replace mendispatch ulang dari
@@ -121,7 +138,18 @@ class BankStatementImportService
             return;
         }
 
-        $batch->update(['phase' => 'validating', 'total_rows' => $rowNumber, 'total_kredit' => $totalKredit]);
+        // processed_rows selama parsing menghitung baris FILE yang di-scan (termasuk
+        // baris kosong/footer yang bukan transaksi), sedangkan total_rows di sini
+        // adalah jumlah transaksi VALID. Begitu parsing selesai dan jumlah valid
+        // diketahui, samakan processed_rows = total_rows supaya fase-fase berikutnya
+        // (validating/checking_overlap/saving/auto_matching) tidak menampilkan sisa
+        // angka scan yang lebih besar dari total transaksi.
+        $batch->update([
+            'phase'          => 'validating',
+            'total_rows'     => $rowNumber,
+            'processed_rows' => $rowNumber,
+            'total_kredit'   => $totalKredit,
+        ]);
 
         $periode = BankStatementImportRow::where('batch_id', $batch->id)
             ->selectRaw('MIN(tanggal) as periode_awal, MAX(tanggal) as periode_akhir')
