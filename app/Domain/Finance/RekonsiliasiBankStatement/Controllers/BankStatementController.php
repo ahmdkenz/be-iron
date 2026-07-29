@@ -61,9 +61,6 @@ class BankStatementController extends Controller
             'file'      => ['required', 'file', 'mimes:xlsx,xls', 'max:10240'],
         ]);
 
-        BankStatementImportBatch::failStale();
-        BankStatementImportBatch::cancelAbandonedConfirmations();
-
         $path = $request->file('file')->store('bank-statement-imports');
 
         $batch = BankStatementImportBatch::create([
@@ -85,9 +82,6 @@ class BankStatementController extends Controller
 
     public function importStatus(string $batch): JsonResponse
     {
-        BankStatementImportBatch::failStale();
-        BankStatementImportBatch::cancelAbandonedConfirmations();
-
         $b = BankStatementImportBatch::find($batch);
         if (!$b) {
             return $this->notFoundResponse('Batch import tidak ditemukan.');

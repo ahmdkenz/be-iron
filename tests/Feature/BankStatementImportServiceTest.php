@@ -349,4 +349,22 @@ class BankStatementImportServiceTest extends TestCase
         $this->assertFalse(Storage::disk('local')->exists($path));
         $this->assertSame(0, BankStatementImportRow::where('batch_id', $batch->id)->count());
     }
+
+    public function test_cleanup_stale_imports_command_marks_stale_processing_batch_as_failed(): void
+    {
+        $path  = $this->storeXlsx([
+            ['05/01/2026', 'Transfer masuk baru', 'TRF-NEW-2', '', '700000', '700000'],
+        ]);
+        $batch = $this->makeBatch($path, ['status' => 'processing', 'phase' => 'saving']);
+
+        // Simulasikan worker yang mati di tengah proses (updated_at melewati ambang 35 menit).
+        DB::table('tb_bank_statement_import_batch')->where('id', $batch->id)
+            ->update(['updated_at' => now()->subMinutes(40)]);
+
+        $this->artisan('bank-statement:cleanup-stale-imports')->assertSuccessful();
+
+        $batch->refresh();
+        $this->assertSame('failed', $batch->status);
+        $this->assertSame('failed', $batch->phase);
+    }
 }

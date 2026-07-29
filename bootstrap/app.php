@@ -40,6 +40,15 @@ return Application::configure(basePath: dirname(__DIR__))
         $schedule->command('queue:work database --queue=bank-statement,invoice-import,default --stop-when-empty --tries=1 --timeout=1800')
             ->everyMinute()
             ->withoutOverlapping();
+
+        // Menggantikan pemanggilan failStale()/cancelAbandonedConfirmations() yang
+        // sebelumnya inline di BankStatementController: dipanggil di setiap request
+        // polling importStatus() (tiap 2.5 detik dari FE), query UPDATE-nya sempat
+        // mengunci baris batch yang sedang aktif ditulis oleh transaksi finalize()
+        // milik queue worker → deadlock SQLSTATE[40001] → 500 di polling FE.
+        $schedule->command('bank-statement:cleanup-stale-imports')
+            ->everyFiveMinutes()
+            ->withoutOverlapping();
     })
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->api(prepend: [
