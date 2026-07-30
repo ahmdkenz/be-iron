@@ -595,39 +595,6 @@ class MasterImportServiceTest extends TestCase
         $this->assertSame('kode_resto', $this->invoke('normalizeHeaderName', ' Kode_Resto '));
     }
 
-    // ──────────────────────────────────────────────────────────────
-    //  parseSheet — header bertanda (*)
-    // ──────────────────────────────────────────────────────────────
-
-    public function test_parse_sheet_detects_header_with_mandatory_marker(): void
-    {
-        $spreadsheet = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
-        $sheet = $spreadsheet->getActiveSheet();
-        $sheet->setCellValue('A1', 'TEMPLATE IMPORT MASTER DATA'); // baris judul, harus dilewati
-        $sheet->setCellValue('A2', 'nama_investor (*)');
-        $sheet->setCellValue('B2', 'ktp');
-        $sheet->setCellValue('A3', 'Investor Satu');
-        $sheet->setCellValue('B3', '1234567890');
-
-        $rows = $this->invoke('parseSheet', $sheet, 'nama_investor', 2);
-
-        $this->assertCount(2, $rows); // baris header + 1 baris data
-        $this->assertSame('nama_investor (*)', $rows[0][0]);
-        $this->assertSame('Investor Satu', $rows[1][0]);
-    }
-
-    public function test_parse_sheet_detects_header_without_marker_backward_compat(): void
-    {
-        $spreadsheet = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
-        $sheet = $spreadsheet->getActiveSheet();
-        $sheet->setCellValue('A1', 'nama_investor');
-        $sheet->setCellValue('A2', 'Investor Dua');
-
-        $rows = $this->invoke('parseSheet', $sheet, 'nama_investor', 1);
-
-        $this->assertCount(2, $rows);
-        $this->assertSame('Investor Dua', $rows[1][0]);
-    }
 
     // ──────────────────────────────────────────────────────────────
     //  resolveKaryawanIdByNameOrNik
@@ -917,35 +884,100 @@ class MasterImportServiceTest extends TestCase
     }
 
     // ──────────────────────────────────────────────────────────────
-    //  xlsxCellToString
+    //  xlsxRawValueToString
     // ──────────────────────────────────────────────────────────────
 
-    private function makeCell(mixed $value, ?string $numberFormat = null): \PhpOffice\PhpSpreadsheet\Cell\Cell
+    public function test_xlsx_raw_value_plain_integer_stays_numeric(): void
+    {
+        $this->assertSame('45414', $this->invoke('xlsxRawValueToString', 45414));
+    }
+
+    public function test_xlsx_raw_value_text_date_stays_as_text(): void
+    {
+        $this->assertSame('02-05-2024', $this->invoke('xlsxRawValueToString', '02-05-2024'));
+    }
+
+    public function test_xlsx_raw_value_null_returns_empty_string(): void
+    {
+        $this->assertSame('', $this->invoke('xlsxRawValueToString', null));
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    //  detectMasterHeaderStart (menggantikan parseSheet lama)
+    // ──────────────────────────────────────────────────────────────
+
+    public function test_detect_master_header_start_with_mandatory_marker(): void
     {
         $spreadsheet = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
-        $sheet       = $spreadsheet->getActiveSheet();
-        $sheet->setCellValue('A1', $value);
-        if ($numberFormat !== null) {
-            $sheet->getStyle('A1')->getNumberFormat()->setFormatCode($numberFormat);
+        $sheet = $spreadsheet->getActiveSheet();
+        $sheet->setCellValue('A1', 'TEMPLATE IMPORT MASTER DATA'); // baris judul, harus dilewati
+        $sheet->setCellValue('A2', 'nama_investor (*)');
+        $sheet->setCellValue('B2', 'ktp');
+        $sheet->setCellValue('A3', 'Investor Satu');
+        $sheet->setCellValue('B3', '1234567890');
+
+        $detected = $this->invoke('detectMasterHeaderStart', $sheet, 'nama_investor', 2);
+
+        $this->assertTrue($detected['found']);
+        $this->assertSame(3, $detected['dataStart']); // header di baris 2 -> data mulai baris 3
+        $this->assertSame('nama_investor (*)', $detected['headerRow'][0]);
+        $this->assertSame('ktp', $detected['headerRow'][1]);
+    }
+
+    public function test_detect_master_header_start_without_marker_backward_compat(): void
+    {
+        $spreadsheet = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+        $sheet->setCellValue('A1', 'nama_investor');
+        $sheet->setCellValue('A2', 'Investor Dua');
+
+        $detected = $this->invoke('detectMasterHeaderStart', $sheet, 'nama_investor', 1);
+
+        $this->assertTrue($detected['found']);
+        $this->assertSame(2, $detected['dataStart']); // header di baris 1 -> data mulai baris 2
+        $this->assertSame('nama_investor', $detected['headerRow'][0]);
+    }
+
+    public function test_detect_master_header_start_returns_not_found_when_header_missing(): void
+    {
+        $spreadsheet = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
+        $spreadsheet->getActiveSheet()->setCellValue('A1', 'Bukan template sama sekali');
+
+        $detected = $this->invoke('detectMasterHeaderStart', $spreadsheet->getActiveSheet(), 'nama_investor', 2);
+
+        $this->assertFalse($detected['found']);
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    //  chunkMasterRows — batas antar-chunk
+    // ──────────────────────────────────────────────────────────────
+
+    public function test_chunk_master_rows_preserves_all_rows_across_chunk_boundaries(): void
+    {
+        $spreadsheet = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+        $sheet->setCellValue('A1', 'TEMPLATE IMPORT MASTER DATA');
+        $sheet->setCellValue('A2', 'nama_investor (*)');
+        $sheet->setCellValue('B2', 'ktp');
+
+        $expected = [];
+        for ($i = 1; $i <= 5; $i++) {
+            $row = $i + 2; // data mulai baris 3
+            $sheet->setCellValue("A{$row}", "Investor {$i}");
+            $sheet->setCellValue("B{$row}", "KTP{$i}");
+            $expected[] = ["Investor {$i}", "KTP{$i}"];
         }
-        return $sheet->getCell('A1');
-    }
 
-    public function test_xlsx_cell_date_formatted_serial_converts_to_ymd(): void
-    {
-        $cell = $this->makeCell(45414, \PhpOffice\PhpSpreadsheet\Style\NumberFormat::FORMAT_DATE_DDMMYYYY);
-        $this->assertSame('2024-05-02', $this->invoke('xlsxCellToString', $cell));
-    }
+        $detected = $this->invoke('detectMasterHeaderStart', $sheet, 'nama_investor', 2);
+        $this->assertTrue($detected['found']);
+        $this->assertSame(3, $detected['dataStart']);
+        $this->assertSame(5, max(0, $detected['highestRow'] - $detected['dataStart'] + 1));
 
-    public function test_xlsx_cell_plain_integer_without_date_format_stays_numeric(): void
-    {
-        $cell = $this->makeCell(45414);
-        $this->assertSame('45414', $this->invoke('xlsxCellToString', $cell));
-    }
+        $collected = [];
+        $this->invoke('chunkMasterRows', $sheet, $detected['dataStart'], $detected['highestColumn'], 2,
+            function (array $cells) use (&$collected) { $collected[] = $cells; });
 
-    public function test_xlsx_cell_text_date_stays_as_text(): void
-    {
-        $cell = $this->makeCell('02-05-2024');
-        $this->assertSame('02-05-2024', $this->invoke('xlsxCellToString', $cell));
+        $this->assertCount(5, $collected, 'Tidak boleh ada baris hilang/dobel di batas antar-chunk (chunkSize=2 vs 5 baris data).');
+        $this->assertSame($expected, $collected);
     }
 }

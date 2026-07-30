@@ -38,6 +38,14 @@ class MasterImportService
 {
     private const CHUNK = 100;
 
+    /**
+     * Jumlah baris yang dibaca per rangeToArray()/removeRow() saat parsing sheet.
+     * Terpisah dari CHUNK (interval commit DB) karena removeRow() punya overhead
+     * per panggilan (menggeser row dimension/merge/cell collection di bawahnya),
+     * jadi sengaja dibuat lebih jarang. Lihat komentar sama di InvoiceImportService.
+     */
+    private const PARSE_CHUNK = 1000;
+
     public function __construct(
         private readonly InvestorService $investorService,
         private readonly RestoService    $restoService,
@@ -51,16 +59,23 @@ class MasterImportService
             throw new \RuntimeException("File import tidak ditemukan: {$batch->file_path}");
         }
 
-        $fullPath    = $disk->path($batch->file_path);
-        $spreadsheet = IOFactory::load($fullPath);
+        $fullPath = $disk->path($batch->file_path);
+        $reader   = IOFactory::createReaderForFile($fullPath);
+        $reader->setReadDataOnly(true);
+        $spreadsheet = $reader->load($fullPath);
 
         $batch->update(['status' => 'processing']);
 
         $errors = [];
 
-        $this->processMasterDataSheet($spreadsheet, $batch, $errors);
-        $this->processMasterBarangSheet($spreadsheet, $batch, $errors);
-        $this->noticeInvoiceSheetIgnored($spreadsheet, $errors);
+        try {
+            $this->processMasterDataSheet($spreadsheet, $batch, $errors);
+            $this->processMasterBarangSheet($spreadsheet, $batch, $errors);
+            $this->noticeInvoiceSheetIgnored($spreadsheet, $errors);
+        } finally {
+            $spreadsheet->disconnectWorksheets();
+            unset($spreadsheet);
+        }
 
         $batch->update([
             'status'  => 'completed',
@@ -81,15 +96,15 @@ class MasterImportService
             return;
         }
 
-        $sheet = $spreadsheet->getSheet($sheetIndex);
-        $rows  = $this->parseSheet($sheet, 'nama_investor', 27);
+        $sheet    = $spreadsheet->getSheet($sheetIndex);
+        $detected = $this->detectMasterHeaderStart($sheet, 'nama_investor', 27);
 
-        if (empty($rows)) {
+        if (!$detected['found']) {
             $errors[] = ['sheet' => 'MASTER DATA', 'row' => 0, 'message' => 'Header "nama_investor" tidak ditemukan di sheet MASTER DATA.'];
             return;
         }
 
-        $headerRow = array_map(fn($c) => $this->normalizeHeaderName((string) $c), $rows[0] ?? []);
+        $headerRow = array_map(fn($c) => $this->normalizeHeaderName((string) $c), $detected['headerRow']);
         if (in_array('nama_klien', $headerRow)) {
             $errors[] = ['sheet' => 'MASTER DATA', 'row' => 0, 'message' => 'Template lama masih memiliki kolom nama_klien. Download template terbaru.'];
             return;
@@ -100,7 +115,7 @@ class MasterImportService
         $col = static fn(array $row, string $name): mixed =>
             $row[$headerIdxMap[$name] ?? -1] ?? '';
 
-        $batch->update(['master_total' => count($rows)]);
+        $batch->update(['master_total' => max(0, $detected['highestRow'] - $detected['dataStart'] + 1)]);
 
         // Preload referensi
         $actingUserId     = $batch->user_id;
@@ -114,17 +129,23 @@ class MasterImportService
         $karyawanNameById = $karyawanRecords->pluck('nama_karyawan', 'id')->all();
         $perusahaanMap    = $this->buildPerusahaanMap();
 
-        $invIns  = $invUpd  = $invFail  = 0;
-        $resIns  = $resUpd  = $resFail  = 0;
-        $kliIns  = $kliUpd  = $kliFail  = $kliSkip = 0;
-        $processed     = 0;
-        $lineNumber    = 0;
-        $headerSkipped = false;
-        $inChunk       = 0;
+        $invIns = $invUpd = $invFail = 0;
+        $resIns = $resUpd = $resFail = 0;
+        $kliIns = $kliUpd = $kliFail = $kliSkip = 0;
+        $processed  = 0;
+        $lineNumber = 1; // header sudah "dikonsumsi" secara virtual (lihat detectMasterHeaderStart)
+        $inChunk    = 0;
 
         DB::beginTransaction();
         try {
-            foreach ($rows as $row) {
+            $this->chunkMasterRows($sheet, $detected['dataStart'], $detected['highestColumn'], self::PARSE_CHUNK,
+                function (array $row) use (
+                    &$errors, &$inChunk, &$processed, &$lineNumber,
+                    &$invIns, &$invUpd, &$invFail, &$resIns, &$resUpd, &$resFail,
+                    &$kliIns, &$kliUpd, &$kliFail, &$kliSkip,
+                    &$karyawanMap, &$karyawanNameById,
+                    $col, $batch, $actingUserId, $brandMap, $karyawanNikMap, $perusahaanMap,
+                ) {
                 if ($inChunk >= self::CHUNK) {
                     DB::commit();
                     $batch->update([
@@ -141,10 +162,9 @@ class MasterImportService
                 $inChunk++;
 
                 $firstCell = trim((string) ($row[0] ?? ''));
-                if (str_starts_with($firstCell, '#')) continue;
-                if (!$headerSkipped) { $headerSkipped = true; continue; }
-                if (str_starts_with($firstCell, '[CONTOH]')) continue;
-                if ($firstCell === '' && count(array_filter(array_map('strval', $row))) === 0) continue;
+                if (str_starts_with($firstCell, '#')) return;
+                if (str_starts_with($firstCell, '[CONTOH]')) return;
+                if ($firstCell === '' && count(array_filter(array_map('strval', $row))) === 0) return;
 
                 $namaInvestor  = trim($firstCell);
                 $namaCabang    = trim((string) $col($row, 'nama_cabang'));
@@ -496,7 +516,8 @@ class MasterImportService
                         }
                     }
                 }
-            }
+                }
+            );
             DB::commit();
         } catch (\Throwable $e) {
             if (DB::transactionLevel() > 0) DB::rollBack();
@@ -523,33 +544,37 @@ class MasterImportService
             return;
         }
 
-        $sheet = $spreadsheet->getSheet($sheetIndex);
-        $rows  = $this->parseSheet($sheet, 'kode_barang', 6);
+        $sheet    = $spreadsheet->getSheet($sheetIndex);
+        $detected = $this->detectMasterHeaderStart($sheet, 'kode_barang', 6);
 
-        if (empty($rows)) {
+        if (!$detected['found']) {
             $errors[] = ['sheet' => 'MASTER BARANG', 'row' => 0, 'message' => 'Header "kode_barang" tidak ditemukan di sheet MASTER BARANG.'];
             return;
         }
 
         // Header-based column lookup — toleran terhadap template lama yang masih memiliki kolom nama_brand
-        $headerRow    = array_map(fn($c) => $this->normalizeHeaderName((string) $c), $rows[0] ?? []);
+        $headerRow    = array_map(fn($c) => $this->normalizeHeaderName((string) $c), $detected['headerRow']);
         $headerIdxMap = array_flip($headerRow);
         $col = static fn(array $row, string $name): mixed =>
             $row[$headerIdxMap[$name] ?? -1] ?? '';
 
-        $batch->update(['barang_total' => count($rows)]);
+        $batch->update(['barang_total' => max(0, $detected['highestRow'] - $detected['dataStart'] + 1)]);
 
         $actingUserId = $batch->user_id;
 
         $brgIns = $brgUpd = $brgSkip = $brgFail = 0;
-        $processed     = 0;
-        $lineNumber    = 0;
-        $headerSkipped = false;
-        $inChunk       = 0;
+        $processed  = 0;
+        $lineNumber = 1; // header sudah "dikonsumsi" secara virtual (lihat detectMasterHeaderStart)
+        $inChunk    = 0;
 
         DB::beginTransaction();
         try {
-            foreach ($rows as $row) {
+            $this->chunkMasterRows($sheet, $detected['dataStart'], $detected['highestColumn'], self::PARSE_CHUNK,
+                function (array $row) use (
+                    &$errors, &$inChunk, &$processed, &$lineNumber,
+                    &$brgIns, &$brgUpd, &$brgSkip, &$brgFail,
+                    $col, $batch, $actingUserId,
+                ) {
                 if ($inChunk >= self::CHUNK) {
                     DB::commit();
                     $batch->update([
@@ -567,10 +592,9 @@ class MasterImportService
                 $inChunk++;
 
                 $firstCell = trim((string) ($row[0] ?? ''));
-                if (str_starts_with($firstCell, '#')) continue;
-                if (!$headerSkipped) { $headerSkipped = true; continue; }
-                if (str_starts_with($firstCell, '[CONTOH]')) continue;
-                if ($firstCell === '' && count(array_filter(array_map('strval', $row))) === 0) continue;
+                if (str_starts_with($firstCell, '#')) return;
+                if (str_starts_with($firstCell, '[CONTOH]')) return;
+                if ($firstCell === '' && count(array_filter(array_map('strval', $row))) === 0) return;
 
                 $rawKode   = strtoupper(trim((string) $col($row, 'kode_barang')));
                 $rawNama   = trim((string) $col($row, 'nama_barang'));
@@ -594,7 +618,7 @@ class MasterImportService
                 if ($validator->fails()) {
                     $errors[] = ['sheet' => 'MASTER BARANG', 'row' => $lineNumber, 'message' => implode('; ', $validator->errors()->all())];
                     $brgFail++;
-                    continue;
+                    return;
                 }
 
                 // kode_barang adalah identitas unik barang — nama_barang bisa sama untuk produk berbeda (varian/kategori berbeda)
@@ -628,7 +652,8 @@ class MasterImportService
                     $errors[] = ['sheet' => 'MASTER BARANG', 'row' => $lineNumber, 'message' => 'Gagal menyimpan: ' . $e->getMessage()];
                     $brgFail++;
                 }
-            }
+                }
+            );
             DB::commit();
         } catch (\Throwable $e) {
             if (DB::transactionLevel() > 0) DB::rollBack();
@@ -681,33 +706,63 @@ class MasterImportService
         return null;
     }
 
-    private function parseSheet(\PhpOffice\PhpSpreadsheet\Worksheet\Worksheet $sheet, string $headerFirstCol, int $maxCols): array
-    {
-        $rows        = [];
-        $headerFound = false;
+    /**
+     * Preview-scan (maks $previewRows baris pertama) untuk menemukan baris header
+     * berdasarkan isi kolom pertama, TANPA memuat seluruh sheet ke satu array PHP.
+     * Menggantikan parseSheet() lama — lihat komentar PARSE_CHUNK di atas.
+     *
+     * @return array{found: bool, dataStart: int, highestColumn: string, highestRow: int, headerRow: array<int,string>}
+     */
+    private function detectMasterHeaderStart(
+        \PhpOffice\PhpSpreadsheet\Worksheet\Worksheet $sheet,
+        string $headerFirstCol,
+        int $maxCols,
+        int $previewRows = 100,
+    ): array {
+        $highestRow   = $sheet->getHighestRow();
+        $maxColLetter = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($maxCols);
+        $previewEnd   = min($previewRows, $highestRow);
 
-        foreach ($sheet->getRowIterator() as $rowObj) {
-            $cellIter = $rowObj->getCellIterator();
-            $cellIter->setIterateOnlyExistingCells(false);
+        $preview = $sheet->rangeToArray("A1:{$maxColLetter}{$previewEnd}", null, true, false, false);
 
-            $cells = [];
-            foreach ($cellIter as $cell) {
-                $cells[] = $this->xlsxCellToString($cell);
+        foreach ($preview as $idx => $cells) {
+            $firstCell = trim($this->xlsxRawValueToString($cells[0] ?? ''));
+            if ($this->normalizeHeaderName($firstCell) === strtolower($headerFirstCol)) {
+                return [
+                    'found'         => true,
+                    'dataStart'     => $idx + 2, // 0-based idx -> baris header 1-based -> baris data pertama
+                    'highestColumn' => $maxColLetter,
+                    'highestRow'    => $highestRow,
+                    'headerRow'     => array_map(fn ($c) => $this->xlsxRawValueToString($c), $cells),
+                ];
             }
-            $cells     = array_slice($cells, 0, $maxCols);
-            $firstCell = trim($cells[0] ?? '');
-
-            if (!$headerFound) {
-                if ($this->normalizeHeaderName($firstCell) === strtolower($headerFirstCol)) {
-                    $headerFound = true;
-                    $rows[]      = $cells;
-                }
-                continue;
-            }
-            $rows[] = $cells;
         }
 
-        return $rows;
+        return ['found' => false, 'dataStart' => 0, 'highestColumn' => $maxColLetter, 'highestRow' => $highestRow, 'headerRow' => []];
+    }
+
+    /**
+     * Baca baris data mulai $dataStart per $chunkSize baris via rangeToArray(), panggil
+     * $onRow(array $cells) per baris, lalu lepas baris yang sudah diproses lewat removeRow()
+     * supaya memori tidak menumpuk. removeRow() menggeser baris di bawahnya naik, jadi chunk
+     * berikutnya SELALU dibaca ulang dari $dataStart yang tetap — pola sama seperti
+     * InvoiceImportService::chunkInvoiceRows() / AbstractBankParser::runChunkedRows().
+     */
+    private function chunkMasterRows(
+        \PhpOffice\PhpSpreadsheet\Worksheet\Worksheet $sheet,
+        int $dataStart, string $highestColumn, int $chunkSize, callable $onRow,
+    ): void {
+        while (($currentHighest = $sheet->getHighestRow()) >= $dataStart) {
+            $end   = min($dataStart + $chunkSize - 1, $currentHighest);
+            $count = $end - $dataStart + 1;
+            $rows  = $sheet->rangeToArray("A{$dataStart}:{$highestColumn}{$end}", null, true, false, false);
+
+            foreach ($rows as $rawRow) {
+                $onRow(array_map(fn ($c) => $this->xlsxRawValueToString($c), $rawRow));
+            }
+
+            $sheet->removeRow($dataStart, $count);
+        }
     }
 
     /** @return array{0: array<string,int>, 1: array<string,int>} [ktp => investor_id, npwp => investor_id] */
@@ -948,17 +1003,17 @@ class MasterImportService
         return implode(' | ', $parts) ?: 'Import selesai.';
     }
 
-    private function xlsxCellToString(\PhpOffice\PhpSpreadsheet\Cell\Cell $cell): string
+    /**
+     * Konversi nilai mentah dari rangeToArray() (bukan lagi objek Cell — setReadDataOnly(true)
+     * tidak memuat style, jadi info format tanggal cell tidak tersedia). Cabang isDateTime()
+     * versi lama sengaja dihilangkan: importDate() sudah punya fallback numerik sendiri yang
+     * menghasilkan tanggal identik untuk cell bertipe serial number.
+     */
+    private function xlsxRawValueToString(mixed $value): string
     {
-        $value = $cell->getValue();
-        if ($value === null)    return '';
-        if (is_bool($value))   return $value ? '1' : '0';
-
-        if ((is_int($value) || is_float($value)) && PhpSpreadsheetDate::isDateTime($cell)) {
-            return PhpSpreadsheetDate::excelToDateTimeObject($value)->format('Y-m-d');
-        }
-
-        if (is_int($value))    return (string) $value;
+        if ($value === null)  return '';
+        if (is_bool($value))  return $value ? '1' : '0';
+        if (is_int($value))   return (string) $value;
         if (is_float($value)) {
             return fmod($value, 1.0) === 0.0 ? sprintf('%.0f', $value) : (string) $value;
         }

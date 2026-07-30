@@ -19,6 +19,9 @@ class InvoiceImportServiceTest extends TestCase
 {
     private InvoiceImportService $service;
 
+    /** @var string[] */
+    private array $tmpFiles = [];
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -29,6 +32,40 @@ class InvoiceImportServiceTest extends TestCase
             $this->createMock(EndingBalanceService::class),
             $this->createMock(EndingBalanceKoreksiService::class),
         );
+    }
+
+    protected function tearDown(): void
+    {
+        foreach ($this->tmpFiles as $file) {
+            if (file_exists($file)) {
+                unlink($file);
+            }
+        }
+        parent::tearDown();
+    }
+
+    /** Reflection generik untuk memanggil private method — dipakai test CSV baru di bawah. */
+    private function invoke(string $method, mixed ...$args): mixed
+    {
+        $m = (new \ReflectionClass($this->service))->getMethod($method);
+        $m->setAccessible(true);
+
+        return $m->invoke($this->service, ...$args);
+    }
+
+    /** Tulis $rows ke file CSV sementara (dibersihkan di tearDown), kembalikan path-nya. */
+    private function buildCsv(array $rows, string $delimiter = ';'): string
+    {
+        $path = tempnam(sys_get_temp_dir(), 'invoice_csv_test_') . '.csv';
+        $this->tmpFiles[] = $path;
+
+        $handle = fopen($path, 'w');
+        foreach ($rows as $row) {
+            fputcsv($handle, $row, $delimiter);
+        }
+        fclose($handle);
+
+        return $path;
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -562,5 +599,74 @@ class InvoiceImportServiceTest extends TestCase
 
         $this->assertNull($klien);
         $this->assertStringContainsString('tidak ditemukan', $error);
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    //  Parsing CSV native (scanCsvHeaderAndCount / chunkCsvRows)
+    // ──────────────────────────────────────────────────────────────
+
+    private function sampleCsvRows(): array
+    {
+        return [
+            ['# TEMPLATE IMPORT MASTER INVOICE (B2B & B2C)'],
+            ['# Baris instruksi kedua, isinya bebas.'],
+            ['nama_klien (*)', 'tanggal_invoice (*)', 'tanggal_jatuh_tempo', 'no_surat_jalan', 'keterangan_invoice',
+                'no_invoice_resto', 'kode_resto (*)', 'nama_resto', 'kode_barang', 'nama_barang (*)',
+                'qty (*)', 'satuan', 'harga_satuan (*)', 'tipe_invoice (*)'],
+            ['Klien Satu', '01-06-2026', '30-06-2026', 'SJ-001', '', '', 'KD-001', 'Resto Satu', 'BRG-001', 'Barang A', '10', 'pcs', '1000', 'B2C'],
+            ['', '', '', '', '', '', '', '', '', '', '', '', '', ''], // baris kosong, harus dilewati
+            ['Klien Satu', '01-06-2026', '30-06-2026', 'SJ-001', '', '', 'KD-001', 'Resto Satu', 'BRG-002', 'Barang B', '5', 'kg', '2000', 'B2C'],
+            ['Klien Dua', '02-06-2026', '30-06-2026', '', '', 'SI-001', 'KD-002', 'Resto Dua', 'BRG-003', 'Barang C', '3', 'pcs', '3000', 'B2B'],
+        ];
+    }
+
+    public function test_scan_csv_header_and_count_menemukan_header_dan_total_baris_benar(): void
+    {
+        $file = $this->buildCsv($this->sampleCsvRows());
+
+        $scan = $this->invoke('scanCsvHeaderAndCount', $file);
+
+        $this->assertSame(2, $scan['headerLineIdx']); // 0-based: baris ke-3 (setelah 2 baris instruksi)
+        $this->assertSame(4, $scan['totalRows']);      // 4 baris setelah header (termasuk 1 baris kosong)
+        $this->assertSame(';', $scan['delimiter']);
+    }
+
+    public function test_chunk_csv_rows_tidak_kehilangan_atau_menduplikasi_baris(): void
+    {
+        $file = $this->buildCsv($this->sampleCsvRows());
+        $scan = $this->invoke('scanCsvHeaderAndCount', $file);
+
+        $collected = [];
+        $this->invoke('chunkCsvRows', $file, $scan['headerLineIdx'] + 1, $scan['delimiter'],
+            function (array $row) use (&$collected) { $collected[] = $row[0] ?? ''; });
+
+        $this->assertCount(4, $collected, 'Tidak boleh ada baris hilang/dobel (termasuk baris kosong).');
+        $this->assertSame(['Klien Satu', '', 'Klien Satu', 'Klien Dua'], $collected);
+    }
+
+    public function test_csv_delimiter_koma_dan_titik_koma_menghasilkan_hasil_identik(): void
+    {
+        $rows = $this->sampleCsvRows();
+
+        $fileSemicolon = $this->buildCsv($rows, ';');
+        $fileComma     = $this->buildCsv($rows, ',');
+
+        $scanSemicolon = $this->invoke('scanCsvHeaderAndCount', $fileSemicolon);
+        $scanComma     = $this->invoke('scanCsvHeaderAndCount', $fileComma);
+
+        $this->assertSame(';', $scanSemicolon['delimiter']);
+        $this->assertSame(',', $scanComma['delimiter']);
+        $this->assertSame($scanSemicolon['headerLineIdx'], $scanComma['headerLineIdx']);
+        $this->assertSame($scanSemicolon['totalRows'], $scanComma['totalRows']);
+
+        $collect = function (string $file, array $scan): array {
+            $rows = [];
+            $this->invoke('chunkCsvRows', $file, $scan['headerLineIdx'] + 1, $scan['delimiter'],
+                function (array $row) use (&$rows) { $rows[] = $row; });
+
+            return $rows;
+        };
+
+        $this->assertSame($collect($fileSemicolon, $scanSemicolon), $collect($fileComma, $scanComma));
     }
 }

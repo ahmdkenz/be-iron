@@ -13,7 +13,7 @@ use App\Support\Helpers\RoleHelper;
 use App\Support\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Symfony\Component\HttpFoundation\BinaryFileResponse;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 /**
  * Tab "Import Master Invoice".
@@ -33,34 +33,46 @@ class InvoiceImportController extends Controller
 
     public function __construct(private readonly InvoiceImportService $service) {}
 
-    public function template(InvoiceImportTemplateService $templates): BinaryFileResponse|JsonResponse
+    public function template(InvoiceImportTemplateService $templates): StreamedResponse
     {
-        if (!class_exists('ZipArchive')) {
-            return $this->errorResponse('Ekstensi PHP "zip" tidak aktif. Aktifkan extension=zip pada php.ini lalu restart server.', 500);
-        }
-
-        return response()
-            ->download($templates->build(), 'template-import-master-invoice.xlsx', [
-                'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            ])
-            ->deleteFileAfterSend(true);
+        return response()->streamDownload(function () use ($templates) {
+            $handle = fopen('php://output', 'w');
+            fprintf($handle, chr(0xEF) . chr(0xBB) . chr(0xBF)); // UTF-8 BOM
+            foreach ($templates->buildRows() as $row) {
+                // Titik koma, bukan koma — locale Excel Indonesia pakai ";" sebagai list
+                // separator sistem (koma dipakai untuk desimal), jadi file terbuka
+                // langsung terbagi rapi per kolom tanpa perlu "Data > From Text/CSV".
+                fputcsv($handle, $row, ';');
+            }
+            fclose($handle);
+        }, 'template-import-master-invoice.csv', [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+        ]);
     }
 
     public function store(Request $request): JsonResponse
     {
-        if (!class_exists('ZipArchive')) {
-            return $this->errorResponse('Ekstensi PHP "zip" tidak aktif. Aktifkan extension=zip pada php.ini lalu restart server.', 500);
-        }
-
         if ($denied = $this->guard()) {
             return $denied;
         }
 
         $request->validate([
-            'file' => ['required', 'file', 'mimes:xlsx,xls', 'max:10240'],
+            // csv juga sering dikirim dengan MIME text/plain oleh browser/OS, jadi 'txt' ikut diterima.
+            'file' => ['required', 'file', 'mimes:csv,txt', 'max:10240'],
         ]);
 
         InvoiceImportBatch::failStale();
+
+        $active = InvoiceImportBatch::whereNotIn('status', ['completed', 'failed'])
+            ->orderByDesc('created_at')
+            ->first();
+        if ($active) {
+            return $this->errorResponse(
+                "Masih ada proses import invoice yang belum selesai (\"{$active->original_filename}\", status: {$active->status}). " .
+                'Selesaikan atau tunggu batch tersebut dulu sebelum upload file baru — mengunggah bersamaan berisiko membuat invoice terduplikasi.',
+                409,
+            );
+        }
 
         $file = $request->file('file');
 
