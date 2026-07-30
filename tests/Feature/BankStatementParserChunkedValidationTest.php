@@ -94,6 +94,65 @@ class BankStatementParserChunkedValidationTest extends TestCase
         $this->assertStringContainsString('Nominal', $errorsByRow[8]['message']);
     }
 
+    public function test_parse_in_chunks_treats_two_digit_year_with_dash_as_year_2000_plus(): void
+    {
+        $file = $this->buildXlsx([
+            ['10-12-26', 'Transfer masuk dash 2 digit tahun', 'TRF100', '', '500000', '500000'],
+        ]);
+
+        $parser = new GenericBankParser(BankColumnMapping::get('GENERAL'));
+
+        $allRows   = [];
+        $allErrors = [];
+        $parser->parseInChunks($file, function (array $rows, array $errors, int $scanned) use (&$allRows, &$allErrors) {
+            array_push($allRows, ...$rows);
+            array_push($allErrors, ...$errors);
+        }, chunkSize: 500);
+
+        $this->assertSame([], $allErrors, 'Tidak boleh ada error untuk tanggal dd-mm-yy yang valid.');
+        $this->assertCount(1, $allRows);
+        $this->assertSame('2026-12-10', $allRows[0]['tanggal'], 'Tahun 2 digit "26" harus jadi 2026, bukan 0026.');
+    }
+
+    public function test_parse_in_chunks_supports_all_documented_date_formats_without_year_corruption(): void
+    {
+        // [raw tanggal di kolom sumber, tanggal ISO yang diharapkan]
+        $cases = [
+            ['10122026', '2026-12-10'],           // dmY
+            ['10/12/2026', '2026-12-10'],          // d/m/Y
+            ['10-12-2026', '2026-12-10'],          // d-m-Y (4 digit — regresi guard)
+            ['2026-12-10', '2026-12-10'],          // Y-m-d
+            ['10/12/26', '2026-12-10'],            // d/m/y
+            ['10-12-26', '2026-12-10'],            // d-m-y (BARU — kasus bug utama)
+            ['10 Dec 2026', '2026-12-10'],         // d M Y
+            ['10-Dec-2026', '2026-12-10'],         // d-M-Y
+            ['10 December 2026', '2026-12-10'],    // d F Y
+            ['2026/12/10', '2026-12-10'],          // Y/m/d
+        ];
+
+        $rows = [];
+        foreach ($cases as $i => [$raw, $expected]) {
+            $rows[] = [$raw, "Baris {$i}", "REF{$i}", '', '100000', '100000'];
+        }
+
+        $file   = $this->buildXlsx($rows);
+        $parser = new GenericBankParser(BankColumnMapping::get('GENERAL'));
+
+        $allRows   = [];
+        $allErrors = [];
+        $parser->parseInChunks($file, function (array $r, array $e, int $s) use (&$allRows, &$allErrors) {
+            array_push($allRows, ...$r);
+            array_push($allErrors, ...$e);
+        }, chunkSize: 3); // chunkSize kecil supaya lintas-batas chunk ikut teruji
+
+        $this->assertSame([], $allErrors);
+        $this->assertCount(count($cases), $allRows);
+
+        foreach ($cases as $i => [$raw, $expected]) {
+            $this->assertSame($expected, $allRows[$i]['tanggal'], "Format gagal untuk raw=\"{$raw}\"");
+        }
+    }
+
     public function test_parse_in_chunks_throws_when_header_not_detected(): void
     {
         $spreadsheet = new Spreadsheet();

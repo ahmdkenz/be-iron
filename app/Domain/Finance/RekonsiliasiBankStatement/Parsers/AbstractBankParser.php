@@ -211,7 +211,15 @@ abstract class AbstractBankParser implements BankParserInterface
         // Coba format teks DULU — termasuk DDMMYYYY (format template upload)
         // Excel serial realistis (2000–2050) berkisar 36.000–73.000 (5 digit),
         // tidak akan menabrak DDMMYYYY yang 8 digit.
-        foreach (['dmY', 'd/m/Y', 'd-m-Y', 'Y-m-d', 'd/m/y', 'd M Y', 'd-M-Y', 'd F Y', 'Y/m/d'] as $fmt) {
+        //
+        // hasFormat() dipakai sebagai guard SEBELUM createFromFormat() karena
+        // createFromFormat() menerima input yang jumlah digitnya tidak sesuai
+        // spesifier (mis. 'd-m-Y' menerima tahun 2 digit "26" apa adanya sebagai
+        // tahun 26 Masehi, bukan 2026, alih-alih melempar exception).
+        foreach (['dmY', 'd/m/Y', 'd-m-Y', 'Y-m-d', 'd/m/y', 'd-m-y', 'd M Y', 'd-M-Y', 'd F Y', 'Y/m/d'] as $fmt) {
+            if (!Carbon::hasFormat($raw, $fmt)) {
+                continue;
+            }
             try {
                 return Carbon::createFromFormat($fmt, $raw)->format('Y-m-d');
             } catch (\Exception) {}
