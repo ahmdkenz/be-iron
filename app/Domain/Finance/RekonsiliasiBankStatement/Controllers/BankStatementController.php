@@ -200,6 +200,7 @@ class BankStatementController extends Controller
             'page'     => ['nullable', 'integer', 'min:1'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
             'status'   => ['nullable', 'string', 'in:SEMUA,MATCHED,UNMATCHED,POSSIBLE,DIABAIKAN'],
+            'search'   => ['nullable', 'string', 'max:100'],
         ]);
 
         $result = $this->service->paginateDetails(
@@ -207,6 +208,7 @@ class BankStatementController extends Controller
             $request->string('status') ?: null,
             $request->integer('page', 1),
             $request->integer('per_page', 25),
+            $request->string('search') ?: null,
         );
 
         // Kontrak flat {data:[...], meta:{...}} (bukan {header, rows, meta}

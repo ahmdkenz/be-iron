@@ -171,13 +171,17 @@ class BankStatementService
         ];
     }
 
-    public function paginateDetails(BankStatement $statement, ?string $status, int $page, int $perPage): array
+    public function paginateDetails(BankStatement $statement, ?string $status, int $page, int $perPage, ?string $search = null): array
     {
         $query = BankStatementDetail::with($this->detailEagerLoads())
             ->where('bank_statement_id', $statement->id);
 
         if ($status && $status !== 'SEMUA') {
             $query->where('status_cocok', $status);
+        }
+
+        if ($search) {
+            $query->where('no_referensi', 'LIKE', '%'.$search.'%');
         }
 
         $paginator = $query->orderBy('tanggal')->orderBy('id')->paginate($perPage, ['*'], 'page', $page);
