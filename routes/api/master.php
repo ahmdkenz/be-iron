@@ -37,5 +37,9 @@ Route::middleware('role:ADMIN|MANAGER|SUPERVISOR')->group(function () {
 Route::apiResource('perusahaan', PerusahaanController::class);
 Route::apiResource('investor', InvestorController::class);
 Route::apiResource('resto', RestoController::class);
-Route::apiResource('brand', BrandController::class);
+
+Route::middleware('role:ADMIN|MANAGER|SUPERVISOR')->group(function () {
+    Route::apiResource('brand', BrandController::class);
+});
+
 Route::apiResource('barang', BarangController::class);
