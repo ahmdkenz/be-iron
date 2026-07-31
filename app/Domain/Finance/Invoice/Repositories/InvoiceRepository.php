@@ -155,12 +155,17 @@ class InvoiceRepository
 
     public function getSummary(array $filters = []): array
     {
+        // total_tagihan/sisa_tagihan per invoice sudah kumulatif (mencakup carry-over
+        // dari invoice sebelumnya milik klien yang sama dalam bulan yang sama), jadi
+        // tidak boleh langsung di-SUM lintas invoice — akan menghitung ulang nominal
+        // yang sama berkali-kali. Pakai subtotal (murni milik invoice ini) dan sisa
+        // milik invoice ini sendiri (bukan field sisa_tagihan yang kumulatif).
         $result = $this->applyFilters(Invoice::query(), $filters)
             ->selectRaw('
                 COUNT(*) as total_invoice,
-                COALESCE(SUM(total_tagihan), 0) as total_tagihan,
+                COALESCE(SUM(subtotal), 0) as total_tagihan,
                 COALESCE(SUM(total_pembayaran), 0) as total_pembayaran,
-                COALESCE(SUM(sisa_tagihan), 0) as total_sisa
+                COALESCE(SUM(GREATEST(0, subtotal - total_pembayaran - total_penyesuaian)), 0) as total_sisa
             ')
             ->first();
 
@@ -176,23 +181,29 @@ class InvoiceRepository
     {
         $today = now()->toDateString();
 
+        // sisa_tagihan (kumulatif, termasuk carry-over dari invoice lain milik klien
+        // yang sama dalam bulan yang sama) tidak boleh langsung di-SUM lintas invoice
+        // di GROUP BY klien_ar_id ini — akan double-count. Pakai ulang milik invoice
+        // itu sendiri (subtotal - pembayaran - penyesuaian) sebagai gantinya.
+        $ownSisa = 'GREATEST(0, subtotal - total_pembayaran - total_penyesuaian)';
+
         $rows = $this->applyFilters(Invoice::query()->with(['klienAr.perusahaan', 'klienAr.karyawanAr.perusahaan', 'klienAr.resto']), $filters)
-            ->selectRaw('
+            ->selectRaw("
                 klien_ar_id,
                 COUNT(*) as total_invoice,
-                COALESCE(SUM(total_tagihan), 0) as total_tagihan,
+                COALESCE(SUM(subtotal), 0) as total_tagihan,
                 COALESCE(SUM(total_pembayaran), 0) as total_pembayaran,
-                COALESCE(SUM(sisa_tagihan), 0) as sisa_tagihan,
-                SUM(CASE WHEN sisa_tagihan > 0 THEN 1 ELSE 0 END) as outstanding_invoice,
-                SUM(CASE WHEN sisa_tagihan > 0 AND tanggal_jatuh_tempo IS NOT NULL AND tanggal_jatuh_tempo < ? THEN 1 ELSE 0 END) as overdue_invoice,
-                COALESCE(SUM(CASE WHEN sisa_tagihan > 0 AND tanggal_jatuh_tempo IS NOT NULL AND tanggal_jatuh_tempo < ? THEN sisa_tagihan ELSE 0 END), 0) as overdue_amount,
-                MIN(CASE WHEN sisa_tagihan > 0 THEN tanggal_invoice ELSE NULL END) as invoice_tertua_tanggal,
-                MIN(CASE WHEN sisa_tagihan > 0 THEN tanggal_jatuh_tempo ELSE NULL END) as jatuh_tempo_terdekat,
-                SUM(CASE WHEN status = "DRAFT"    THEN 1 ELSE 0 END) as draft,
-                SUM(CASE WHEN status = "TERKIRIM" THEN 1 ELSE 0 END) as terkirim,
-                SUM(CASE WHEN status = "SEBAGIAN" THEN 1 ELSE 0 END) as sebagian,
-                SUM(CASE WHEN status = "LUNAS"    THEN 1 ELSE 0 END) as lunas
-            ', [$today, $today])
+                COALESCE(SUM($ownSisa), 0) as sisa_tagihan,
+                SUM(CASE WHEN $ownSisa > 0 THEN 1 ELSE 0 END) as outstanding_invoice,
+                SUM(CASE WHEN $ownSisa > 0 AND tanggal_jatuh_tempo IS NOT NULL AND tanggal_jatuh_tempo < ? THEN 1 ELSE 0 END) as overdue_invoice,
+                COALESCE(SUM(CASE WHEN $ownSisa > 0 AND tanggal_jatuh_tempo IS NOT NULL AND tanggal_jatuh_tempo < ? THEN $ownSisa ELSE 0 END), 0) as overdue_amount,
+                MIN(CASE WHEN $ownSisa > 0 THEN tanggal_invoice ELSE NULL END) as invoice_tertua_tanggal,
+                MIN(CASE WHEN $ownSisa > 0 THEN tanggal_jatuh_tempo ELSE NULL END) as jatuh_tempo_terdekat,
+                SUM(CASE WHEN status = \"DRAFT\"    THEN 1 ELSE 0 END) as draft,
+                SUM(CASE WHEN status = \"TERKIRIM\" THEN 1 ELSE 0 END) as terkirim,
+                SUM(CASE WHEN status = \"SEBAGIAN\" THEN 1 ELSE 0 END) as sebagian,
+                SUM(CASE WHEN status = \"LUNAS\"    THEN 1 ELSE 0 END) as lunas
+            ", [$today, $today])
             ->groupBy('klien_ar_id')
             ->get();
 

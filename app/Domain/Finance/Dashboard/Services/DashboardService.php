@@ -29,6 +29,18 @@ class DashboardService
         $klienIds   = (clone $klienQuery)->pluck('id');
         $invoiceQuery = Invoice::query()->whereIn('klien_ar_id', $klienIds);
 
+        // total_tagihan/sisa_tagihan per invoice sudah kumulatif (carry-over dari
+        // invoice lain milik klien yang sama dalam bulan yang sama), jadi tidak boleh
+        // langsung di-SUM lintas invoice — pakai subtotal & sisa milik invoice itu
+        // sendiri agar tidak double-count.
+        $invoiceAgg = (clone $invoiceQuery)
+            ->selectRaw('
+                COALESCE(SUM(subtotal), 0) as total_tagihan,
+                COALESCE(SUM(total_pembayaran), 0) as total_pembayaran,
+                COALESCE(SUM(GREATEST(0, subtotal - total_pembayaran - total_penyesuaian)), 0) as total_sisa
+            ')
+            ->first();
+
         return [
             'scope' => 'AR',
             'pic_ar' => [
@@ -44,9 +56,9 @@ class DashboardService
                     ->distinct()
                     ->count('resto_id'),
                 'total_invoice'     => (clone $invoiceQuery)->count(),
-                'total_tagihan'     => (float) (clone $invoiceQuery)->sum('total_tagihan'),
-                'total_pembayaran'  => (float) (clone $invoiceQuery)->sum('total_pembayaran'),
-                'total_sisa'        => (float) (clone $invoiceQuery)->sum('sisa_tagihan'),
+                'total_tagihan'     => (float) ($invoiceAgg?->total_tagihan ?? 0),
+                'total_pembayaran'  => (float) ($invoiceAgg?->total_pembayaran ?? 0),
+                'total_sisa'        => (float) ($invoiceAgg?->total_sisa ?? 0),
             ],
             'status_breakdown' => $this->buildStatusBreakdown($invoiceQuery),
             'monthly_trend'    => $this->buildMonthlyTrend($months, $klienIds),
@@ -67,7 +79,7 @@ class DashboardService
         $baseQuery = $invoiceQuery ? clone $invoiceQuery : Invoice::query()->whereRaw('1 = 0');
 
         $rows = (clone $baseQuery)
-            ->selectRaw('status, COUNT(*) as count, SUM(total_tagihan) as total_tagihan, SUM(sisa_tagihan) as total_sisa')
+            ->selectRaw('status, COUNT(*) as count, SUM(subtotal) as total_tagihan, SUM(GREATEST(0, subtotal - total_pembayaran - total_penyesuaian)) as total_sisa')
             ->groupBy('status')
             ->get()
             ->keyBy('status');
@@ -91,7 +103,7 @@ class DashboardService
         $endDate = $months->last()['end_date'];
 
         $invoiceTotals = Invoice::query()
-            ->selectRaw("DATE_FORMAT(tanggal_invoice, '%Y-%m') as month_key, SUM(total_tagihan) as total")
+            ->selectRaw("DATE_FORMAT(tanggal_invoice, '%Y-%m') as month_key, SUM(subtotal) as total")
             ->whereIn('klien_ar_id', $klienIds)
             ->whereBetween('tanggal_invoice', [$startDate, $endDate])
             ->groupBy('month_key')
@@ -202,7 +214,7 @@ class DashboardService
         $dateFormat = $granularity === 'daily' ? '%Y-%m-%d' : '%Y-%m';
 
         $invoiceTotals = Invoice::query()
-            ->selectRaw("DATE_FORMAT(tanggal_invoice, ?) as bucket_key, SUM(total_tagihan) as total", [$dateFormat])
+            ->selectRaw("DATE_FORMAT(tanggal_invoice, ?) as bucket_key, SUM(subtotal) as total", [$dateFormat])
             ->whereIn('klien_ar_id', $klienIds)
             ->whereBetween('tanggal_invoice', [$startDate, $endDate])
             ->groupBy('bucket_key')
