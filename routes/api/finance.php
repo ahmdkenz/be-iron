@@ -45,9 +45,11 @@ Route::prefix('invoices')->group(function () {
     // parameter {invoice} dan tidak pernah sampai ke sini.
     Route::get('/import-template',                  [InvoiceImportController::class, 'template']);
     Route::post('/import',                          [InvoiceImportController::class, 'store']);
+    Route::get('/import/active',                    [InvoiceImportController::class, 'active']);
     Route::get('/import/{batch}/status',            [InvoiceImportController::class, 'status']);
     Route::get('/import/{batch}/review',            [InvoiceImportController::class, 'review']);
     Route::post('/import/{batch}/apply-safe',       [InvoiceImportController::class, 'applySafe']);
+    Route::post('/import/{batch}/cancel',           [InvoiceImportController::class, 'cancel']);
     Route::post('/import/{batch}/submit-adjustments', [InvoiceImportController::class, 'submitAdjustments']);
 
     Route::get('/', [InvoiceController::class, 'index']);

@@ -91,6 +91,11 @@ class InvoiceImportController extends Controller
                 "Masih ada proses import invoice yang belum selesai (\"{$active->original_filename}\", status: {$active->status}). " .
                 'Selesaikan atau tunggu batch tersebut dulu sebelum upload file baru — mengunggah bersamaan berisiko membuat invoice terduplikasi.',
                 409,
+                [
+                    'batch_id'          => $active->id,
+                    'status'            => $active->status,
+                    'original_filename' => $active->original_filename,
+                ],
             );
         }
 
@@ -124,7 +129,28 @@ class InvoiceImportController extends Controller
             return $denied;
         }
 
-        return $this->successResponse($this->statusPayload($model));
+        return $this->successResponse($this->statusPayload($model->load('user.karyawan:id,nama_karyawan')));
+    }
+
+    /**
+     * Batch yang sedang memblokir upload baru (guard di store()), kalau ada.
+     * Dipakai FE untuk menemukan proaktif batch yang menggantung tanpa perlu
+     * tahu UUID-nya lebih dulu — sebelumnya cuma bisa lewat teks pesan 409.
+     */
+    public function active(): JsonResponse
+    {
+        if ($denied = $this->guard()) {
+            return $denied;
+        }
+
+        InvoiceImportBatch::failStale();
+
+        $model = InvoiceImportBatch::whereNotIn('status', ['completed', 'failed'])
+            ->orderByDesc('created_at')
+            ->with('user.karyawan:id,nama_karyawan')
+            ->first();
+
+        return $this->successResponse($model ? $this->statusPayload($model) : null);
     }
 
     /** Baris yang butuh keputusan user (paginated). */
@@ -217,6 +243,39 @@ class InvoiceImportController extends Controller
         ], "Memproses {$total} invoice aman di latar belakang.", 202);
     }
 
+    /**
+     * Batalkan batch yang menggantung di awaiting_review supaya upload baru
+     * (yang diblokir mutex global di store()) bisa lanjut.
+     *
+     * Sengaja HANYA diizinkan untuk awaiting_review: status queued/parsing/
+     * classifying punya job queue yang masih aktif jalan (membatalkan di
+     * tengah proses berisiko race — job bisa menimpa balik status atau
+     * menulis groups dari file yang sudah dihapus), dan processing sudah
+     * mulai menulis invoice sungguhan (tidak boleh diinterupsi).
+     */
+    public function cancel(string $batch): JsonResponse
+    {
+        if ($denied = $this->guard()) {
+            return $denied;
+        }
+
+        $model = InvoiceImportBatch::find($batch);
+        if (!$model) {
+            return $this->notFoundResponse('Batch import tidak ditemukan');
+        }
+        if ($model->status !== 'awaiting_review') {
+            return $this->errorResponse(
+                "Batch dengan status \"{$model->status}\" tidak bisa dibatalkan lewat sini. " .
+                'Hanya batch yang menunggu keputusan (awaiting_review) yang bisa dibatalkan — tunggu proses lain selesai.',
+                422,
+            );
+        }
+
+        $model->cancel(sprintf('Dibatalkan oleh %s.', auth()->user()?->username ?? 'pengguna'));
+
+        return $this->successResponse($this->statusPayload($model->fresh()), 'Import dibatalkan. Anda bisa mengunggah file baru sekarang.');
+    }
+
     /** Ajukan / abaikan kandidat penyesuaian untuk baris REVIEW_REQUIRED. */
     public function submitAdjustments(Request $request, string $batch): JsonResponse
     {
@@ -254,6 +313,9 @@ class InvoiceImportController extends Controller
             'phase'                  => $b->phase,
             'message'                => $b->message,
             'original_filename'      => $b->original_filename,
+            'user_id'                => $b->user_id,
+            'uploaded_by'            => $b->user?->karyawan?->nama_karyawan ?? $b->user?->username,
+            'created_at'             => optional($b->created_at)->toIso8601String(),
             'total_rows'             => $b->total_rows,
             'parsed_rows'            => $b->parsed_rows,
             'total_groups'           => $b->total_groups,

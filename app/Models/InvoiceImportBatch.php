@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Facades\Storage;
 
 class InvoiceImportBatch extends Model
 {
@@ -122,5 +123,38 @@ class InvoiceImportBatch extends Model
                 'message'     => 'Import terhenti tak terduga (worker kemungkinan dihentikan server). Silakan ulangi upload.',
                 'finished_at' => now(),
             ]);
+    }
+
+    /**
+     * Batalkan batch yang menggantung di awaiting_review — hapus file upload +
+     * seluruh staging (groups & rows) lalu tandai gagal dengan phase khusus
+     * 'canceled' (status tetap memakai enum 'failed' yang sudah ada, dibedakan
+     * lewat phase & message). Batch (header) TIDAK dihapus supaya tetap ada
+     * jejak audit siapa upload apa dan kenapa dibatalkan.
+     *
+     * CN/DN yang sudah diajukan lewat submitAdjustments() sebelum pembatalan
+     * TIDAK ikut terhapus — koreksinya sudah jadi record independen di
+     * tb_ending_balance_koreksi (referensi dari group->koreksi, bukan
+     * sebaliknya) dan tetap lanjut ke alur approval Ending Balance.
+     *
+     * rows() dihapus SEBELUM groups() dengan sengaja: FK group_id pada
+     * tb_invoice_import_rows cuma nullOnDelete (bukan cascade), jadi kalau
+     * groups dihapus duluan baris rows akan jadi orphan permanen.
+     */
+    public function cancel(string $message): void
+    {
+        if ($this->file_path) {
+            Storage::disk('local')->delete($this->file_path);
+        }
+
+        $this->rows()->delete();
+        $this->groups()->delete();
+
+        $this->update([
+            'status'      => 'failed',
+            'phase'       => 'canceled',
+            'message'     => $message,
+            'finished_at' => now(),
+        ]);
     }
 }
