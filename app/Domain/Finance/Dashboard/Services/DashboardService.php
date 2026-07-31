@@ -240,14 +240,26 @@ class DashboardService
         $klienIds     = KlienAr::query()->pluck('id');
         $invoiceQuery = Invoice::query()->whereIn('klien_ar_id', $klienIds);
 
+        // total_tagihan/sisa_tagihan per invoice sudah kumulatif (carry-over dari
+        // invoice lain milik klien yang sama dalam bulan yang sama), jadi tidak boleh
+        // langsung di-SUM lintas invoice — pakai subtotal & sisa milik invoice itu
+        // sendiri agar tidak double-count.
+        $invoiceAgg = (clone $invoiceQuery)
+            ->selectRaw('
+                COALESCE(SUM(subtotal), 0) as total_tagihan,
+                COALESCE(SUM(total_pembayaran), 0) as total_pembayaran,
+                COALESCE(SUM(GREATEST(0, subtotal - total_pembayaran - total_penyesuaian)), 0) as total_sisa
+            ')
+            ->first();
+
         return [
             'scope' => 'GLOBAL',
             'summary' => [
                 'total_klien'       => KlienAr::where('status', true)->count(),
                 'total_invoice'     => (clone $invoiceQuery)->count(),
-                'total_tagihan'     => (float) (clone $invoiceQuery)->sum('total_tagihan'),
-                'total_pembayaran'  => (float) (clone $invoiceQuery)->sum('total_pembayaran'),
-                'total_sisa'        => (float) (clone $invoiceQuery)->sum('sisa_tagihan'),
+                'total_tagihan'     => (float) ($invoiceAgg?->total_tagihan ?? 0),
+                'total_pembayaran'  => (float) ($invoiceAgg?->total_pembayaran ?? 0),
+                'total_sisa'        => (float) ($invoiceAgg?->total_sisa ?? 0),
             ],
             'status_breakdown' => $this->buildStatusBreakdown($invoiceQuery),
             'monthly_trend'    => $this->buildTrend($buckets, $klienIds, $granularity),
@@ -285,9 +297,20 @@ class DashboardService
             ->where('sisa_tagihan', '>', 0)
             ->whereNotIn('status', ['DRAFT', 'LUNAS']);
 
-        $totalTagihan    = (float) Invoice::whereIn('klien_ar_id', $klienIds)->sum('total_tagihan');
-        $totalPembayaran = (float) Invoice::whereIn('klien_ar_id', $klienIds)->sum('total_pembayaran');
-        $totalSisa       = (float) Invoice::whereIn('klien_ar_id', $klienIds)->sum('sisa_tagihan');
+        // total_tagihan/sisa_tagihan per invoice sudah kumulatif (carry-over), tidak
+        // boleh langsung di-SUM lintas invoice — pakai subtotal & sisa milik invoice
+        // itu sendiri agar tidak double-count.
+        $invoiceAgg = Invoice::whereIn('klien_ar_id', $klienIds)
+            ->selectRaw('
+                COALESCE(SUM(subtotal), 0) as total_tagihan,
+                COALESCE(SUM(total_pembayaran), 0) as total_pembayaran,
+                COALESCE(SUM(GREATEST(0, subtotal - total_pembayaran - total_penyesuaian)), 0) as total_sisa
+            ')
+            ->first();
+
+        $totalTagihan    = (float) ($invoiceAgg?->total_tagihan ?? 0);
+        $totalPembayaran = (float) ($invoiceAgg?->total_pembayaran ?? 0);
+        $totalSisa       = (float) ($invoiceAgg?->total_sisa ?? 0);
         $totalInvoice    = Invoice::whereIn('klien_ar_id', $klienIds)->count();
 
         // Collection Rate: gunakan (tagihan - sisa) agar tidak melebihi 100% saat invoice overpaid
@@ -318,17 +341,21 @@ class DashboardService
 
     private function buildAgingSummaryForKpi(Collection $klienIds, Carbon $today): array
     {
+        // sisa_tagihan per invoice sudah kumulatif (carry-over dari invoice lain milik
+        // klien yang sama dalam bulan yang sama) — kalau dipakai apa adanya di sini,
+        // invoice lama yang belum lunas ikut terhitung ulang di bucket umur invoice
+        // baru yang mewarisi carryover-nya. Pakai sisa milik invoice itu sendiri.
         $invoices = Invoice::query()
             ->whereIn('klien_ar_id', $klienIds)
-            ->where('sisa_tagihan', '>', 0)
+            ->whereRaw('GREATEST(0, subtotal - total_pembayaran - total_penyesuaian) > 0')
             ->whereNotIn('status', ['LUNAS'])
-            ->get(['tanggal_invoice', 'sisa_tagihan']);
+            ->get(['tanggal_invoice', 'subtotal', 'total_pembayaran', 'total_penyesuaian']);
 
         $buckets = ['current' => 0.0, 'hari_1_30' => 0.0, 'hari_31_60' => 0.0, 'hari_61_90' => 0.0, 'hari_91_plus' => 0.0];
 
         foreach ($invoices as $inv) {
             $ageDays = Carbon::parse($inv->tanggal_invoice)->startOfDay()->diffInDays($today, false);
-            $sisa    = (float) $inv->sisa_tagihan;
+            $sisa    = max(0.0, (float) $inv->subtotal - (float) $inv->total_pembayaran - (float) $inv->total_penyesuaian);
 
             if ($ageDays <= 0) {
                 $buckets['current'] += $sisa;
@@ -348,9 +375,12 @@ class DashboardService
 
     public function buildTopClients(int $limit = 5): array
     {
+        // sisa_tagihan/total_tagihan per invoice sudah kumulatif (carry-over), tidak
+        // boleh langsung di-SUM lintas invoice per klien — pakai subtotal & sisa
+        // milik invoice itu sendiri agar tidak double-count.
         return KlienAr::query()
             ->join('tb_invoice', 'tb_klien_ar.id', '=', 'tb_invoice.klien_ar_id')
-            ->selectRaw('tb_klien_ar.id, tb_klien_ar.nama_klien, tb_klien_ar.kode_klien, SUM(tb_invoice.sisa_tagihan) as total_sisa, SUM(tb_invoice.total_tagihan) as total_tagihan, COUNT(tb_invoice.id) as jumlah_invoice')
+            ->selectRaw('tb_klien_ar.id, tb_klien_ar.nama_klien, tb_klien_ar.kode_klien, SUM(GREATEST(0, tb_invoice.subtotal - tb_invoice.total_pembayaran - tb_invoice.total_penyesuaian)) as total_sisa, SUM(tb_invoice.subtotal) as total_tagihan, COUNT(tb_invoice.id) as jumlah_invoice')
             ->where('tb_klien_ar.status', true)
             ->groupBy('tb_klien_ar.id', 'tb_klien_ar.nama_klien', 'tb_klien_ar.kode_klien')
             ->having('total_sisa', '>', 0)
