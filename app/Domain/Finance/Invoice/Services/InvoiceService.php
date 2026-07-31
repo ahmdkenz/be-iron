@@ -60,6 +60,11 @@ class InvoiceService
         return $this->repository->getAll($filters);
     }
 
+    public function getExportIds(array $filters = []): Collection
+    {
+        return $this->repository->getIdsForExport($filters);
+    }
+
     public function findOrFail(int $id): Invoice
     {
         $invoice = $this->repository->findById($id);

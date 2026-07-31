@@ -55,6 +55,7 @@ Route::prefix('invoices')->group(function () {
     Route::get('/rekap-klien', [InvoiceController::class, 'rekapKlien']);
     Route::get('/export',               [InvoiceController::class, 'export']);
     Route::get('/export-excel',         [InvoiceController::class, 'exportExcel']);
+    Route::get('/export-count',         [InvoiceController::class, 'exportRowCount']);
     Route::get('/export-b2b-delivery',  [InvoiceController::class, 'exportB2BDelivery']);
     Route::get('/{id}/print', [InvoiceController::class, 'print']);
     Route::get('/carryover', [InvoiceController::class, 'carryover']);

@@ -40,6 +40,15 @@ class InvoiceRepository
     }
 
     /**
+     * Hanya ID invoice yang cocok filter — dipakai untuk hitung jumlah baris
+     * export tanpa hydrate model penuh (lihat getSummary() untuk pola serupa).
+     */
+    public function getIdsForExport(array $filters = []): Collection
+    {
+        return $this->applyFilters(Invoice::query(), $filters)->pluck('id');
+    }
+
+    /**
      * Header saja untuk halaman detail — TANPA items/pembayarans/openingBalanceDetails/
      * approvalLogs/endingBalanceKoreksi, yang di-fetch terpisah lewat endpoint lazy-nya
      * masing-masing. Jangan dipakai untuk alur yang butuh child collections (pakai

@@ -465,7 +465,12 @@ class InvoiceController extends Controller
         );
     }
 
-    public function export(Request $request): StreamedResponse
+    /**
+     * Filter export invoice reguler (bukan opening balance), sudah termasuk scoping
+     * role via ArFilterScope — dipakai bersama oleh export(), exportExcel(), dan
+     * exportRowCount() supaya definisi filter tidak terduplikasi.
+     */
+    private function resolveExportFilters(Request $request): array
     {
         $user    = auth()->user();
         $filters = $request->only([
@@ -474,6 +479,13 @@ class InvoiceController extends Controller
         ]);
         $filters['is_opening_balance'] = false;
         ArFilterScope::apply($filters, $user);
+
+        return $filters;
+    }
+
+    public function export(Request $request): StreamedResponse
+    {
+        $filters = $this->resolveExportFilters($request);
 
         $invoices = $this->service->paginate(
             array_merge($filters, ['per_page' => 9999]),
@@ -512,27 +524,35 @@ class InvoiceController extends Controller
         ]);
     }
 
+    private const EXPORT_HEADERS = [
+        'No Invoice', 'No Invoice Resto', 'Klien', 'Resto', 'Kode Resto', 'Stokis', 'Entitas',
+        'Tanggal Invoice', 'Status', 'Kode Barang', 'Nama Barang', 'Satuan', 'QTY', 'Harga Satuan',
+        'Total Item',
+    ];
+
     /**
-     * Export CSV gabungan (1 baris = 1 item barang, kolom level-invoice diulang per baris)
-     * menggantikan workbook Excel 2-sheet lama — jauh lebih ringan untuk data ribuan invoice
-     * karena tidak ada lagi styling per-sel di dalam loop.
+     * Jumlah baris (level-item) yang akan dihasilkan export untuk filter yang sama —
+     * dipakai FE untuk peringatan real-time XLSX vs CSV di modal Export Invoice.
+     * Sengaja ringan: cuma WHERE ... IN + COUNT, tanpa hydrate model.
      */
-    public function exportExcel(Request $request): StreamedResponse
+    public function exportRowCount(Request $request): JsonResponse
     {
-        $user    = auth()->user();
-        $filters = $request->only([
-            'search', 'status', 'klien_ar_id', 'karyawan_id',
-            'tanggal_dari', 'tanggal_sampai', 'segment',
-        ]);
-        $filters['is_opening_balance'] = false;
-        ArFilterScope::apply($filters, $user);
+        $filters    = $this->resolveExportFilters($request);
+        $invoiceIds = $this->service->getExportIds($filters);
+        $rowCount   = InvoiceItem::whereIn('invoice_id', $invoiceIds)->count();
 
-        $invoices   = $this->service->getAllForExport($filters);
-        $invoiceIds = $invoices->pluck('id');
+        return $this->successResponse(['row_count' => $rowCount]);
+    }
 
-        // Field level-invoice dihitung sekali per invoice (dipakai berulang di tiap baris item).
-        // Nama resto SENGAJA TIDAK di sini — invoice "Konsolidasi" B2B bisa mencakup banyak
-        // resto berbeda dalam 1 tagihan, jadi nama resto harus di-resolve PER ITEM (lihat bawah).
+    /**
+     * Field level-invoice dihitung sekali per invoice (dipakai berulang di tiap baris item),
+     * termasuk kode/nama/stokis resto invoice & klien supaya loop item TIDAK perlu lagi
+     * eager-load relasi 'invoice' (lebih ringan buat dibaca per-batch).
+     * Nama resto SENGAJA TIDAK final di sini — invoice "Konsolidasi" B2B bisa mencakup banyak
+     * resto berbeda dalam 1 tagihan, jadi resolusi akhir tetap PER ITEM (lihat resolveExportRow()).
+     */
+    private function buildExportInvoiceMeta(Collection $invoices): array
+    {
         $invoiceMeta = [];
         foreach ($invoices as $inv) {
             $entitasP = $inv->klienAr?->resto?->perusahaan ?? $inv->perusahaan;
@@ -543,79 +563,189 @@ class InvoiceController extends Controller
                 'entitas'            => $entitasP?->nama_perusahaan ?? '-',
                 'tanggal_invoice'    => $inv->tanggal_invoice?->format('d-m-Y') ?? '-',
                 'status'             => $inv->status,
+                'resto_kode'         => $inv->resto?->kode_resto,
+                'resto_nama'         => $inv->resto?->nama_resto,
+                'resto_stokis'       => $inv->resto?->stokis,
+                'klien_resto_kode'   => $inv->klienAr?->resto?->kode_resto,
+                'klien_resto_nama'   => $inv->klienAr?->resto?->nama_resto,
+                'klien_resto_stokis' => $inv->klienAr?->resto?->stokis,
             ];
         }
 
-        $details = InvoiceItem::with(['invoice.klienAr.resto.perusahaan', 'invoice.perusahaan', 'invoice.resto', 'barang'])
+        return $invoiceMeta;
+    }
+
+    private function buildExportRestoLookup(Collection $invoiceIds, array $invoiceMeta): Collection
+    {
+        $kodeRestoSet = InvoiceItem::whereIn('invoice_id', $invoiceIds)
+            ->whereNotNull('kode_resto')
+            ->distinct()
+            ->pluck('kode_resto');
+
+        foreach ($invoiceMeta as $meta) {
+            if ($meta['resto_kode'])       $kodeRestoSet->push($meta['resto_kode']);
+            if ($meta['klien_resto_kode']) $kodeRestoSet->push($meta['klien_resto_kode']);
+        }
+
+        return Resto::whereIn('kode_resto', $kodeRestoSet->unique()->values())->get()->keyBy('kode_resto');
+    }
+
+    /**
+     * Query item export, ramping (kolom terpilih + relasi 'barang' minimal saja) supaya
+     * aman dibaca per-batch (chunk by invoice_id) untuk data puluhan-ratusan ribu baris.
+     */
+    private function exportItemQuery(Collection $invoiceIds): \Illuminate\Database\Eloquent\Builder
+    {
+        return InvoiceItem::query()
+            ->select(['id', 'invoice_id', 'no_invoice_resto', 'kode_resto', 'nama_resto', 'kode_barang', 'barang_id', 'nama_barang', 'satuan', 'qty', 'harga_satuan', 'subtotal'])
+            ->with('barang:id,kode_barang')
             ->whereIn('invoice_id', $invoiceIds)
             ->orderBy('invoice_id')
-            ->orderBy('id')
-            ->get();
+            ->orderBy('id');
+    }
 
-        $kodeRestoSet = collect();
-        foreach ($details as $_d) {
-            if ($_d->kode_resto)                             $kodeRestoSet->push($_d->kode_resto);
-            if ($_d->invoice?->resto?->kode_resto)           $kodeRestoSet->push($_d->invoice->resto->kode_resto);
-            if ($_d->invoice?->klienAr?->resto?->kode_resto) $kodeRestoSet->push($_d->invoice->klienAr->resto->kode_resto);
-        }
-        $restosByKode = Resto::whereIn('kode_resto', $kodeRestoSet->unique()->values())->get()->keyBy('kode_resto');
+    private function resolveExportRow(InvoiceItem $d, array $meta, Collection $restosByKode): array
+    {
+        $resolvedKode = $d->kode_resto
+            ?? ($meta['resto_kode'] ?? null)
+            ?? ($meta['klien_resto_kode'] ?? null);
 
-        $headers = [
-            'No Invoice', 'No Invoice Resto', 'Klien', 'Resto', 'Kode Resto', 'Stokis', 'Entitas',
-            'Tanggal Invoice', 'Status', 'Kode Barang', 'Nama Barang', 'Satuan', 'QTY', 'Harga Satuan',
-            'Total Item',
+        // Per item, BUKAN per invoice — 1 invoice "Konsolidasi" B2B bisa mencakup
+        // banyak resto berbeda dalam 1 tagihan (tiap resto kirim barang sendiri).
+        $restoNama = $d->nama_resto
+            ?: ($resolvedKode ? $restosByKode->get($resolvedKode)?->nama_resto : null)
+            ?: ($meta['resto_nama'] ?? null)
+            ?: ($meta['klien_resto_nama'] ?? null)
+            ?: '-';
+
+        $stokis = ($meta['resto_stokis'] ?? null)
+            ?? ($meta['klien_resto_stokis'] ?? null)
+            ?? ($resolvedKode ? $restosByKode->get($resolvedKode)?->stokis : null)
+            ?? '-';
+
+        return [
+            $meta['no_invoice']      ?? '-',
+            $d->no_invoice_resto     ?? '-',
+            $meta['klien']           ?? '-',
+            $restoNama,
+            $resolvedKode            ?? '-',
+            $stokis,
+            $meta['entitas']         ?? '-',
+            $meta['tanggal_invoice'] ?? '-',
+            $meta['status']          ?? '-',
+            $d->kode_barang ?? $d->barang?->kode_barang ?? '-',
+            $d->nama_barang,
+            $d->satuan ?? '-',
+            (float) $d->qty,
+            (float) $d->harga_satuan,
+            (float) $d->subtotal,
         ];
+    }
 
-        return response()->streamDownload(function () use ($details, $invoiceMeta, $restosByKode, $headers) {
+    public function exportExcel(Request $request): StreamedResponse|BinaryFileResponse
+    {
+        $format = strtolower((string) $request->query('format', 'csv'));
+
+        return $format === 'xlsx' ? $this->streamXlsxExport($request) : $this->streamCsvExport($request);
+    }
+
+    /**
+     * Export CSV gabungan (1 baris = 1 item barang, kolom level-invoice diulang per baris).
+     * Item dibaca per-batch invoice_id (bukan satu ->get() raksasa) supaya memori tetap flat
+     * untuk data puluhan-ratusan ribu baris — lihat buildExportInvoiceMeta()/exportItemQuery().
+     */
+    private function streamCsvExport(Request $request): StreamedResponse
+    {
+        $filters      = $this->resolveExportFilters($request);
+        $invoices     = $this->service->getAllForExport($filters);
+        $invoiceIds   = $invoices->pluck('id');
+        $invoiceMeta  = $this->buildExportInvoiceMeta($invoices);
+        $restosByKode = $this->buildExportRestoLookup($invoiceIds, $invoiceMeta);
+        $headers      = self::EXPORT_HEADERS;
+
+        return response()->streamDownload(function () use ($invoiceIds, $invoiceMeta, $restosByKode, $headers) {
             $handle = fopen('php://output', 'w');
             fprintf($handle, chr(0xEF) . chr(0xBB) . chr(0xBF)); // UTF-8 BOM
             // Titik koma, bukan koma — locale Excel Indonesia pakai ";" sebagai list
             // separator sistem, jadi file terbuka langsung terbagi rapi per kolom.
             fputcsv($handle, $headers, ';');
 
-            foreach ($details as $d) {
-                $inv2 = $d->invoice;
-                $meta = $invoiceMeta[$d->invoice_id] ?? null;
+            $invoiceIds->chunk(500)->each(function ($batchIds) use ($handle, $invoiceMeta, $restosByKode) {
+                $this->exportItemQuery($batchIds)->get()->each(function ($d) use ($handle, $invoiceMeta, $restosByKode) {
+                    $meta = $invoiceMeta[$d->invoice_id] ?? [];
+                    fputcsv($handle, $this->resolveExportRow($d, $meta, $restosByKode), ';');
+                });
+            });
 
-                $resolvedKode = $d->kode_resto
-                    ?? $inv2?->resto?->kode_resto
-                    ?? $inv2?->klienAr?->resto?->kode_resto;
-
-                // Per item, BUKAN per invoice — 1 invoice "Konsolidasi" B2B bisa mencakup
-                // banyak resto berbeda dalam 1 tagihan (tiap resto kirim barang sendiri).
-                $restoNama = $d->nama_resto
-                    ?: ($resolvedKode ? $restosByKode->get($resolvedKode)?->nama_resto : null)
-                    ?: $inv2?->resto?->nama_resto
-                    ?: $inv2?->klienAr?->resto?->nama_resto
-                    ?: '-';
-
-                $stokis = $inv2?->resto?->stokis
-                    ?? $inv2?->klienAr?->resto?->stokis
-                    ?? ($resolvedKode ? $restosByKode->get($resolvedKode)?->stokis : null)
-                    ?? '-';
-
-                fputcsv($handle, [
-                    $meta['no_invoice']         ?? ($inv2?->no_invoice ?? '-'),
-                    $d->no_invoice_resto        ?? '-',
-                    $meta['klien']              ?? ($inv2?->klienAr?->nama_klien ?? '-'),
-                    $restoNama,
-                    $resolvedKode               ?? '-',
-                    $stokis,
-                    $meta['entitas']            ?? '-',
-                    $meta['tanggal_invoice']    ?? '-',
-                    $meta['status']             ?? ($inv2?->status ?? '-'),
-                    $d->kode_barang ?? $d->barang?->kode_barang ?? '-',
-                    $d->nama_barang,
-                    $d->satuan ?? '-',
-                    (float) $d->qty,
-                    (float) $d->harga_satuan,
-                    (float) $d->subtotal,
-                ], ';');
-            }
             fclose($handle);
         }, 'invoice-ar-' . now()->format('Ymd-His') . '.csv', [
             'Content-Type' => 'text/csv; charset=UTF-8',
         ]);
+    }
+
+    /**
+     * Export XLSX asli (PhpSpreadsheet). Styling SENGAJA cuma di header row — jangan tiru
+     * pola styling per-sel di dalam loop seperti exportB2BDelivery(), itu justru penyebab
+     * lama versi Excel 2-sheet dulu diganti CSV (lihat riwayat exportExcel()). Direkomendasikan
+     * hanya untuk data <= ~13.000 baris (lihat exportRowCount() + peringatan di FE), tapi
+     * tidak diblokir keras di sini kalau user tetap memilih XLSX untuk data besar.
+     */
+    private function streamXlsxExport(Request $request): BinaryFileResponse
+    {
+        @set_time_limit(300);
+        @ini_set('memory_limit', '512M');
+
+        $filters      = $this->resolveExportFilters($request);
+        $invoices     = $this->service->getAllForExport($filters);
+        $invoiceIds   = $invoices->pluck('id');
+        $invoiceMeta  = $this->buildExportInvoiceMeta($invoices);
+        $restosByKode = $this->buildExportRestoLookup($invoiceIds, $invoiceMeta);
+
+        $cols    = range('A', 'O'); // 15 kolom, sinkron dengan self::EXPORT_HEADERS
+        $lastCol = 'O';
+
+        $spreadsheet = new Spreadsheet();
+        $sheet       = $spreadsheet->getActiveSheet();
+        $sheet->setTitle('Invoice AR');
+
+        foreach (array_combine($cols, self::EXPORT_HEADERS) as $col => $label) {
+            $sheet->setCellValueExplicit("{$col}1", $label, DataType::TYPE_STRING);
+        }
+        $sheet->getStyle("A1:{$lastCol}1")->applyFromArray([
+            'font' => ['bold' => true, 'color' => ['argb' => 'FFFFFFFF']],
+            'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF1565C0']],
+        ]);
+        $sheet->freezePane('A2');
+
+        $numericCols = ['M', 'N', 'O']; // QTY, Harga Satuan, Total Item
+        $rowNum      = 2;
+
+        $invoiceIds->chunk(500)->each(function ($batchIds) use ($sheet, &$rowNum, $invoiceMeta, $restosByKode, $cols, $numericCols) {
+            $this->exportItemQuery($batchIds)->get()->each(function ($d) use ($sheet, &$rowNum, $invoiceMeta, $restosByKode, $cols, $numericCols) {
+                $meta = $invoiceMeta[$d->invoice_id] ?? [];
+                $row  = $this->resolveExportRow($d, $meta, $restosByKode);
+
+                foreach (array_combine($cols, $row) as $col => $val) {
+                    $type = in_array($col, $numericCols, true) ? DataType::TYPE_NUMERIC : DataType::TYPE_STRING;
+                    $sheet->getCell("{$col}{$rowNum}")->setValueExplicit($val, $type);
+                }
+                $rowNum++;
+            });
+        });
+
+        if ($rowNum > 2) {
+            $sheet->getStyle('M2:O' . ($rowNum - 1))->getNumberFormat()->setFormatCode('#,##0');
+        }
+
+        $temp     = tempnam(sys_get_temp_dir(), 'export_invoice_') . '.xlsx';
+        $filename = 'Data Tagihan Invoice-' . now()->format('Ymd-His') . '.xlsx';
+        (new XlsxWriter($spreadsheet))->save($temp);
+
+        return response()
+            ->download($temp, $filename, [
+                'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            ])
+            ->deleteFileAfterSend(true);
     }
 
     public function publicPrint(string $token): Response
