@@ -8,6 +8,13 @@ use App\Domain\Finance\Invoice\Services\InvoiceGroupProcessor;
 use App\Domain\Finance\Invoice\Services\InvoiceImportService;
 use App\Domain\Finance\Invoice\Services\InvoiceService;
 use App\Models\KlienAr;
+use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
+use PhpOffice\PhpSpreadsheet\Cell\DataType;
+use PhpOffice\PhpSpreadsheet\IOFactory;
+use PhpOffice\PhpSpreadsheet\Shared\Date as PhpSpreadsheetDate;
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx as XlsxWriter;
 use Tests\TestCase;
 
 /**
@@ -668,5 +675,130 @@ class InvoiceImportServiceTest extends TestCase
         };
 
         $this->assertSame($collect($fileSemicolon, $scanSemicolon), $collect($fileComma, $scanComma));
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    //  Parsing XLSX (findSheetIndex / detectInvoiceHeaderStart / chunkXlsxRows)
+    // ──────────────────────────────────────────────────────────────
+
+    /** Tulis $rows ke file xlsx sementara (dibersihkan di tearDown), kembalikan path-nya. */
+    private function buildXlsx(array $rows, string $sheetTitle = 'MASTER INVOICE'): string
+    {
+        $spreadsheet = new Spreadsheet();
+        $sheet       = $spreadsheet->getActiveSheet();
+        $sheet->setTitle($sheetTitle);
+
+        foreach ($rows as $rowIdx => $row) {
+            foreach ($row as $colIdx => $value) {
+                $col = Coordinate::stringFromColumnIndex($colIdx + 1);
+                $sheet->setCellValueExplicit($col . ($rowIdx + 1), $value, DataType::TYPE_STRING);
+            }
+        }
+
+        $path = tempnam(sys_get_temp_dir(), 'invoice_xlsx_test_') . '.xlsx';
+        $this->tmpFiles[] = $path;
+        (new XlsxWriter($spreadsheet))->save($path);
+
+        return $path;
+    }
+
+    private function loadXlsxSheet(string $path, string $sheetName = 'MASTER INVOICE'): Worksheet
+    {
+        $reader = IOFactory::createReaderForFile($path);
+        $reader->setReadDataOnly(true);
+        $spreadsheet = $reader->load($path);
+
+        $idx = $this->invoke('findSheetIndex', $spreadsheet, $sheetName);
+
+        return $spreadsheet->getSheet($idx);
+    }
+
+    /** Baris 1-2 judul/subjudul, baris 3 kosong, baris 4 header, baris 5-8 data (1 baris kosong disisipkan). */
+    private function sampleXlsxRows(): array
+    {
+        return [
+            ['TEMPLATE IMPORT MASTER INVOICE (B2B & B2C)'],
+            ['Baris subtitle instruksi, isinya bebas.'],
+            [],
+            ['nama_klien (*)', 'tanggal_invoice (*)', 'tanggal_jatuh_tempo', 'no_surat_jalan', 'keterangan_invoice',
+                'no_invoice_resto', 'kode_resto (*)', 'nama_resto', 'kode_barang', 'nama_barang (*)',
+                'qty (*)', 'satuan', 'harga_satuan (*)', 'tipe_invoice (*)'],
+            ['Klien Satu', '01-06-2026', '30-06-2026', 'SJ-001', '', '', 'KD-001', 'Resto Satu', 'BRG-001', 'Barang A', '10', 'pcs', '1000', 'B2C'],
+            [], // baris kosong, harus dilewati
+            ['Klien Satu', '01-06-2026', '30-06-2026', 'SJ-001', '', '', 'KD-001', 'Resto Satu', 'BRG-002', 'Barang B', '5', 'kg', '2000', 'B2C'],
+            ['Klien Dua', '02-06-2026', '30-06-2026', '', '', 'SI-001', 'KD-002', 'Resto Dua', 'BRG-003', 'Barang C', '3', 'pcs', '3000', 'B2B'],
+        ];
+    }
+
+    public function test_find_sheet_index_case_insensitive(): void
+    {
+        $spreadsheet = new Spreadsheet();
+        $spreadsheet->getActiveSheet()->setTitle('master invoice');
+        $spreadsheet->createSheet()->setTitle('Petunjuk Pengisian');
+
+        $this->assertSame(0, $this->invoke('findSheetIndex', $spreadsheet, 'MASTER INVOICE'));
+    }
+
+    public function test_find_sheet_index_tidak_ditemukan_mengembalikan_null(): void
+    {
+        $spreadsheet = new Spreadsheet();
+        $spreadsheet->getActiveSheet()->setTitle('Sheet Lain');
+
+        $this->assertNull($this->invoke('findSheetIndex', $spreadsheet, 'MASTER INVOICE'));
+    }
+
+    public function test_detect_invoice_header_start_menemukan_baris_header_dan_data(): void
+    {
+        $sheet = $this->loadXlsxSheet($this->buildXlsx($this->sampleXlsxRows()));
+
+        $header = $this->invoke('detectInvoiceHeaderStart', $sheet);
+
+        $this->assertTrue($header['found']);
+        $this->assertSame(5, $header['dataStart']);
+        $this->assertSame('N', $header['highestColumn']);
+        $this->assertSame(8, $header['highestRow']);
+    }
+
+    public function test_chunk_xlsx_rows_tidak_kehilangan_atau_menduplikasi_baris(): void
+    {
+        $sheet  = $this->loadXlsxSheet($this->buildXlsx($this->sampleXlsxRows()));
+        $header = $this->invoke('detectInvoiceHeaderStart', $sheet);
+
+        $collected   = [];
+        $rowNumbers  = [];
+        // chunkSize=2 dengan 4 baris data memaksa 2 kali putaran chunk+removeRow().
+        $this->invoke('chunkXlsxRows', $sheet, $header['dataStart'], $header['highestColumn'], 2,
+            function (array $row, int $rowNumber) use (&$collected, &$rowNumbers) {
+                $collected[]  = $row[0] ?? '';
+                $rowNumbers[] = $rowNumber;
+            });
+
+        $this->assertCount(4, $collected, 'Tidak boleh ada baris hilang/dobel (termasuk baris kosong), walau dibaca per-chunk.');
+        $this->assertSame(['Klien Satu', '', 'Klien Satu', 'Klien Dua'], $collected);
+        $this->assertSame([5, 6, 7, 8], $rowNumbers, 'Nomor baris harus tetap merujuk ke baris asli Excel walau baris internal sudah di-removeRow().');
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    //  importDate() — fallback serial number Excel (bug ditemukan & diperbaiki
+    //  saat menambahkan jalur upload xlsx: cell bertipe Date asli terbaca sebagai
+    //  angka serial oleh rangeToArray(), bukan string "DD-MM-YYYY").
+    // ──────────────────────────────────────────────────────────────
+
+    public function test_import_date_menerima_format_dd_mm_yyyy(): void
+    {
+        $this->assertSame('2026-06-01', $this->invoke('importDate', '01-06-2026'));
+    }
+
+    public function test_import_date_menerima_excel_serial_number(): void
+    {
+        $serial   = 46000; // cell bertipe Date asli terbaca sebagai serial number oleh rangeToArray()
+        $expected = PhpSpreadsheetDate::excelToDateTimeObject($serial)->format('Y-m-d');
+
+        $this->assertSame($expected, $this->invoke('importDate', (string) $serial));
+    }
+
+    public function test_import_date_string_bukan_tanggal_dikembalikan_apa_adanya(): void
+    {
+        $this->assertSame('bukan-tanggal', $this->invoke('importDate', 'bukan-tanggal'));
     }
 }

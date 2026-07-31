@@ -18,6 +18,11 @@ use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
+use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
+use PhpOffice\PhpSpreadsheet\IOFactory;
+use PhpOffice\PhpSpreadsheet\Shared\Date as PhpSpreadsheetDate;
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 
 /**
  * Import invoice dari file Excel dengan alur AMAN:
@@ -55,6 +60,9 @@ class InvoiceImportService
     private const COL_TIPE_INVOICE        = 13;
 
     private const MAX_COLS = 14;
+
+    /** Jumlah baris per chunk saat membaca sheet xlsx (lihat MasterImportService::PARSE_CHUNK). */
+    private const PARSE_CHUNK = 1000;
 
     /** Label manusiawi untuk tiap risk flag — dipakai membentuk alasan review. */
     private const RISK_LABELS = [
@@ -96,11 +104,40 @@ class InvoiceImportService
         $batch->update(['status' => 'parsing', 'phase' => 'parsing_file', 'started_at' => now()]);
 
         $filePath = $disk->path($batch->file_path);
+        $ext      = strtolower(pathinfo($batch->original_filename, PATHINFO_EXTENSION));
 
+        // Preload acuan master — dipakai kedua jalur (CSV & xlsx), tidak tergantung format file.
+        [$namaMap, $restoMap, $restoNameMap, $restoNameCount] = $this->buildKlienMaps();
+        $maps = [
+            'namaMap'        => $namaMap,
+            'restoMap'       => $restoMap,
+            'restoNameMap'   => $restoNameMap,
+            'restoNameCount' => $restoNameCount,
+            'restoMasterMap' => $this->buildRestoMasterMap(),
+            'barangMap'      => $this->buildBarangMap(),
+        ];
+
+        $result = in_array($ext, ['xlsx', 'xls'], true)
+            ? $this->parseXlsxFile($filePath, $batch, $maps)
+            : $this->parseCsvFile($filePath, $batch, $maps);
+
+        $this->persistGroups($batch, $result['groups']);
+
+        $batch->update([
+            'parsed_rows'  => $result['parsedRows'],
+            'total_groups' => count($result['groups']),
+            'errors'       => $result['errors'],
+            'phase'        => 'parsed',
+        ]);
+    }
+
+    /** @return array{groups: array, errors: array, parsedRows: int} */
+    private function parseCsvFile(string $filePath, InvoiceImportBatch $batch, array $maps): array
+    {
         $errors     = [];
-        $groups     = [];   // group_key => data
+        $groups     = [];
         $parsedRows = 0;
-        $lineNumber = 1;    // header sudah "dikonsumsi" secara virtual (lihat scanCsvHeaderAndCount)
+        $lineNumber = 1; // header sudah "dikonsumsi" secara virtual (lihat scanCsvHeaderAndCount)
 
         $scan = $this->scanCsvHeaderAndCount($filePath);
         $batch->update([
@@ -108,18 +145,9 @@ class InvoiceImportService
             'phase'      => 'parsing_rows',
         ]);
 
-        // Preload acuan master
-        [$namaMap, $restoMap, $restoNameMap, $restoNameCount] = $this->buildKlienMaps();
-        $restoMasterMap = $this->buildRestoMasterMap();
-        $barangMap      = $this->buildBarangMap();
-
         $this->chunkCsvRows(
             $filePath, $scan['headerLineIdx'] + 1, $scan['delimiter'],
-            function (array $row) use (
-                &$lineNumber, &$errors, &$groups, &$parsedRows,
-                $namaMap, $restoMap, $restoNameMap, $restoNameCount,
-                $restoMasterMap, $barangMap, $batch,
-            ) {
+            function (array $row) use (&$lineNumber, &$errors, &$groups, &$parsedRows, $maps, $batch) {
                 $lineNumber++;
 
                 // Progres bertahap — batch->update() akhir baru menulis parsed_rows
@@ -130,101 +158,154 @@ class InvoiceImportService
                     $batch->update(['parsed_rows' => $parsedRows]);
                 }
 
-                $firstCell = trim((string) ($row[self::COL_NAMA_KLIEN] ?? ''));
-                $tipeCell  = trim((string) ($row[self::COL_TIPE_INVOICE] ?? ''));
-                if (str_starts_with($firstCell, '#')) return;
-                if (str_starts_with($tipeCell, '[CONTOH]')) return;
-                if ($firstCell === '' && count(array_filter(array_map('strval', $row))) === 0) return;
-
-                $parsedRows++;
-
-                $tipeInvoice = strtoupper(trim((string) ($row[self::COL_TIPE_INVOICE] ?? '')));
-                $namaKlien   = $this->importValue($row[self::COL_NAMA_KLIEN] ?? '');
-                $tanggal     = $this->importDate($row[self::COL_TANGGAL_INVOICE] ?? '');
-                $kodeResto   = $this->importValue($row[self::COL_KODE_RESTO] ?? '');
-
-                if (!$tipeInvoice || !$namaKlien || !$tanggal) {
-                    $errors[] = ['row' => $lineNumber, 'message' => 'tipe_invoice, nama_klien, dan tanggal_invoice wajib diisi.'];
-                    return;
+                if ($this->processInvoiceRow($row, $lineNumber, $maps, $groups, $errors)) {
+                    $parsedRows++;
                 }
-                if (!in_array($tipeInvoice, ['B2B', 'B2C'], true)) {
-                    $errors[] = ['row' => $lineNumber, 'message' => "tipe_invoice '{$tipeInvoice}' tidak valid. Harus 'B2B' atau 'B2C'."];
-                    return;
-                }
-
-                $masterError = $this->validateRowAgainstMasterData($tipeInvoice, $namaKlien, $kodeResto, $restoMasterMap);
-                if ($masterError) {
-                    $errors[] = ['row' => $lineNumber, 'message' => $masterError];
-                    return;
-                }
-
-                [$klien, $klienError] = $this->resolveKlienForRow(
-                    $tipeInvoice, $namaKlien, $kodeResto,
-                    $namaMap, $restoMap, $restoNameMap, $restoNameCount,
-                );
-                if (!$klien) {
-                    $errors[] = ['row' => $lineNumber, 'message' => $klienError];
-                    return;
-                }
-
-                $key = $tipeInvoice . '||' . $klien->id . '||' . $tanggal;
-
-                if (!isset($groups[$key])) {
-                    $groups[$key] = [
-                        'group_key'           => $key,
-                        'tipe_invoice'        => $tipeInvoice,
-                        'nama_klien'          => $namaKlien,
-                        'kode_resto'          => $kodeResto,
-                        'klien_ar_id'         => $klien->id,
-                        'tanggal_invoice'     => $tanggal,
-                        'tanggal_jatuh_tempo' => $this->importDate($row[self::COL_TANGGAL_JATUH_TEMPO] ?? ''),
-                        'no_surat_jalan'      => $this->importValue($row[self::COL_NO_SURAT_JALAN] ?? ''),
-                        'keterangan'          => $this->importValue($row[self::COL_KETERANGAN] ?? ''),
-                        'first_line'          => $lineNumber,
-                        'items'               => [],
-                        'row_errors'          => [],
-                    ];
-                }
-
-                $namaBarang = $this->importValue($row[self::COL_NAMA_BARANG] ?? '');
-                $qty        = $this->importNum($row[self::COL_QTY] ?? '');
-                $harga      = $this->importNum($row[self::COL_HARGA_SATUAN] ?? '');
-                $kodeBarang = $this->importValue($row[self::COL_KODE_BARANG] ?? '');
-
-                $itemError = match (true) {
-                    !$namaBarang => 'nama_barang wajib diisi.',
-                    $qty <= 0    => 'qty harus lebih dari 0.',
-                    default      => null,
-                };
-                if ($itemError) {
-                    $groups[$key]['row_errors'][] = "Baris {$lineNumber}: {$itemError}";
-                }
-
-                $groups[$key]['items'][] = [
-                    'row_number'       => $lineNumber,
-                    'no_invoice_resto' => $this->importValue($row[self::COL_NO_INVOICE_RESTO] ?? ''),
-                    'kode_resto'       => $kodeResto,
-                    'nama_resto'       => $this->importValue($row[self::COL_NAMA_RESTO] ?? ''),
-                    'kode_barang'      => $kodeBarang,
-                    'nama_barang'      => $namaBarang,
-                    'barang_id'        => $kodeBarang ? ($barangMap[strtoupper($kodeBarang)] ?? null) : null,
-                    'qty'              => $qty,
-                    'satuan'           => $this->importValue($row[self::COL_SATUAN] ?? ''),
-                    'harga_satuan'     => $harga,
-                    'subtotal'         => round($qty * $harga, 2),
-                    'error'            => $itemError,
-                ];
-            }
+            },
         );
 
-        $this->persistGroups($batch, $groups);
+        return ['groups' => $groups, 'errors' => $errors, 'parsedRows' => $parsedRows];
+    }
+
+    /** @return array{groups: array, errors: array, parsedRows: int} */
+    private function parseXlsxFile(string $filePath, InvoiceImportBatch $batch, array $maps): array
+    {
+        $errors     = [];
+        $groups     = [];
+        $parsedRows = 0;
+
+        $reader = IOFactory::createReaderForFile($filePath);
+        $reader->setReadDataOnly(true);
+        $spreadsheet = $reader->load($filePath);
+
+        $sheetIndex = $this->findSheetIndex($spreadsheet, 'MASTER INVOICE');
+        if ($sheetIndex === null) {
+            throw new \RuntimeException('Sheet "MASTER INVOICE" tidak ditemukan pada file xlsx.');
+        }
+        $sheet = $spreadsheet->getSheet($sheetIndex);
+
+        $header = $this->detectInvoiceHeaderStart($sheet);
+        if (!$header['found']) {
+            throw new \RuntimeException('Header "nama_klien" tidak ditemukan pada sheet MASTER INVOICE.');
+        }
 
         $batch->update([
-            'parsed_rows'  => $parsedRows,
-            'total_groups' => count($groups),
-            'errors'       => $errors,
-            'phase'        => 'parsed',
+            'total_rows' => max(0, $header['highestRow'] - $header['dataStart'] + 1),
+            'phase'      => 'parsing_rows',
         ]);
+
+        $this->chunkXlsxRows(
+            $sheet, $header['dataStart'], $header['highestColumn'], self::PARSE_CHUNK,
+            function (array $row, int $excelRow) use (&$errors, &$groups, &$parsedRows, $maps, $batch) {
+                // Progres bertahap — lihat komentar sepadan di parseCsvFile().
+                if ($excelRow % 2000 === 0) {
+                    $batch->update(['parsed_rows' => $parsedRows]);
+                }
+
+                if ($this->processInvoiceRow($row, $excelRow, $maps, $groups, $errors)) {
+                    $parsedRows++;
+                }
+            },
+        );
+
+        return ['groups' => $groups, 'errors' => $errors, 'parsedRows' => $parsedRows];
+    }
+
+    /**
+     * Inti validasi & grouping satu baris — dipakai baik oleh jalur CSV maupun xlsx supaya
+     * business logic (validasi wajib, validasi vs MASTER DATA, resolve klien, grouping) tidak
+     * terduplikasi antar format. $row harus array 0-based sepanjang MAX_COLS mengikuti urutan
+     * kolom self::COL_*, apa pun format sumbernya.
+     *
+     * @param  array<string, array> $maps ['namaMap','restoMap','restoNameMap','restoNameCount','restoMasterMap','barangMap']
+     * @return bool true jika baris dihitung sebagai "terbaca" (bukan baris komentar/[CONTOH]/kosong)
+     */
+    private function processInvoiceRow(array $row, int $lineNumber, array $maps, array &$groups, array &$errors): bool
+    {
+        $firstCell = trim((string) ($row[self::COL_NAMA_KLIEN] ?? ''));
+        $tipeCell  = trim((string) ($row[self::COL_TIPE_INVOICE] ?? ''));
+        if (str_starts_with($firstCell, '#')) return false;
+        if (str_starts_with($tipeCell, '[CONTOH]')) return false;
+        if ($firstCell === '' && count(array_filter(array_map('strval', $row))) === 0) return false;
+
+        $tipeInvoice = strtoupper(trim((string) ($row[self::COL_TIPE_INVOICE] ?? '')));
+        $namaKlien   = $this->importValue($row[self::COL_NAMA_KLIEN] ?? '');
+        $tanggal     = $this->importDate($row[self::COL_TANGGAL_INVOICE] ?? '');
+        $kodeResto   = $this->importValue($row[self::COL_KODE_RESTO] ?? '');
+
+        if (!$tipeInvoice || !$namaKlien || !$tanggal) {
+            $errors[] = ['row' => $lineNumber, 'message' => 'tipe_invoice, nama_klien, dan tanggal_invoice wajib diisi.'];
+            return true;
+        }
+        if (!in_array($tipeInvoice, ['B2B', 'B2C'], true)) {
+            $errors[] = ['row' => $lineNumber, 'message' => "tipe_invoice '{$tipeInvoice}' tidak valid. Harus 'B2B' atau 'B2C'."];
+            return true;
+        }
+
+        $masterError = $this->validateRowAgainstMasterData($tipeInvoice, $namaKlien, $kodeResto, $maps['restoMasterMap']);
+        if ($masterError) {
+            $errors[] = ['row' => $lineNumber, 'message' => $masterError];
+            return true;
+        }
+
+        [$klien, $klienError] = $this->resolveKlienForRow(
+            $tipeInvoice, $namaKlien, $kodeResto,
+            $maps['namaMap'], $maps['restoMap'], $maps['restoNameMap'], $maps['restoNameCount'],
+        );
+        if (!$klien) {
+            $errors[] = ['row' => $lineNumber, 'message' => $klienError];
+            return true;
+        }
+
+        $key = $tipeInvoice . '||' . $klien->id . '||' . $tanggal;
+
+        if (!isset($groups[$key])) {
+            $groups[$key] = [
+                'group_key'           => $key,
+                'tipe_invoice'        => $tipeInvoice,
+                'nama_klien'          => $namaKlien,
+                'kode_resto'          => $kodeResto,
+                'klien_ar_id'         => $klien->id,
+                'tanggal_invoice'     => $tanggal,
+                'tanggal_jatuh_tempo' => $this->importDate($row[self::COL_TANGGAL_JATUH_TEMPO] ?? ''),
+                'no_surat_jalan'      => $this->importValue($row[self::COL_NO_SURAT_JALAN] ?? ''),
+                'keterangan'          => $this->importValue($row[self::COL_KETERANGAN] ?? ''),
+                'first_line'          => $lineNumber,
+                'items'               => [],
+                'row_errors'          => [],
+            ];
+        }
+
+        $namaBarang = $this->importValue($row[self::COL_NAMA_BARANG] ?? '');
+        $qty        = $this->importNum($row[self::COL_QTY] ?? '');
+        $harga      = $this->importNum($row[self::COL_HARGA_SATUAN] ?? '');
+        $kodeBarang = $this->importValue($row[self::COL_KODE_BARANG] ?? '');
+
+        $itemError = match (true) {
+            !$namaBarang => 'nama_barang wajib diisi.',
+            $qty <= 0    => 'qty harus lebih dari 0.',
+            default      => null,
+        };
+        if ($itemError) {
+            $groups[$key]['row_errors'][] = "Baris {$lineNumber}: {$itemError}";
+        }
+
+        $groups[$key]['items'][] = [
+            'row_number'       => $lineNumber,
+            'no_invoice_resto' => $this->importValue($row[self::COL_NO_INVOICE_RESTO] ?? ''),
+            'kode_resto'       => $kodeResto,
+            'nama_resto'       => $this->importValue($row[self::COL_NAMA_RESTO] ?? ''),
+            'kode_barang'      => $kodeBarang,
+            'nama_barang'      => $namaBarang,
+            'barang_id'        => $kodeBarang ? ($maps['barangMap'][strtoupper($kodeBarang)] ?? null) : null,
+            'qty'              => $qty,
+            'satuan'           => $this->importValue($row[self::COL_SATUAN] ?? ''),
+            'harga_satuan'     => $harga,
+            'subtotal'         => round($qty * $harga, 2),
+            'error'            => $itemError,
+        ];
+
+        return true;
     }
 
     /** Simpan hasil grouping (grup + item) ke tabel staging. */
@@ -1257,6 +1338,91 @@ class InvoiceImportService
         fclose($handle);
     }
 
+    // ── Parsing XLSX (PhpSpreadsheet, pola sama seperti MasterImportService) ──
+
+    private function findSheetIndex(Spreadsheet $spreadsheet, string $name): ?int
+    {
+        foreach ($spreadsheet->getSheetNames() as $i => $sheetName) {
+            if (strtolower(trim($sheetName)) === strtolower($name)) {
+                return $i;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Preview-scan (maks $previewRows baris pertama) mencari baris header "nama_klien"
+     * pada sheet MASTER INVOICE — pola sama seperti MasterImportService::detectMasterHeaderStart().
+     *
+     * @return array{found: bool, dataStart: int, highestColumn: string, highestRow: int}
+     */
+    private function detectInvoiceHeaderStart(Worksheet $sheet, int $previewRows = 100): array
+    {
+        $highestRow   = $sheet->getHighestRow();
+        $maxColLetter = Coordinate::stringFromColumnIndex(self::MAX_COLS);
+        $previewEnd   = min($previewRows, $highestRow);
+
+        $preview = $sheet->rangeToArray("A1:{$maxColLetter}{$previewEnd}", null, true, false, false);
+
+        foreach ($preview as $idx => $cells) {
+            $firstCell = trim($this->xlsxRawValueToString($cells[0] ?? ''));
+            if ($this->normalizeHeaderName($firstCell) === 'nama_klien') {
+                return [
+                    'found'         => true,
+                    'dataStart'     => $idx + 2, // 0-based idx -> baris header 1-based -> baris data pertama
+                    'highestColumn' => $maxColLetter,
+                    'highestRow'    => $highestRow,
+                ];
+            }
+        }
+
+        return ['found' => false, 'dataStart' => 0, 'highestColumn' => $maxColLetter, 'highestRow' => $highestRow];
+    }
+
+    /**
+     * Baca baris data mulai $dataStart per $chunkSize baris via rangeToArray(), panggil
+     * $onRow(array $cells, int $excelRowNumber) per baris, lalu lepas baris yang sudah
+     * diproses lewat removeRow() supaya memori tidak menumpuk (pola sama seperti
+     * MasterImportService::chunkMasterRows()). $excelRowNumber dihitung terpisah dari
+     * pergeseran removeRow() supaya tetap merujuk ke nomor baris asli di file Excel.
+     */
+    private function chunkXlsxRows(
+        Worksheet $sheet, int $dataStart, string $highestColumn, int $chunkSize, callable $onRow,
+    ): void {
+        $rowNumber = $dataStart;
+
+        while (($currentHighest = $sheet->getHighestRow()) >= $dataStart) {
+            $end   = min($dataStart + $chunkSize - 1, $currentHighest);
+            $count = $end - $dataStart + 1;
+            $rows  = $sheet->rangeToArray("A{$dataStart}:{$highestColumn}{$end}", null, true, false, false);
+
+            foreach ($rows as $rawRow) {
+                $onRow(array_map(fn($c) => $this->xlsxRawValueToString($c), $rawRow), $rowNumber);
+                $rowNumber++;
+            }
+
+            $sheet->removeRow($dataStart, $count);
+        }
+    }
+
+    /**
+     * Konversi nilai mentah dari rangeToArray() (setReadDataOnly(true) tidak memuat style,
+     * jadi info format tanggal cell tidak tersedia) — importDate() sudah punya fallback
+     * numerik sendiri untuk cell bertipe serial number.
+     */
+    private function xlsxRawValueToString(mixed $value): string
+    {
+        if ($value === null)  return '';
+        if (is_bool($value))  return $value ? '1' : '0';
+        if (is_int($value))   return (string) $value;
+        if (is_float($value)) {
+            return fmod($value, 1.0) === 0.0 ? sprintf('%.0f', $value) : (string) $value;
+        }
+
+        return trim((string) $value);
+    }
+
     private function normalizeHeaderName(string $raw): string
     {
         return trim(preg_replace('/\(\s*\*\s*\)\s*$/', '', strtolower(trim($raw))));
@@ -1279,6 +1445,14 @@ class InvoiceImportService
         }
         if (preg_match('/^(\d{4})-(\d{1,2})-(\d{1,2})$/', $s, $m)) {
             return sprintf('%04d-%02d-%02d', (int) $m[1], (int) $m[2], (int) $m[3]);
+        }
+        // Fallback: serial number Excel yang lolos tanpa format tanggal pada cell (mis. hasil paste/text).
+        if (is_numeric($s)) {
+            try {
+                return PhpSpreadsheetDate::excelToDateTimeObject((float) $s)->format('Y-m-d');
+            } catch (\Throwable) {
+                return $s;
+            }
         }
 
         return $s;

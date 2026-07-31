@@ -13,6 +13,7 @@ use App\Support\Helpers\RoleHelper;
 use App\Support\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 /**
@@ -33,8 +34,20 @@ class InvoiceImportController extends Controller
 
     public function __construct(private readonly InvoiceImportService $service) {}
 
-    public function template(InvoiceImportTemplateService $templates): StreamedResponse
+    public function template(Request $request, InvoiceImportTemplateService $templates): StreamedResponse|BinaryFileResponse|JsonResponse
     {
+        if ($request->query('format') === 'xlsx') {
+            if (!class_exists('ZipArchive')) {
+                return $this->errorResponse('Ekstensi PHP "zip" tidak aktif. Aktifkan extension=zip pada php.ini lalu restart server.', 500);
+            }
+
+            return response()
+                ->download($templates->buildXlsxFile(), 'template-import-master-invoice.xlsx', [
+                    'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                ])
+                ->deleteFileAfterSend(true);
+        }
+
         return response()->streamDownload(function () use ($templates) {
             $handle = fopen('php://output', 'w');
             fprintf($handle, chr(0xEF) . chr(0xBB) . chr(0xBF)); // UTF-8 BOM
@@ -58,8 +71,15 @@ class InvoiceImportController extends Controller
 
         $request->validate([
             // csv juga sering dikirim dengan MIME text/plain oleh browser/OS, jadi 'txt' ikut diterima.
-            'file' => ['required', 'file', 'mimes:csv,txt', 'max:10240'],
+            // max:51200 (50MB) — endpoint ini sendirian ditinggikan dari konvensi 10MB modul lain
+            // karena target volumenya csv s/d ~100.000 baris & xlsx dengan styling template ini.
+            'file' => ['required', 'file', 'mimes:csv,txt,xlsx,xls', 'max:51200'],
         ]);
+
+        $ext = strtolower($request->file('file')?->getClientOriginalExtension() ?? '');
+        if (in_array($ext, ['xlsx', 'xls'], true) && !class_exists('ZipArchive')) {
+            return $this->errorResponse('Ekstensi PHP "zip" tidak aktif. Aktifkan extension=zip pada php.ini lalu restart server.', 500);
+        }
 
         InvoiceImportBatch::failStale();
 
