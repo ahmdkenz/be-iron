@@ -256,6 +256,7 @@ class PembayaranApService
                     'status_posting_2' => 'PENDING',
                     'posted_at'        => null,
                     'posted_by'        => null,
+                    'matched_by'       => null,
                 ]);
 
             $pembayaran->delete();

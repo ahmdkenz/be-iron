@@ -2,6 +2,7 @@
 
 namespace App\Domain\Finance\PembayaranAr\Services;
 
+use App\Domain\Finance\EndingBalance\Services\EndingBalanceSyncBatcher;
 use App\Domain\Finance\Invoice\Services\InvoiceService;
 use App\Domain\Finance\PendapatanDiMuka\Services\PendapatanDiMukaService;
 use App\Models\BankStatement;
@@ -79,6 +80,166 @@ class PembayaranArService
         }
 
         return $pembayaran->load('createdBy');
+    }
+
+    /**
+     * Satu-satunya jalur pembuatan "Multi Payment" — 1 header (tb_pembayaran_ar,
+     * invoice_id SELALU NULL) yang mencakup banyak invoice sekaligus lewat
+     * tb_pembayaran_ar_items, mirip PembayaranApService::createVoucher(). Jalur
+     * pembayaran invoice-tunggal lama (create() di atas) TIDAK disentuh sama
+     * sekali — method ini murni tambahan.
+     *
+     * $data['alokasi'] = [['invoice_id' => int, 'jumlah' => float], ...]
+     */
+    public function createMultiPayment(array $data, ?UploadedFile $buktiBayar = null): PembayaranAr
+    {
+        $alokasi = $data['alokasi'] ?? [];
+        abort_if(empty($alokasi), 422, 'Multi Payment harus mencakup minimal 1 invoice');
+        abort_if(count($alokasi) > 50, 422, 'Maksimum 50 invoice per Multi Payment');
+
+        $invoiceIds = collect($alokasi)->pluck('invoice_id')->map(fn($v) => (int) $v);
+        abort_if(
+            $invoiceIds->count() !== $invoiceIds->unique()->count(),
+            422,
+            'Invoice duplikat tidak boleh muncul lebih dari sekali dalam satu Multi Payment'
+        );
+
+        return DB::transaction(function () use ($data, $alokasi, $invoiceIds, $buktiBayar) {
+            // Lock dalam urutan id ascending supaya Multi Payment paralel yang
+            // menyentuh invoice yang sama tidak saling deadlock (pola sama
+            // seperti PembayaranApService::createVoucher()).
+            $invoices = Invoice::whereIn('id', $invoiceIds->unique()->sort()->values())
+                ->lockForUpdate()
+                ->get()
+                ->keyBy('id');
+
+            abort_if(
+                $invoices->count() !== $invoiceIds->unique()->count(),
+                404,
+                'Salah satu invoice tidak ditemukan'
+            );
+
+            $perusahaanIds = $invoices->pluck('perusahaan_id')->unique();
+            abort_if(
+                $perusahaanIds->count() > 1,
+                422,
+                'Invoice dalam satu Multi Payment harus berasal dari entitas penagih yang sama'
+            );
+
+            foreach ($alokasi as $row) {
+                $invoice = $invoices[(int) $row['invoice_id']];
+                $jumlah  = (float) $row['jumlah'];
+
+                abort_if(
+                    $invoice->requiresApproval() && !$invoice->isApprovedForFinanceFlow(),
+                    422,
+                    "Opening balance invoice {$invoice->no_invoice} belum disetujui, pembayaran belum dapat dicatat"
+                );
+                abort_if(
+                    $invoice->status === 'LUNAS',
+                    422,
+                    "Invoice {$invoice->no_invoice} sudah berstatus LUNAS, tidak dapat menambah pembayaran"
+                );
+                abort_if(
+                    $jumlah <= 0,
+                    422,
+                    "Jumlah pembayaran untuk invoice {$invoice->no_invoice} harus lebih dari 0"
+                );
+                abort_if(
+                    $jumlah > (float) $invoice->sisa_tagihan,
+                    422,
+                    "Jumlah pembayaran melebihi sisa tagihan invoice {$invoice->no_invoice}"
+                );
+            }
+
+            // Total header selalu diturunkan dari sum alokasi — bukan input klien
+            // mentah — supaya tidak ada kelas bug "total tidak sama dengan detail".
+            $totalPayment = collect($alokasi)->sum(fn($row) => (float) $row['jumlah']);
+
+            $pembayaran = PembayaranAr::create([
+                'invoice_id'               => null,
+                'tanggal_pembayaran'       => $data['tanggal_pembayaran'],
+                'jumlah_pembayaran'        => $totalPayment,
+                'metode_pembayaran'        => $data['metode_pembayaran'],
+                'no_referensi'             => $data['no_referensi'] ?? null,
+                'keterangan'               => $data['keterangan'] ?? null,
+                'dibuat_dari_rekonsiliasi' => $data['dibuat_dari_rekonsiliasi'] ?? false,
+                'created_by'               => auth()->id(),
+            ]);
+
+            foreach ($alokasi as $row) {
+                $invoice     = $invoices[(int) $row['invoice_id']];
+                $jumlah      = (float) $row['jumlah'];
+                $sisaSebelum = (float) $invoice->sisa_tagihan;
+                $sisaSesudah = max(0.0, $sisaSebelum - $jumlah);
+
+                $pembayaran->items()->create([
+                    'invoice_id'          => $invoice->id,
+                    'klien_ar_id'         => $invoice->klien_ar_id,
+                    'jumlah_dialokasikan' => $jumlah,
+                    'sisa_sebelum'        => $sisaSebelum,
+                    'sisa_sesudah'        => $sisaSesudah,
+                ]);
+
+                PembayaranArLog::create([
+                    'pembayaran_ar_id' => $pembayaran->id,
+                    'aksi'             => 'DIBUAT',
+                    'actor_id'         => auth()->id(),
+                    'keterangan'       => "Alokasi ke invoice {$invoice->no_invoice} sebesar " . number_format($jumlah, 2, '.', ''),
+                    'data_sesudah'     => [
+                        'invoice_id' => $invoice->id,
+                        'no_invoice' => $invoice->no_invoice,
+                        'jumlah'     => $jumlah,
+                    ],
+                ]);
+            }
+
+            // Dedup resync Ending Balance per klien+periode — tanpa ini, Multi
+            // Payment yang menyentuh N klien berbeda memicu N kali full recompute
+            // + cascade 6 bulan dalam 1 transaksi yang sama.
+            EndingBalanceSyncBatcher::run(function () use ($invoices) {
+                foreach ($invoices as $invoice) {
+                    $this->invoiceService->recalculate($invoice);
+                }
+            });
+
+            if ($buktiBayar) {
+                try {
+                    $this->storeBuktiForMulti($pembayaran, $buktiBayar, $invoices->first());
+                } catch (\Throwable $e) {
+                    Log::error('PembayaranArService: gagal menyimpan bukti bayar Multi Payment', [
+                        'pembayaran_id' => $pembayaran->id,
+                        'error'         => $e->getMessage(),
+                    ]);
+                }
+            }
+
+            return $pembayaran->load(['items.invoice.klienAr', 'createdBy']);
+        });
+    }
+
+    private function storeBuktiForMulti(PembayaranAr $pembayaran, UploadedFile $file, Invoice $primaryInvoice): void
+    {
+        $primaryInvoice->loadMissing(['klienAr.resto', 'resto', 'items']);
+        $path = $this->buildBuktiPath($pembayaran, $file, $primaryInvoice);
+        // Sub-folder pembeda MULTI-{id} supaya tidak collision dengan bukti bayar
+        // invoice tunggal milik invoice yang sama.
+        $path = str_replace(
+            "pembayaran-{$pembayaran->id}-",
+            "MULTI-{$pembayaran->id}-",
+            $path
+        );
+
+        Storage::disk('local')->put($path, file_get_contents($file->getRealPath()));
+
+        $pembayaran->update([
+            'bukti_disk'        => 'local',
+            'bukti_path'        => $path,
+            'bukti_file_name'   => $file->getClientOriginalName(),
+            'bukti_file_size'   => $file->getSize(),
+            'bukti_mime_type'   => $file->getMimeType() ?? $file->getClientMimeType(),
+            'bukti_uploaded_at' => now(),
+        ]);
     }
 
     private function storeBukti(PembayaranAr $pembayaran, UploadedFile $file, Invoice $invoice): void
@@ -187,7 +348,19 @@ class PembayaranArService
         $invoiceId = $pembayaran->invoice_id;
         $sumberId  = $pembayaran->sumber_pembayaran_ar_id;
 
-        DB::transaction(function () use ($pembayaran, $childAllocations, $affectedInvoices, $invoiceId, $pdm, $sumberId) {
+        // Multi Payment (invoice_id null, alokasi lewat items): kumpulkan invoice
+        // id-nya sebelum items ikut terhapus oleh cascadeOnDelete saat header dihapus.
+        $multiInvoiceIds = $pembayaran->items()->pluck('invoice_id')->unique()->sort()->values();
+
+        DB::transaction(function () use ($pembayaran, $childAllocations, $affectedInvoices, $invoiceId, $pdm, $sumberId, $multiInvoiceIds) {
+            // Lock semua invoice Multi Payment terkait di urutan id ascending
+            // (sama seperti PembayaranApService::delete()) sebelum header dihapus,
+            // supaya recalculate() di bawah tidak balapan dengan proses lain yang
+            // menyentuh invoice yang sama.
+            $multiInvoices = $multiInvoiceIds->isNotEmpty()
+                ? Invoice::whereIn('id', $multiInvoiceIds)->lockForUpdate()->get()->keyBy('id')
+                : collect();
+
             PembayaranArLog::create([
                 'pembayaran_ar_id' => $pembayaran->id,
                 'aksi'             => 'DIHAPUS',
@@ -221,6 +394,7 @@ class PembayaranArService
                     'status_posting_2' => 'PENDING',
                     'posted_at'        => null,
                     'posted_by'        => null,
+                    'matched_by'       => null,
                 ]);
 
             $pembayaran->delete();
@@ -252,6 +426,12 @@ class PembayaranArService
                     $this->invoiceService->recalculate($targetInvoice->fresh());
                 }
             }
+
+            EndingBalanceSyncBatcher::run(function () use ($multiInvoices) {
+                foreach ($multiInvoices as $invoice) {
+                    $this->invoiceService->recalculate($invoice);
+                }
+            });
         });
     }
 

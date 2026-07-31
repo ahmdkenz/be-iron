@@ -95,6 +95,11 @@ class Invoice extends Model
         return $this->hasMany(PembayaranAr::class, 'invoice_id');
     }
 
+    public function pembayaranArItems()
+    {
+        return $this->hasMany(PembayaranArItem::class, 'invoice_id');
+    }
+
     public function createdBy()
     {
         return $this->belongsTo(User::class, 'created_by');

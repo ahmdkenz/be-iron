@@ -143,6 +143,7 @@ Route::prefix('rekonsiliasi-bank')->middleware('role:ADMIN|MANAGER|SUPERVISOR|AR
     Route::post('/detail/{detail}/kelebihan',        [BankStatementController::class, 'applyKelebihanBayar']);
     Route::get('/detail/{detail}/invoice-candidates', [BankStatementController::class, 'invoiceCandidates']);
     Route::post('/detail/{detail}/catat-bayar',       [BankStatementController::class, 'catatBayar']);
+    Route::post('/detail/{detail}/catat-bayar-multi', [BankStatementController::class, 'catatBayarMulti']);
     Route::post('/detail/{detail}/catat-pdm',         [BankStatementController::class, 'catatPdm']);
     Route::get('/detail/{detail}/tagihan-ap-candidates', [BankStatementController::class, 'tagihanApCandidates']);
     Route::post('/detail/{detail}/catat-voucher-ap',      [BankStatementController::class, 'catatVoucherAp']);

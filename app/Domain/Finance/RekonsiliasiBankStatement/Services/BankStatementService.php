@@ -215,6 +215,7 @@ class BankStatementService
     {
         return [
             'pembayaranAr.invoice.klienAr',
+            'pembayaranAr.items.invoice.klienAr.resto',
             'pembayaranAr.alokasiKelebihan.invoice.klienAr',
             'pembayaranAr.alokasiKelebihan.createdBy.karyawan',
             'pembayaranAp.items.tagihanAp.vendorAp',
@@ -229,16 +230,17 @@ class BankStatementService
         $pembayaran  = $d->pembayaranAr;
         $invoice     = $pembayaran?->invoice;
         $voucherAp   = $d->pembayaranAp;
+        $isMulti     = $pembayaran && !$invoice && $pembayaran->items->isNotEmpty();
         // Pembayaran shell "Catat sebagai PDM" (tanpa invoice) tidak punya nominal
         // pembanding — seluruh kredit bank memang sengaja dicatat sebagai PDM.
         $selisihBank = match (true) {
-            $pembayaran && $invoice => round($d->kredit - (float) $pembayaran->jumlah_pembayaran, 2),
-            (bool) $voucherAp       => round($d->debit - (float) $voucherAp->jumlah_pembayaran, 2),
-            default                 => null,
+            $pembayaran && ($invoice || $isMulti) => round($d->kredit - (float) $pembayaran->jumlah_pembayaran, 2),
+            (bool) $voucherAp                      => round($d->debit - (float) $voucherAp->jumlah_pembayaran, 2),
+            default                                => null,
         };
 
         $kelebihanBayar = null;
-        if ($invoice) {
+        if ($invoice || $isMulti) {
             $total = $this->computeKelebihanTotal($pembayaran, $d);
             if ($total > 0) {
                 $dialokasi = (float) $pembayaran->alokasiKelebihan->sum('jumlah_pembayaran');
@@ -271,7 +273,7 @@ class BankStatementService
         // Transaksi dicatat langsung sebagai PDM tanpa invoice: seluruh nominal
         // kredit bank sudah menjadi PDM saat dicocokkan, jadi "sisa" selalu 0.
         $pdmTanpaInvoice = null;
-        if ($pembayaran && !$invoice) {
+        if ($pembayaran && !$invoice && !$isMulti) {
             $pdmTanpaInvoice = PendapatanDiMuka::with('klienAr')
                 ->where('sumber_pembayaran_ar_id', $pembayaran->id)
                 ->first();
@@ -309,7 +311,22 @@ class BankStatementService
             'matched_by'       => $d->matchedBy?->name,
             'can_manage_match' => RoleHelper::canManageMatchedRecord(auth()->user(), $d->matched_by),
             'kelebihan_bayar'  => $kelebihanBayar,
-            'pembayaran'    => $pembayaran ? [
+            'pembayaran'    => $pembayaran ? ($isMulti ? [
+                'id'                 => $pembayaran->id,
+                'no_referensi'       => $pembayaran->no_referensi,
+                'tanggal_pembayaran' => $pembayaran->tanggal_pembayaran?->format('d-m-Y'),
+                'jumlah_pembayaran'  => $pembayaran->jumlah_pembayaran,
+                'metode_pembayaran'  => $pembayaran->metode_pembayaran,
+                'klien'              => $pembayaran->items->pluck('invoice.klienAr.nama_klien')->filter()->unique()->values()->join(', '),
+                'jumlah_invoice'     => $pembayaran->items->count(),
+                'items'              => $pembayaran->items->map(fn($item) => [
+                    'invoice_id' => $item->invoice_id,
+                    'no_invoice' => $item->invoice?->no_invoice,
+                    'klien'      => $item->invoice?->klienAr?->nama_klien,
+                    'resto'      => $item->invoice?->klienAr?->resto?->nama_resto,
+                    'jumlah'     => (float) $item->jumlah_dialokasikan,
+                ])->values(),
+            ] : [
                 'id'                 => $pembayaran->id,
                 'no_referensi'       => $pembayaran->no_referensi,
                 'tanggal_pembayaran' => $pembayaran->tanggal_pembayaran?->format('d-m-Y'),
@@ -318,7 +335,7 @@ class BankStatementService
                 'klien'              => $invoice?->klienAr?->nama_klien ?? $pdmTanpaInvoice?->klienAr?->nama_klien,
                 'invoice_id'         => $invoice?->id,
                 'no_invoice'         => $invoice?->no_invoice,
-            ] : ($voucherAp ? [
+            ]) : ($voucherAp ? [
                 'id'                 => $voucherAp->id,
                 'no_referensi'       => $voucherAp->no_referensi,
                 'tanggal_pembayaran' => $voucherAp->tanggal_pembayaran?->format('d-m-Y'),
@@ -459,19 +476,31 @@ class BankStatementService
         ];
     }
 
-    public function getInvoiceB2CKlien(BankStatementDetail $detail): \Illuminate\Support\Collection
+    public function getInvoiceB2CKlien(BankStatementDetail $detail, ?int $picArKaryawanId = null): \Illuminate\Support\Collection
     {
-        $sourceInvoice = $detail->pembayaranAr?->invoice;
-        abort_if(!$sourceInvoice, 422, 'Belum ada pembayaran yang dicocokkan.');
+        $pembayaran = $detail->pembayaranAr;
+        abort_if(!$pembayaran, 422, 'Belum ada pembayaran yang dicocokkan.');
 
-        // Dibatasi ke klien/resto sumber yang sama (bukan seluruh investor) agar
-        // alokasi kelebihan tidak melompat ke outlet lain yang tidak terkait
-        // dengan transaksi bank ini.
         $query = Invoice::with('klienAr.resto.investor')
             ->whereNotIn('status', ['LUNAS'])
             ->whereHas('klienAr', fn($q) => $q->where('tipe_klien', 'RESTO'))
-            ->where('klien_ar_id', $sourceInvoice->klien_ar_id)
             ->orderBy('tanggal_invoice');
+
+        if ($pembayaran->invoice_id) {
+            // Dibatasi ke klien/resto sumber yang sama (bukan seluruh investor)
+            // agar alokasi kelebihan tidak melompat ke outlet lain yang tidak
+            // terkait dengan transaksi bank ini.
+            $query->where('klien_ar_id', $pembayaran->invoice->klien_ar_id);
+        } else {
+            // Header Multi Payment: tidak ada 1 klien sumber, jadi dilebarkan ke
+            // seluruh entitas (perusahaan_id) yang sama dengan invoice-invoice
+            // yang sudah dialokasikan di header ini.
+            abort_if(!$pembayaran->items()->exists(), 422, 'Belum ada pembayaran yang dicocokkan.');
+            $query->where('perusahaan_id', $this->multiPaymentEntitasId($pembayaran));
+            if ($picArKaryawanId) {
+                $query->whereHas('klienAr', fn($q) => $q->withTrashed()->where('karyawan_ar_id', $picArKaryawanId));
+            }
+        }
 
         return $query->get()->map(function ($inv) {
             $subtotal        = (float) $inv->subtotal;
@@ -495,17 +524,27 @@ class BankStatementService
         });
     }
 
-    public function getInvoiceB2BKlien(BankStatementDetail $detail): \Illuminate\Support\Collection
+    public function getInvoiceB2BKlien(BankStatementDetail $detail, ?int $picArKaryawanId = null): \Illuminate\Support\Collection
     {
-        $sourceInvoice = $detail->pembayaranAr?->invoice;
-        abort_if(!$sourceInvoice, 422, 'Belum ada pembayaran yang dicocokkan.');
+        $pembayaran = $detail->pembayaranAr;
+        abort_if(!$pembayaran, 422, 'Belum ada pembayaran yang dicocokkan.');
 
-        return Invoice::with('klienAr')
+        $query = Invoice::with('klienAr')
             ->whereNotIn('status', ['LUNAS'])
-            ->where('klien_ar_id', $sourceInvoice->klien_ar_id)
             ->whereHas('klienAr', fn($q) => $q->where('tipe_klien', '!=', 'RESTO'))
-            ->orderBy('tanggal_invoice')
-            ->get()
+            ->orderBy('tanggal_invoice');
+
+        if ($pembayaran->invoice_id) {
+            $query->where('klien_ar_id', $pembayaran->invoice->klien_ar_id);
+        } else {
+            abort_if(!$pembayaran->items()->exists(), 422, 'Belum ada pembayaran yang dicocokkan.');
+            $query->where('perusahaan_id', $this->multiPaymentEntitasId($pembayaran));
+            if ($picArKaryawanId) {
+                $query->whereHas('klienAr', fn($q) => $q->withTrashed()->where('karyawan_ar_id', $picArKaryawanId));
+            }
+        }
+
+        return $query->get()
             ->map(function ($inv) {
                 $subtotal        = (float) $inv->subtotal;
                 $totalPembayaran = (float) $inv->total_pembayaran;
@@ -549,15 +588,39 @@ class BankStatementService
         );
 
         $target = Invoice::with('klienAr.resto')->findOrFail($invoiceId);
-        $inv->loadMissing('klienAr.resto');
 
-        // Dibatasi ke klien/resto sumber yang sama (bukan seluruh investor),
-        // selaras dengan pembatasan kandidat di getInvoiceB2CKlien/B2BKlien.
-        abort_if(
-            $target->klien_ar_id !== $inv->klien_ar_id,
-            422,
-            'Invoice tujuan harus milik klien/resto yang sama.'
-        );
+        if ($pembayaran->invoice_id) {
+            $inv->loadMissing('klienAr.resto');
+
+            // Dibatasi ke klien/resto sumber yang sama (bukan seluruh investor),
+            // selaras dengan pembatasan kandidat di getInvoiceB2CKlien/B2BKlien.
+            abort_if(
+                $target->klien_ar_id !== $inv->klien_ar_id,
+                422,
+                'Invoice tujuan harus milik klien/resto yang sama.'
+            );
+        } else {
+            // Header Multi Payment: dibatasi ke entitas (perusahaan_id) yang sama
+            // dengan invoice-invoice yang sudah dialokasikan di header ini, plus
+            // guard PIC AR eksplisit (scope-nya melebar dari 1 klien ke banyak
+            // klien, jadi tidak lagi otomatis aman seperti kasus 1 klien sumber).
+            abort_if(
+                $target->perusahaan_id !== $this->multiPaymentEntitasId($pembayaran),
+                422,
+                'Invoice tujuan harus berasal dari entitas penagih yang sama.'
+            );
+
+            $karyawanId = RoleHelper::picArKaryawanIdFor(auth()->user());
+            if ($karyawanId !== null) {
+                $klienKaryawanArId = $target->klienAr()->withTrashed()->value('karyawan_ar_id');
+                abort_unless(
+                    $klienKaryawanArId !== null && (int) $klienKaryawanArId === $karyawanId,
+                    403,
+                    'Anda tidak memiliki akses untuk memproses invoice klien ini.'
+                );
+            }
+        }
+
         abort_if($target->status === 'LUNAS', 422, 'Invoice ini sudah LUNAS.');
         abort_if(
             $target->requiresApproval() && !$target->isApprovedForFinanceFlow(),
@@ -585,7 +648,7 @@ class BankStatementService
                 'no_referensi'            => $pembayaran->no_referensi
                                                 ? $pembayaran->no_referensi . '/ALO-' . ($this->nextAlokasiSuffix($pembayaran))
                                                 : null,
-                'keterangan'              => $keterangan ?? 'Alokasi kelebihan dari ' . $inv->no_invoice,
+                'keterangan'              => $keterangan ?? ($inv ? 'Alokasi kelebihan dari ' . $inv->no_invoice : 'Alokasi kelebihan dari Multi Payment ' . $pembayaran->no_referensi),
                 'sumber_pembayaran_ar_id' => $pembayaran->id,
                 'created_by'              => auth()->id(),
             ]);
@@ -776,6 +839,45 @@ class BankStatementService
         });
     }
 
+    /**
+     * Multi Payment: 1 baris kredit rekening koran dialokasikan ke banyak
+     * invoice sekaligus (boleh lintas resto/investor, asal entitas penagih
+     * sama — divalidasi di PembayaranArService::createMultiPayment()). Beda
+     * dari matchWithNewVoucherAp() (AP, harus PAS dengan nominal debit), di
+     * sini total alokasi BOLEH kurang dari kredit — sisanya otomatis menjadi
+     * Kelebihan Bayar lewat mekanisme applyKelebihan() yang sudah ada.
+     */
+    public function matchWithNewMultiPayment(
+        BankStatementDetail $detail,
+        array $alokasi,
+        ?string $keterangan = null,
+        ?UploadedFile $buktiBayar = null,
+    ): BankStatementDetail {
+        abort_if($detail->status_cocok === 'MATCHED', 422, 'Transaksi ini sudah dicocokkan.');
+        abort_if($detail->kredit <= 0, 422, 'Hanya transaksi kredit yang dapat dicatat pembayarannya.');
+        abort_if(empty($alokasi), 422, 'Multi Payment harus mencakup minimal 1 invoice.');
+
+        $totalAlokasi = collect($alokasi)->sum(fn($row) => (float) $row['jumlah']);
+        abort_if(
+            $totalAlokasi > (float) $detail->kredit + 0.01,
+            422,
+            'Total alokasi (Rp ' . number_format($totalAlokasi, 0, ',', '.') . ') tidak boleh melebihi nominal kredit rekening koran (Rp ' . number_format($detail->kredit, 0, ',', '.') . ').'
+        );
+
+        return DB::transaction(function () use ($detail, $alokasi, $keterangan, $buktiBayar) {
+            $pembayaran = $this->pembayaranArService->createMultiPayment([
+                'tanggal_pembayaran'       => $detail->tanggal,
+                'metode_pembayaran'        => 'TRANSFER',
+                'no_referensi'             => $detail->no_referensi ?: null,
+                'keterangan'               => $keterangan,
+                'dibuat_dari_rekonsiliasi' => true,
+                'alokasi'                  => $alokasi,
+            ], $buktiBayar);
+
+            return $this->manualMatch($detail, $pembayaran->id);
+        });
+    }
+
     public function matchAsPdm(
         BankStatementDetail $detail,
         KlienAr $klienAr,
@@ -833,6 +935,18 @@ class BankStatementService
      */
     private function computeKelebihanTotal(PembayaranAr $pembayaran, BankStatementDetail $detail): float
     {
+        // Multi Payment (invoice_id null, alokasi lewat items): tidak ada 1
+        // invoice tunggal yang bisa "overpaid sendiri" (sudah dicegah per-baris
+        // saat createMultiPayment()), jadi kelebihan murni dari sisa kredit bank
+        // yang belum dialokasikan.
+        if (!$pembayaran->invoice_id) {
+            if (!$pembayaran->items()->exists()) {
+                return 0.0;
+            }
+
+            return max(0, round((float) $detail->kredit - (float) $pembayaran->jumlah_pembayaran, 2));
+        }
+
         $inv = $pembayaran->invoice;
         if (!$inv) {
             return 0.0;
@@ -842,6 +956,20 @@ class BankStatementService
         $kelebihanFromBank    = max(0, round((float) $detail->kredit - (float) $pembayaran->jumlah_pembayaran, 2));
 
         return max($kelebihanFromInvoice, $kelebihanFromBank);
+    }
+
+    /**
+     * Entitas (perusahaan_id) yang menaungi sebuah header Multi Payment —
+     * dijamin seragam untuk semua item by construction (guard entitas sama
+     * di createMultiPayment()), jadi cukup ambil dari item pertama.
+     */
+    private function multiPaymentEntitasId(PembayaranAr $pembayaran): ?int
+    {
+        return $pembayaran->items()
+            ->with('invoice:id,perusahaan_id')
+            ->get()
+            ->pluck('invoice.perusahaan_id')
+            ->first();
     }
 
     private function nextAlokasiSuffix(PembayaranAr $pembayaran): int

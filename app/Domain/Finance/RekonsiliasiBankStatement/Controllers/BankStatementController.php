@@ -301,7 +301,9 @@ class BankStatementController extends Controller
         $this->authorizeArFlow();
 
         try {
-            return $this->successResponse($this->service->getInvoiceB2CKlien($detail));
+            $picArKaryawanId = RoleHelper::picArKaryawanIdFor(auth()->user());
+
+            return $this->successResponse($this->service->getInvoiceB2CKlien($detail, $picArKaryawanId));
         } catch (\Symfony\Component\HttpKernel\Exception\HttpException $e) {
             return $this->errorResponse($e->getMessage(), $e->getStatusCode());
         }
@@ -312,7 +314,9 @@ class BankStatementController extends Controller
         $this->authorizeArFlow();
 
         try {
-            return $this->successResponse($this->service->getInvoiceB2BKlien($detail));
+            $picArKaryawanId = RoleHelper::picArKaryawanIdFor(auth()->user());
+
+            return $this->successResponse($this->service->getInvoiceB2BKlien($detail, $picArKaryawanId));
         } catch (\Symfony\Component\HttpKernel\Exception\HttpException $e) {
             return $this->errorResponse($e->getMessage(), $e->getStatusCode());
         }
@@ -426,6 +430,45 @@ class BankStatementController extends Controller
             return $this->successResponse(
                 $this->service->presentDetail($updated),
                 'Pembayaran berhasil dicatat dan dicocokkan.'
+            );
+        } catch (\Symfony\Component\HttpKernel\Exception\HttpException $e) {
+            return $this->errorResponse($e->getMessage(), $e->getStatusCode());
+        }
+    }
+
+    public function catatBayarMulti(Request $request, BankStatementDetail $detail): JsonResponse
+    {
+        $this->authorizeArFlow();
+
+        $request->validate([
+            'keterangan'              => ['nullable', 'string', 'max:500'],
+            'bukti_pembayaran'        => ['nullable', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:10240'],
+            'alokasi'                 => ['required', 'array', 'min:1', 'max:50'],
+            'alokasi.*.invoice_id'    => ['required', 'integer', 'exists:tb_invoice,id'],
+            'alokasi.*.jumlah'        => ['required', 'numeric', 'min:0.01'],
+        ]);
+
+        try {
+            $alokasi    = $request->input('alokasi');
+            $invoiceIds = collect($alokasi)->pluck('invoice_id')->unique();
+            $this->authorizeInvoiceScopeMulti($invoiceIds);
+
+            $updated = $this->service->matchWithNewMultiPayment(
+                $detail,
+                $alokasi,
+                $request->input('keterangan'),
+                $request->file('bukti_pembayaran'),
+            );
+
+            $this->financeNotificationService->bankReconciliationAction(
+                'catat_bayar_multi',
+                'Multi Payment AR dicatat',
+                sprintf('%s mencatat Multi Payment untuk %d invoice.', auth()->user()?->name ?? '-', count($invoiceIds)),
+            );
+
+            return $this->successResponse(
+                $this->service->presentDetail($updated),
+                'Multi Payment berhasil dicatat dan dicocokkan.'
             );
         } catch (\Symfony\Component\HttpKernel\Exception\HttpException $e) {
             return $this->errorResponse($e->getMessage(), $e->getStatusCode());
@@ -570,6 +613,24 @@ class BankStatementController extends Controller
             403,
             'Anda tidak memiliki akses untuk memproses invoice klien ini.'
         );
+    }
+
+    // Multi Payment: versi kolektif dari authorizeInvoiceOwnership() — semua
+    // invoice yang dipilih harus milik klien PIC AR yang login (Admin/Manager/
+    // Supervisor tidak dibatasi), mirip pola authorizeTagihanApScope() di AP
+    // tapi berbasis kepemilikan klien (bukan entitas perusahaan_id).
+    private function authorizeInvoiceScopeMulti(\Illuminate\Support\Collection $invoiceIds): void
+    {
+        $karyawanId = RoleHelper::picArKaryawanIdFor(auth()->user());
+        if ($karyawanId === null) {
+            return; // Admin/Manager/Supervisor: tidak dibatasi
+        }
+
+        $luarScope = Invoice::whereIn('id', $invoiceIds)
+            ->whereDoesntHave('klienAr', fn($q) => $q->withTrashed()->where('karyawan_ar_id', $karyawanId))
+            ->exists();
+
+        abort_if($luarScope, 403, 'Anda tidak memiliki akses untuk memproses salah satu invoice yang dipilih.');
     }
 
     private function authorizeKlienArOwnership(KlienAr $klienAr): void

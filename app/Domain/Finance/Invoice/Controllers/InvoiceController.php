@@ -14,6 +14,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
 use App\Models\KlienAr;
+use App\Models\PembayaranArItem;
 use App\Models\Resto;
 use Carbon\Carbon;
 use App\Support\Helpers\ArFilterScope;
@@ -361,25 +362,72 @@ class InvoiceController extends Controller
     {
         $invoice = Invoice::findOrFail($id);
         $this->authorizeInvoiceAccess($invoice);
-        $rows    = $invoice->pembayarans()->with('createdBy')->get();
 
-        return $this->successResponse($rows->map(fn($p) => [
-            'id'                 => $p->id,
-            'tanggal_pembayaran' => $p->tanggal_pembayaran?->format('d-m-Y'),
-            'jumlah_pembayaran'  => (float) $p->jumlah_pembayaran,
-            'metode_pembayaran'  => $p->metode_pembayaran,
-            'no_referensi'       => $p->no_referensi,
-            'keterangan'         => $p->keterangan,
-            'created_by_name'    => $p->createdBy?->username,
-            'created_at'         => $p->created_at?->toIso8601String(),
-            'bukti_file_name'    => $p->bukti_file_name,
-            'bukti_mime_type'    => $p->bukti_mime_type,
-            'bukti_url'          => $p->bukti_path
+        // Sumber A: pembayaran invoice-tunggal lama (header invoice_id = invoice ini).
+        $singleRows = $invoice->pembayarans()->with('createdBy')->get()->map(fn($p) => [
+            'id'                          => $p->id,
+            'tanggal_pembayaran'          => $p->tanggal_pembayaran?->format('d-m-Y'),
+            'jumlah_pembayaran'           => (float) $p->jumlah_pembayaran,
+            'metode_pembayaran'           => $p->metode_pembayaran,
+            'no_referensi'                => $p->no_referensi,
+            'keterangan'                  => $p->keterangan,
+            'created_by_name'             => $p->createdBy?->username,
+            'created_at'                  => $p->created_at,
+            'bukti_file_name'             => $p->bukti_file_name,
+            'bukti_mime_type'             => $p->bukti_mime_type,
+            'bukti_url'                   => $p->bukti_path
                 ? URL::temporarySignedRoute(
                     'pembayaran.public-bukti', now()->addDays(30), ['pembayaran' => $p->id]
                 )
                 : null,
-        ]));
+            'is_multi_payment'            => false,
+            'multi_payment_invoice_count' => null,
+        ]);
+
+        // Sumber B: alokasi Multi Payment (header pembayaran_ar.invoice_id NULL,
+        // jumlah untuk invoice ini hidup di tb_pembayaran_ar_items) yang menyentuh
+        // invoice ini — lihat PembayaranArService::createMultiPayment(). Tanpa ini,
+        // Riwayat Pembayaran selalu kosong untuk invoice yang dilunasi lewat Multi
+        // Payment walau total_pembayaran/sisa_tagihan-nya sudah benar (dihitung
+        // aditif di InvoiceService::recalculate()).
+        $multiRows = PembayaranArItem::with('pembayaranAr.createdBy')
+            ->where('invoice_id', $invoice->id)
+            ->get()
+            ->map(function (PembayaranArItem $item) {
+                $header      = $item->pembayaranAr;
+                $otherCount  = max(0, $header->items()->count() - 1);
+                $keterangan  = trim(($header->keterangan ? $header->keterangan . ' ' : '')
+                    . ($otherCount > 0
+                        ? "(Multi Payment — turut melunasi {$otherCount} invoice lain)"
+                        : '(Multi Payment)'));
+
+                return [
+                    'id'                          => $header->id,
+                    'tanggal_pembayaran'          => $header->tanggal_pembayaran?->format('d-m-Y'),
+                    'jumlah_pembayaran'           => (float) $item->jumlah_dialokasikan,
+                    'metode_pembayaran'           => $header->metode_pembayaran,
+                    'no_referensi'                => $header->no_referensi,
+                    'keterangan'                  => $keterangan,
+                    'created_by_name'             => $header->createdBy?->username,
+                    'created_at'                  => $header->created_at,
+                    'bukti_file_name'             => $header->bukti_file_name,
+                    'bukti_mime_type'             => $header->bukti_mime_type,
+                    'bukti_url'                   => $header->bukti_path
+                        ? URL::temporarySignedRoute(
+                            'pembayaran.public-bukti', now()->addDays(30), ['pembayaran' => $header->id]
+                        )
+                        : null,
+                    'is_multi_payment'            => true,
+                    'multi_payment_invoice_count' => $otherCount,
+                ];
+            });
+
+        $rows = $singleRows->concat($multiRows)
+            ->sortBy('created_at')
+            ->values()
+            ->map(fn($r) => [...$r, 'created_at' => $r['created_at']?->toIso8601String()]);
+
+        return $this->successResponse($rows);
     }
 
     public function approvalLogs(int $id): JsonResponse

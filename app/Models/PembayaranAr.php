@@ -73,4 +73,9 @@ class PembayaranAr extends Model
     {
         return $this->hasMany(PembayaranArLog::class, 'pembayaran_ar_id');
     }
+
+    public function items(): HasMany
+    {
+        return $this->hasMany(PembayaranArItem::class, 'pembayaran_ar_id');
+    }
 }

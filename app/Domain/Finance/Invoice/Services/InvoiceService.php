@@ -583,7 +583,12 @@ class InvoiceService
 
     public function recalculate(Invoice $invoice): void
     {
-        $totalPembayaran  = $invoice->pembayarans()->sum('jumlah_pembayaran');
+        // Aditif: pembayaran invoice-tunggal lama (header invoice_id terisi) TIDAK
+        // PERNAH overlap dengan item Multi Payment (header invoice_id selalu NULL,
+        // lihat PembayaranArService::createMultiPayment()), jadi kedua sumber ini
+        // aman dijumlahkan tanpa risiko double-count.
+        $totalPembayaran  = $invoice->pembayarans()->sum('jumlah_pembayaran')
+            + $invoice->pembayaranArItems()->sum('jumlah_dialokasikan');
         $totalPenyesuaian = (float) $invoice->total_penyesuaian;
         $subtotal         = (float) $invoice->subtotal;
 
