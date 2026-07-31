@@ -133,7 +133,10 @@ class MasterImportService
         $resIns = $resUpd = $resFail = 0;
         $kliIns = $kliUpd = $kliFail = $kliSkip = 0;
         $processed  = 0;
-        $lineNumber = 1; // header sudah "dikonsumsi" secara virtual (lihat detectMasterHeaderStart)
+        // -1 supaya increment pertama ($lineNumber++ di awal closure) pas di $detected['dataStart'] —
+        // yaitu nomor baris ASLI di Excel untuk baris data pertama, bukan angka virtual mulai dari 1.
+        // Robust terhadap posisi header yang terdeteksi dinamis via detectMasterHeaderStart().
+        $lineNumber = $detected['dataStart'] - 1;
         $inChunk    = 0;
 
         DB::beginTransaction();
@@ -196,7 +199,7 @@ class MasterImportService
                     $validator = Validator::make($invData, [
                         'nama_investor'   => ['required', 'string', 'max:150'],
                         'ktp'             => ['nullable', 'string', 'max:20'],
-                        'npwp'            => ['nullable', 'string', 'max:20'],
+                        'npwp'            => ['nullable', 'string', 'max:30'],
                         'no_hp'           => ['nullable', 'string', 'max:20'],
                         'pengelola'       => ['nullable', 'string', 'max:150'],
                         'no_hp_pengelola' => ['nullable', 'string', 'max:20'],
@@ -564,7 +567,8 @@ class MasterImportService
 
         $brgIns = $brgUpd = $brgSkip = $brgFail = 0;
         $processed  = 0;
-        $lineNumber = 1; // header sudah "dikonsumsi" secara virtual (lihat detectMasterHeaderStart)
+        // sama seperti processMasterDataSheet() — lihat komentar di sana
+        $lineNumber = $detected['dataStart'] - 1;
         $inChunk    = 0;
 
         DB::beginTransaction();
