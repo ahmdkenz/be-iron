@@ -572,10 +572,16 @@ class InvoiceController extends Controller
         ]);
     }
 
-    private const EXPORT_HEADERS = [
-        'No Invoice', 'No Invoice Resto', 'Klien', 'Resto', 'Kode Resto', 'Stokis', 'Entitas',
-        'Tanggal Invoice', 'Status', 'Kode Barang', 'Nama Barang', 'Satuan', 'QTY', 'Harga Satuan',
-        'Total Item',
+    /** Ringkasan per invoice — dipakai Sheet 1 XLSX ("Invoice") & blok kiri CSV. */
+    private const SHEET_INVOICE_HEADERS = [
+        'No Invoice', 'Klien', 'Entitas', 'Tanggal Invoice',
+        'Subtotal', 'Tagihan Sebelumnya', 'Total Tagihan', 'Total Pembayaran', 'Sisa Tagihan', 'Status',
+    ];
+
+    /** Detail per item barang — dipakai Sheet 2 XLSX ("Detail Invoice") & blok kanan CSV. */
+    private const SHEET_DETAIL_HEADERS = [
+        'Nomor Invoice 1', 'Klien', 'Resto', 'Kode Resto', 'Stokis', 'Entitas', 'Tanggal Invoice',
+        'Kode Barang', 'Nama Barang', 'Satuan', 'QTY', 'Harga Satuan', 'Total Item', 'Nomor Invoice 2',
     ];
 
     /**
@@ -672,21 +678,70 @@ class InvoiceController extends Controller
             ?? '-';
 
         return [
-            $meta['no_invoice']      ?? '-',
-            $d->no_invoice_resto     ?? '-',
-            $meta['klien']           ?? '-',
-            $restoNama,
-            $resolvedKode            ?? '-',
-            $stokis,
-            $meta['entitas']         ?? '-',
-            $meta['tanggal_invoice'] ?? '-',
-            $meta['status']          ?? '-',
-            $d->kode_barang ?? $d->barang?->kode_barang ?? '-',
-            $d->nama_barang,
-            $d->satuan ?? '-',
-            (float) $d->qty,
-            (float) $d->harga_satuan,
-            (float) $d->subtotal,
+            'no_invoice'       => $meta['no_invoice']      ?? '-',
+            'no_invoice_resto' => $d->no_invoice_resto     ?? '-',
+            'klien'            => $meta['klien']           ?? '-',
+            'resto'            => $restoNama,
+            'kode_resto'       => $resolvedKode             ?? '-',
+            'stokis'           => $stokis,
+            'entitas'          => $meta['entitas']         ?? '-',
+            'tanggal_invoice'  => $meta['tanggal_invoice'] ?? '-',
+            'status'           => $meta['status']          ?? '-',
+            'kode_barang'      => $d->kode_barang ?? $d->barang?->kode_barang ?? '-',
+            'nama_barang'      => $d->nama_barang,
+            'satuan'           => $d->satuan ?? '-',
+            'qty'              => (float) $d->qty,
+            'harga_satuan'     => (float) $d->harga_satuan,
+            'total_item'       => (float) $d->subtotal,
+        ];
+    }
+
+    /**
+     * Reorder hasil resolveExportRow() sesuai SHEET_DETAIL_HEADERS — dipakai bareng
+     * oleh Sheet 2 XLSX ("Detail Invoice") dan blok kanan CSV supaya urutan kolom
+     * cuma didefinisikan sekali. Kolom 'status' sengaja tidak diikutkan.
+     */
+    private function detailRowValues(array $row): array
+    {
+        return [
+            $row['no_invoice_resto'],
+            $row['klien'],
+            $row['resto'],
+            $row['kode_resto'],
+            $row['stokis'],
+            $row['entitas'],
+            $row['tanggal_invoice'],
+            $row['kode_barang'],
+            $row['nama_barang'],
+            $row['satuan'],
+            $row['qty'],
+            $row['harga_satuan'],
+            $row['total_item'],
+            $row['no_invoice'],
+        ];
+    }
+
+    /**
+     * Baris ringkasan per invoice sesuai SHEET_INVOICE_HEADERS — dipakai bareng oleh
+     * Sheet 1 XLSX ("Invoice") dan blok kiri CSV. $invoices dari getAllForExport()
+     * sudah eager-load klienAr.resto.perusahaan/resto/perusahaan, jadi tidak ada
+     * query tambahan di sini.
+     */
+    private function invoiceSummaryRowValues(Invoice $inv): array
+    {
+        $entitasP = $inv->klienAr?->resto?->perusahaan ?? $inv->perusahaan;
+
+        return [
+            $inv->no_invoice,
+            $inv->klienAr?->nama_klien ?? '-',
+            $entitasP?->nama_perusahaan ?? '-',
+            $inv->tanggal_invoice?->format('d-m-Y') ?? '-',
+            (float) $inv->subtotal,
+            (float) $inv->tagihan_periode_sebelumnya,
+            (float) $inv->total_tagihan,
+            (float) $inv->total_pembayaran,
+            (float) $inv->sisa_tagihan,
+            $inv->status,
         ];
     }
 
@@ -698,9 +753,13 @@ class InvoiceController extends Controller
     }
 
     /**
-     * Export CSV gabungan (1 baris = 1 item barang, kolom level-invoice diulang per baris).
-     * Item dibaca per-batch invoice_id (bukan satu ->get() raksasa) supaya memori tetap flat
-     * untuk data puluhan-ratusan ribu baris — lihat buildExportInvoiceMeta()/exportItemQuery().
+     * Export CSV — CSV tidak punya konsep sheet, jadi blok ringkasan invoice (kiri) dan
+     * blok detail item (kanan, dipisah 1 kolom kosong) ditulis BERDAMPINGAN pada baris
+     * yang sama, meniru tampilan 2-sheet versi XLSX (lihat streamXlsxExport()).
+     * Blok kiri (ringkasan per invoice) di-buffer penuh di memori — amannya sama seperti
+     * buildExportInvoiceMeta(), jumlah invoice selalu jauh lebih kecil dari jumlah item.
+     * Blok kanan (detail per item) tetap di-stream per-batch invoice_id supaya memori
+     * tetap flat untuk data puluhan-ratusan ribu baris.
      */
     private function streamCsvExport(Request $request): StreamedResponse
     {
@@ -709,34 +768,68 @@ class InvoiceController extends Controller
         $invoiceIds   = $invoices->pluck('id');
         $invoiceMeta  = $this->buildExportInvoiceMeta($invoices);
         $restosByKode = $this->buildExportRestoLookup($invoiceIds, $invoiceMeta);
-        $headers      = self::EXPORT_HEADERS;
 
-        return response()->streamDownload(function () use ($invoiceIds, $invoiceMeta, $restosByKode, $headers) {
+        $summaryRows  = $invoices->map(fn($inv) => $this->invoiceSummaryRowValues($inv))->values();
+        $summaryCount = $summaryRows->count();
+        $summaryBlank = array_fill(0, count(self::SHEET_INVOICE_HEADERS), '');
+        $detailBlank  = array_fill(0, count(self::SHEET_DETAIL_HEADERS), '');
+        $header       = array_merge(self::SHEET_INVOICE_HEADERS, [''], self::SHEET_DETAIL_HEADERS);
+
+        return response()->streamDownload(function () use (
+            $invoiceIds, $invoiceMeta, $restosByKode, $summaryRows, $summaryCount, $summaryBlank, $detailBlank, $header
+        ) {
             $handle = fopen('php://output', 'w');
             fprintf($handle, chr(0xEF) . chr(0xBB) . chr(0xBF)); // UTF-8 BOM
             // Titik koma, bukan koma — locale Excel Indonesia pakai ";" sebagai list
             // separator sistem, jadi file terbuka langsung terbagi rapi per kolom.
-            fputcsv($handle, $headers, ';');
+            fputcsv($handle, $header, ';');
 
-            $invoiceIds->chunk(500)->each(function ($batchIds) use ($handle, $invoiceMeta, $restosByKode) {
-                $this->exportItemQuery($batchIds)->get()->each(function ($d) use ($handle, $invoiceMeta, $restosByKode) {
-                    $meta = $invoiceMeta[$d->invoice_id] ?? [];
-                    fputcsv($handle, $this->resolveExportRow($d, $meta, $restosByKode), ';');
+            $rowIndex = 0;
+
+            $invoiceIds->chunk(500)->each(function ($batchIds) use ($handle, $invoiceMeta, $restosByKode, $summaryRows, $summaryCount, $summaryBlank, &$rowIndex) {
+                $this->exportItemQuery($batchIds)->get()->each(function ($d) use ($handle, $invoiceMeta, $restosByKode, $summaryRows, $summaryCount, $summaryBlank, &$rowIndex) {
+                    $meta   = $invoiceMeta[$d->invoice_id] ?? [];
+                    $detail = $this->detailRowValues($this->resolveExportRow($d, $meta, $restosByKode));
+                    $left   = $rowIndex < $summaryCount ? $summaryRows[$rowIndex] : $summaryBlank;
+
+                    fputcsv($handle, array_merge($left, [''], $detail), ';');
+                    $rowIndex++;
                 });
             });
 
+            // Kasus langka: invoice tanpa item, baris ringkasannya belum sempat ditulis
+            // di loop atas — tulis sisanya di sini dengan blok detail kosong.
+            while ($rowIndex < $summaryCount) {
+                fputcsv($handle, array_merge($summaryRows[$rowIndex], [''], $detailBlank), ';');
+                $rowIndex++;
+            }
+
             fclose($handle);
-        }, 'invoice-ar-' . now()->format('Ymd-His') . '.csv', [
+        }, 'Data Tagihan Invoice-' . now()->format('Ymd-His') . '.csv', [
             'Content-Type' => 'text/csv; charset=UTF-8',
         ]);
     }
 
+    /** Tulis header row (bold + fill biru) & freeze pane baris pertama data — dipakai tiap sheet. */
+    private function writeXlsxHeaderRow(Worksheet $sheet, array $cols, array $labels, string $lastCol): void
+    {
+        foreach (array_combine($cols, $labels) as $col => $label) {
+            $sheet->setCellValueExplicit("{$col}1", $label, DataType::TYPE_STRING);
+        }
+        $sheet->getStyle("A1:{$lastCol}1")->applyFromArray([
+            'font' => ['bold' => true, 'color' => ['argb' => 'FFFFFFFF']],
+            'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF1565C0']],
+        ]);
+        $sheet->freezePane('A2');
+    }
+
     /**
-     * Export XLSX asli (PhpSpreadsheet). Styling SENGAJA cuma di header row — jangan tiru
-     * pola styling per-sel di dalam loop seperti exportB2BDelivery(), itu justru penyebab
-     * lama versi Excel 2-sheet dulu diganti CSV (lihat riwayat exportExcel()). Direkomendasikan
-     * hanya untuk data <= ~13.000 baris (lihat exportRowCount() + peringatan di FE), tapi
-     * tidak diblokir keras di sini kalau user tetap memilih XLSX untuk data besar.
+     * Export XLSX asli (PhpSpreadsheet), 2 sheet terpisah: "Invoice" (ringkasan per invoice)
+     * dan "Detail Invoice" (per item barang). Styling SENGAJA cuma di header row tiap sheet —
+     * jangan tiru pola styling per-sel di dalam loop seperti exportB2BDelivery(), itu justru
+     * penyebab lama versi Excel 2-sheet dulu diganti CSV (lihat riwayat exportExcel()).
+     * Direkomendasikan hanya untuk data <= ~13.000 baris (lihat exportRowCount() + peringatan
+     * di FE), tapi tidak diblokir keras di sini kalau user tetap memilih XLSX untuk data besar.
      */
     private function streamXlsxExport(Request $request): BinaryFileResponse
     {
@@ -749,41 +842,57 @@ class InvoiceController extends Controller
         $invoiceMeta  = $this->buildExportInvoiceMeta($invoices);
         $restosByKode = $this->buildExportRestoLookup($invoiceIds, $invoiceMeta);
 
-        $cols    = range('A', 'O'); // 15 kolom, sinkron dengan self::EXPORT_HEADERS
-        $lastCol = 'O';
-
         $spreadsheet = new Spreadsheet();
-        $sheet       = $spreadsheet->getActiveSheet();
-        $sheet->setTitle('Invoice AR');
 
-        foreach (array_combine($cols, self::EXPORT_HEADERS) as $col => $label) {
-            $sheet->setCellValueExplicit("{$col}1", $label, DataType::TYPE_STRING);
+        // ─── Sheet 1: Invoice (ringkasan per invoice) ───
+        $invoiceCols    = range('A', 'J'); // 10 kolom, sinkron dengan SHEET_INVOICE_HEADERS
+        $invoiceLastCol = 'J';
+
+        $sheet1 = $spreadsheet->getActiveSheet();
+        $sheet1->setTitle('Invoice');
+        $this->writeXlsxHeaderRow($sheet1, $invoiceCols, self::SHEET_INVOICE_HEADERS, $invoiceLastCol);
+
+        $rowNum1 = 2;
+        foreach ($invoices as $inv) {
+            foreach (array_combine($invoiceCols, $this->invoiceSummaryRowValues($inv)) as $col => $val) {
+                $type = in_array($col, ['E', 'F', 'G', 'H', 'I'], true) ? DataType::TYPE_NUMERIC : DataType::TYPE_STRING;
+                $sheet1->getCell("{$col}{$rowNum1}")->setValueExplicit($val, $type);
+            }
+            $rowNum1++;
         }
-        $sheet->getStyle("A1:{$lastCol}1")->applyFromArray([
-            'font' => ['bold' => true, 'color' => ['argb' => 'FFFFFFFF']],
-            'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF1565C0']],
-        ]);
-        $sheet->freezePane('A2');
+        if ($rowNum1 > 2) {
+            $sheet1->getStyle('E2:I' . ($rowNum1 - 1))->getNumberFormat()->setFormatCode('#,##0');
+        }
 
-        $numericCols = ['M', 'N', 'O']; // QTY, Harga Satuan, Total Item
-        $rowNum      = 2;
+        // ─── Sheet 2: Detail Invoice (per item barang) ───
+        $detailCols    = range('A', 'N'); // 14 kolom, sinkron dengan SHEET_DETAIL_HEADERS
+        $detailLastCol = 'N';
 
-        $invoiceIds->chunk(500)->each(function ($batchIds) use ($sheet, &$rowNum, $invoiceMeta, $restosByKode, $cols, $numericCols) {
-            $this->exportItemQuery($batchIds)->get()->each(function ($d) use ($sheet, &$rowNum, $invoiceMeta, $restosByKode, $cols, $numericCols) {
+        $sheet2 = $spreadsheet->createSheet();
+        $sheet2->setTitle('Detail Invoice');
+        $this->writeXlsxHeaderRow($sheet2, $detailCols, self::SHEET_DETAIL_HEADERS, $detailLastCol);
+
+        $numericCols = ['K', 'L', 'M']; // QTY, Harga Satuan, Total Item
+        $rowNum2     = 2;
+
+        $invoiceIds->chunk(500)->each(function ($batchIds) use ($sheet2, &$rowNum2, $invoiceMeta, $restosByKode, $detailCols, $numericCols) {
+            $this->exportItemQuery($batchIds)->get()->each(function ($d) use ($sheet2, &$rowNum2, $invoiceMeta, $restosByKode, $detailCols, $numericCols) {
                 $meta = $invoiceMeta[$d->invoice_id] ?? [];
-                $row  = $this->resolveExportRow($d, $meta, $restosByKode);
+                $row  = $this->detailRowValues($this->resolveExportRow($d, $meta, $restosByKode));
 
-                foreach (array_combine($cols, $row) as $col => $val) {
+                foreach (array_combine($detailCols, $row) as $col => $val) {
                     $type = in_array($col, $numericCols, true) ? DataType::TYPE_NUMERIC : DataType::TYPE_STRING;
-                    $sheet->getCell("{$col}{$rowNum}")->setValueExplicit($val, $type);
+                    $sheet2->getCell("{$col}{$rowNum2}")->setValueExplicit($val, $type);
                 }
-                $rowNum++;
+                $rowNum2++;
             });
         });
 
-        if ($rowNum > 2) {
-            $sheet->getStyle('M2:O' . ($rowNum - 1))->getNumberFormat()->setFormatCode('#,##0');
+        if ($rowNum2 > 2) {
+            $sheet2->getStyle('K2:M' . ($rowNum2 - 1))->getNumberFormat()->setFormatCode('#,##0');
         }
+
+        $spreadsheet->setActiveSheetIndex(0);
 
         $temp     = tempnam(sys_get_temp_dir(), 'export_invoice_') . '.xlsx';
         $filename = 'Data Tagihan Invoice-' . now()->format('Ymd-His') . '.xlsx';
