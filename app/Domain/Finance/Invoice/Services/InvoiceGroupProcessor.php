@@ -45,6 +45,9 @@ class InvoiceGroupProcessor
      *                              barang_id?, kode_barang?, nama_barang, qty, satuan?,
      *                              harga_satuan, no_invoice_resto?, kode_resto?, nama_resto?
      * @param  array  $lockedEbMap  Preloaded map dari buildLockedEbMap()
+     * @param  ?array $existingInvoiceMap  Preloaded map dari InvoiceImportService::buildApplyExistingMap()
+     *                              (key: "klienArId|Y-m-d"). Null berarti query per-grup seperti biasa
+     *                              (dipakai caller lain di luar import chunk).
      * @return ProcessGroupResult
      */
     public function processGroup(
@@ -52,6 +55,7 @@ class InvoiceGroupProcessor
         array $headerData,
         array $items,
         array $lockedEbMap,
+        ?array $existingInvoiceMap = null,
     ): ProcessGroupResult {
         $klienArId = (int) $headerData['klien_ar_id'];
         $tanggal   = $headerData['tanggal_invoice'];
@@ -60,10 +64,12 @@ class InvoiceGroupProcessor
             return ProcessGroupResult::skipped('Periode sudah dikunci di Ending Balance');
         }
 
-        $existingInvoice = Invoice::where('klien_ar_id', $klienArId)
-            ->whereDate('tanggal_invoice', $tanggal)
-            ->where('is_opening_balance', false)
-            ->first();
+        $existingInvoice = $existingInvoiceMap !== null
+            ? ($existingInvoiceMap[$klienArId . '|' . $tanggal] ?? null)
+            : Invoice::where('klien_ar_id', $klienArId)
+                ->whereDate('tanggal_invoice', $tanggal)
+                ->where('is_opening_balance', false)
+                ->first();
 
         if ($existingInvoice) {
             if ($existingInvoice->status === 'LUNAS') {
@@ -232,10 +238,17 @@ class InvoiceGroupProcessor
 
     private function insertItems(Invoice $invoice, array $items): void
     {
-        foreach ($items as $item) {
-            $qty    = (float) ($item['qty'] ?? 0);
-            $harga  = (float) ($item['harga_satuan'] ?? 0);
-            $invoice->items()->create([
+        if (empty($items)) {
+            return;
+        }
+
+        $now  = now();
+        $rows = array_map(function (array $item) use ($invoice, $now) {
+            $qty   = (float) ($item['qty'] ?? 0);
+            $harga = (float) ($item['harga_satuan'] ?? 0);
+
+            return [
+                'invoice_id'       => $invoice->id,
                 'barang_id'        => $item['barang_id'] ?? null,
                 'kode_barang'      => $item['kode_barang'] ?? null,
                 'nama_barang'      => $item['nama_barang'],
@@ -246,8 +259,12 @@ class InvoiceGroupProcessor
                 'no_invoice_resto' => $item['no_invoice_resto'] ?? null,
                 'kode_resto'       => $item['kode_resto'] ?? null,
                 'nama_resto'       => $item['nama_resto'] ?? null,
-            ]);
-        }
+                'created_at'       => $now,
+                'updated_at'       => $now,
+            ];
+        }, $items);
+
+        InvoiceItem::insert($rows);
     }
 
     private function recomputeSubtotal(Invoice $invoice): void

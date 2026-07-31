@@ -3,6 +3,7 @@
 namespace App\Domain\Finance\Invoice\Observers;
 
 use App\Domain\Finance\EndingBalance\Services\EndingBalanceService;
+use App\Domain\Finance\EndingBalance\Services\EndingBalanceSyncBatcher;
 use App\Models\Invoice;
 use Illuminate\Support\Facades\DB;
 
@@ -39,8 +40,16 @@ class InvoiceObserver
 
         // DB::afterCommit memastikan computeComponents berjalan setelah semua
         // data dalam transaksi (items, totals) sudah ter-commit ke database
-        DB::afterCommit(
-            fn() => $this->ebService->syncEbForKlien($klienId, $periodeAwal, $periodeAkhir, $userId)
-        );
+        DB::afterCommit(function () use ($klienId, $periodeAwal, $periodeAkhir, $userId) {
+            // Saat import bulk (EndingBalanceSyncBatcher::run() aktif), tunda sync
+            // dan cukup catat kunci klien+periode agar di-flush sekali di akhir batch
+            // alih-alih recompute penuh (+cascade 6 bulan) berulang per invoice.
+            if (EndingBalanceSyncBatcher::isActive()) {
+                EndingBalanceSyncBatcher::collect($klienId, $periodeAwal, $periodeAkhir, $userId);
+                return;
+            }
+
+            $this->ebService->syncEbForKlien($klienId, $periodeAwal, $periodeAkhir, $userId);
+        });
     }
 }

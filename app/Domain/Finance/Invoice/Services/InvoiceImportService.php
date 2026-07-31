@@ -4,6 +4,7 @@ namespace App\Domain\Finance\Invoice\Services;
 
 use App\Domain\Finance\EndingBalance\Services\EndingBalanceKoreksiService;
 use App\Domain\Finance\EndingBalance\Services\EndingBalanceService;
+use App\Domain\Finance\EndingBalance\Services\EndingBalanceSyncBatcher;
 use App\Models\Barang;
 use App\Models\BankStatementDetail;
 use App\Models\EndingBalance;
@@ -394,6 +395,9 @@ class InvoiceImportService
                     ->get()
                     ->groupBy('group_id');
 
+                $now = now();
+                $rowsToUpsert = [];
+
                 foreach ($groups as $group) {
                     if ($group->classification === 'REJECTED') {
                         $counters['cnt_rejected']++;
@@ -416,11 +420,14 @@ class InvoiceImportService
 
                     $result = $this->classifyGroup($incoming, $existing, $ebLocked);
 
-                    $group->update([
+                    $rowsToUpsert[] = [
+                        'id'              => $group->id,
+                        'batch_id'        => $batch->id,
+                        'group_key'       => $group->group_key,
                         'classification'  => $result['classification'],
                         'reason'          => $result['reason'],
-                        'risk_flags'      => $result['risk_flags'],
-                        'header_diff'     => $result['header_diff'],
+                        'risk_flags'      => json_encode($result['risk_flags']),
+                        'header_diff'     => json_encode($result['header_diff']),
                         'total_lama'      => $result['total_lama'],
                         'total_baru'      => $result['total_baru'],
                         'selisih'         => $result['selisih'],
@@ -428,7 +435,8 @@ class InvoiceImportService
                         'invoice_id'      => $existing['id']         ?? null,
                         'no_invoice'      => $existing['no_invoice'] ?? null,
                         'review_status'   => $result['classification'] === 'REVIEW_REQUIRED' ? 'PENDING' : null,
-                    ]);
+                        'updated_at'      => $now,
+                    ];
 
                     $counters[match ($result['classification']) {
                         'NEW_INVOICE'      => 'cnt_new',
@@ -447,6 +455,15 @@ class InvoiceImportService
                     }
 
                     $done++;
+                }
+
+                if (!empty($rowsToUpsert)) {
+                    InvoiceImportGroup::upsert(
+                        $rowsToUpsert,
+                        ['id'],
+                        ['classification', 'reason', 'risk_flags', 'header_diff', 'total_lama', 'total_baru',
+                            'selisih', 'adjustment_type', 'invoice_id', 'no_invoice', 'review_status', 'updated_at'],
+                    );
                 }
 
                 $batch->update(['classified_groups' => $done] + $counters);
@@ -752,34 +769,40 @@ class InvoiceImportService
             return false;
         }
 
+        $existingInvoiceMap = $this->buildApplyExistingMap($groups);
         $errors = $batch->errors ?? [];
 
-        foreach ($groups as $group) {
-            try {
-                $result = $this->applyGroup($group, $lockedEbMap);
-            } catch (\Throwable $e) {
-                Log::error('InvoiceImportService: gagal memproses grup', ['group_id' => $group->id, 'error' => $e->getMessage()]);
-                $result = ['status' => 'FAILED', 'message' => 'Error tak terduga: ' . $e->getMessage(), 'invoice_id' => null];
+        // Batching: sinkronisasi Ending Balance per invoice (via InvoiceObserver)
+        // ditunda dan di-dedup, lalu di-flush sekali per klien+periode di akhir
+        // chunk ini alih-alih recompute penuh (+cascade 6 bulan) berulang kali.
+        EndingBalanceSyncBatcher::run(function () use ($groups, $lockedEbMap, $existingInvoiceMap, $batch, &$errors) {
+            foreach ($groups as $group) {
+                try {
+                    $result = $this->applyGroup($group, $lockedEbMap, $existingInvoiceMap);
+                } catch (\Throwable $e) {
+                    Log::error('InvoiceImportService: gagal memproses grup', ['group_id' => $group->id, 'error' => $e->getMessage()]);
+                    $result = ['status' => 'FAILED', 'message' => 'Error tak terduga: ' . $e->getMessage(), 'invoice_id' => null];
+                }
+
+                $group->update([
+                    'apply_status'  => $result['status'],
+                    'apply_message' => $result['message'],
+                    'invoice_id'    => $result['invoice_id'] ?? $group->invoice_id,
+                    'no_invoice'    => $result['no_invoice'] ?? $group->no_invoice,
+                ]);
+
+                if (in_array($result['status'], ['SKIPPED', 'FAILED'], true)) {
+                    $errors[] = ['row' => $group->first_line, 'message' => $result['message']];
+                }
+
+                $batch->increment('applied_processed');
+                $batch->increment(match ($result['status']) {
+                    'APPLIED' => $group->classification === 'NEW_INVOICE' ? 'applied_inserted' : 'applied_updated',
+                    'SKIPPED' => 'applied_skipped',
+                    default   => 'applied_failed',
+                });
             }
-
-            $group->update([
-                'apply_status'  => $result['status'],
-                'apply_message' => $result['message'],
-                'invoice_id'    => $result['invoice_id'] ?? $group->invoice_id,
-                'no_invoice'    => $result['no_invoice'] ?? $group->no_invoice,
-            ]);
-
-            if (in_array($result['status'], ['SKIPPED', 'FAILED'], true)) {
-                $errors[] = ['row' => $group->first_line, 'message' => $result['message']];
-            }
-
-            $batch->increment('applied_processed');
-            $batch->increment(match ($result['status']) {
-                'APPLIED' => $group->classification === 'NEW_INVOICE' ? 'applied_inserted' : 'applied_updated',
-                'SKIPPED' => 'applied_skipped',
-                default   => 'applied_failed',
-            });
-        }
+        });
 
         $batch->update(['errors' => $errors]);
 
@@ -789,8 +812,26 @@ class InvoiceImportService
             ->exists();
     }
 
+    /** @return array<string, Invoice> key: "klienArId|Y-m-d" */
+    private function buildApplyExistingMap($groups): array
+    {
+        $klienIds = $groups->pluck('klien_ar_id')->filter()->unique()->values()->all();
+        $tanggals = $groups->map(fn($g) => $this->dateOrNull($g->tanggal_invoice))->filter()->unique()->values()->all();
+
+        if (empty($klienIds) || empty($tanggals)) {
+            return [];
+        }
+
+        return Invoice::whereIn('klien_ar_id', $klienIds)
+            ->whereIn('tanggal_invoice', $tanggals)
+            ->where('is_opening_balance', false)
+            ->get()
+            ->keyBy(fn($inv) => $inv->klien_ar_id . '|' . Carbon::parse($inv->tanggal_invoice)->toDateString())
+            ->all();
+    }
+
     /** @return array{status: string, message: ?string, invoice_id: ?int, no_invoice: ?string} */
-    private function applyGroup(InvoiceImportGroup $group, array $lockedEbMap): array
+    private function applyGroup(InvoiceImportGroup $group, array $lockedEbMap, array $existingInvoiceMap = []): array
     {
         $items = $this->rowsToItems($group->rows()->orderBy('row_number')->get());
 
@@ -818,7 +859,7 @@ class InvoiceImportService
             ]);
         }
 
-        $result = $this->groupProcessor->processGroup($group->tipe_invoice, $headerData, $items, $lockedEbMap);
+        $result = $this->groupProcessor->processGroup($group->tipe_invoice, $headerData, $items, $lockedEbMap, $existingInvoiceMap);
 
         return match (true) {
             $result->isInserted(), $result->isUpdated() => [
@@ -855,9 +896,11 @@ class InvoiceImportService
             ->all();
 
         if (!empty($newInvoiceIds)) {
-            $this->groupProcessor->propagateCarryoverForNew(
-                Invoice::whereIn('id', $newInvoiceIds)->get()->all(),
-            );
+            EndingBalanceSyncBatcher::run(function () use ($newInvoiceIds) {
+                $this->groupProcessor->propagateCarryoverForNew(
+                    Invoice::whereIn('id', $newInvoiceIds)->get()->all(),
+                );
+            });
         }
 
         $batch->refresh();
