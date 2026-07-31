@@ -250,7 +250,7 @@ class BankStatementImportServiceTest extends TestCase
             'jumlah_matched' => 0, 'jumlah_unmatched' => 1, 'uploaded_by' => 1,
             'created_at' => now(), 'updated_at' => now(),
         ]);
-        DB::table('tb_bank_statement_detail')->insert([
+        $oldDetailId = DB::table('tb_bank_statement_detail')->insertGetId([
             'bank_statement_id' => $existingId, 'tanggal' => '2026-01-10', 'kredit' => 500000, 'debit' => 0,
             'status_cocok' => 'UNMATCHED', 'created_at' => now(), 'updated_at' => now(),
         ]);
@@ -288,9 +288,281 @@ class BankStatementImportServiceTest extends TestCase
         $this->assertSame(0, BankStatement::where('id', $existingId)->count());
         $this->assertSame(1, BankStatement::count());
 
+        // Baris lama ini legit ikut diganti/dihapus KARENA statusnya UNMATCHED
+        // (tidak ada pembayaran yang terhubung) — kontraskan dengan baris
+        // MATCHED/DIABAIKAN yang harus dipertahankan, diuji di test-test di bawah.
+        $this->assertSame(0, DB::table('tb_bank_statement_detail')->where('id', $oldDetailId)->count());
+
         $newStatement = BankStatement::find($batch->bank_statement_id);
         $this->assertSame(2, $newStatement->total_transaksi);
         $this->assertTrue((bool) $newStatement->is_committed);
+    }
+
+    public function test_run_preserves_matched_ar_row_and_does_not_corrupt_it_via_automatch(): void
+    {
+        // Regression guard untuk temuan kritis: autoMatch() tanpa onlyUnmatched=true
+        // akan mengevaluasi ulang baris hasil reparent, gagal menemukan kandidat
+        // (PembayaranAr-nya sendiri sudah "dipakai"), lalu diam-diam meng-UNMATCH
+        // baris yang justru harus dilindungi.
+        DB::table('tb_pembayaran_ar')->insert([
+            'id' => 55, 'no_referensi' => 'TRF001', 'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        $existingId = DB::table('tb_bank_statement')->insertGetId([
+            'bank_type' => 'GENERAL', 'nama_file' => 'lama.xlsx',
+            'periode_awal' => '2026-01-01', 'periode_akhir' => '2026-01-31',
+            'total_transaksi' => 1, 'total_kredit' => 500000,
+            'jumlah_matched' => 1, 'jumlah_unmatched' => 0, 'uploaded_by' => 1,
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $oldDetailId = DB::table('tb_bank_statement_detail')->insertGetId([
+            'bank_statement_id' => $existingId, 'tanggal' => '2026-01-10',
+            'no_referensi' => 'TRF001', 'kredit' => 500000, 'debit' => 0,
+            'status_cocok' => 'MATCHED', 'pembayaran_ar_id' => 55, 'matched_by' => 3,
+            'status_posting_2' => 'POSTED', 'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        $path  = $this->storeXlsx([
+            ['10/01/2026', 'Transfer masuk (sama)', 'TRF001', '', '500000', '500000'],
+            ['15/01/2026', 'Transfer masuk baru', 'TRF-NEW-1', '', '200000', '700000'],
+        ]);
+        $batch = $this->makeBatch($path);
+
+        $this->service()->run($batch);
+        $batch->refresh();
+        $this->assertSame('needs_confirmation', $batch->status);
+
+        $batch->update(['force_replace' => true, 'status' => 'queued', 'phase' => 'queued']);
+        $this->service()->run($batch->fresh());
+        $batch->refresh();
+
+        $this->assertSame('completed', $batch->status);
+        $this->assertSame(0, BankStatement::where('id', $existingId)->count());
+
+        $newStatementId = $batch->bank_statement_id;
+        $this->assertNotNull($newStatementId);
+
+        $preserved = DB::table('tb_bank_statement_detail')->find($oldDetailId);
+        $this->assertNotNull($preserved, 'Baris matched lama harus tetap ada (di-reparent), bukan dihapus/dibuat ulang.');
+        $this->assertSame($newStatementId, $preserved->bank_statement_id);
+        $this->assertSame('MATCHED', $preserved->status_cocok);
+        $this->assertSame(55, $preserved->pembayaran_ar_id);
+        $this->assertSame(3, $preserved->matched_by);
+
+        $details = DB::table('tb_bank_statement_detail')->where('bank_statement_id', $newStatementId)->get();
+        $this->assertCount(2, $details);
+
+        $this->assertStringContainsString('dipertahankan', $batch->message);
+    }
+
+    public function test_run_preserves_matched_ap_voucher_row_on_reupload(): void
+    {
+        $existingId = DB::table('tb_bank_statement')->insertGetId([
+            'bank_type' => 'GENERAL', 'nama_file' => 'lama.xlsx',
+            'periode_awal' => '2026-01-01', 'periode_akhir' => '2026-01-31',
+            'total_transaksi' => 1, 'total_kredit' => 0,
+            'jumlah_matched' => 1, 'jumlah_unmatched' => 0, 'uploaded_by' => 1,
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $oldDetailId = DB::table('tb_bank_statement_detail')->insertGetId([
+            'bank_statement_id' => $existingId, 'tanggal' => '2026-01-12',
+            'no_referensi' => 'VCH001', 'kredit' => 0, 'debit' => 300000,
+            'status_cocok' => 'MATCHED', 'pembayaran_ap_id' => 77,
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        $path  = $this->storeXlsx([
+            ['12/01/2026', 'Transfer keluar (sama)', 'VCH001', '300000', '', '400000'],
+        ]);
+        $batch = $this->makeBatch($path);
+        $this->service()->run($batch);
+        $batch->update(['force_replace' => true, 'status' => 'queued', 'phase' => 'queued']);
+        $this->service()->run($batch->fresh());
+        $batch->refresh();
+
+        $this->assertSame('completed', $batch->status);
+
+        $preserved = DB::table('tb_bank_statement_detail')->find($oldDetailId);
+        $this->assertNotNull($preserved);
+        $this->assertSame($batch->bank_statement_id, $preserved->bank_statement_id);
+        $this->assertSame('MATCHED', $preserved->status_cocok);
+        $this->assertSame(77, $preserved->pembayaran_ap_id);
+    }
+
+    public function test_run_preserves_diabaikan_row_on_reupload(): void
+    {
+        $existingId = DB::table('tb_bank_statement')->insertGetId([
+            'bank_type' => 'GENERAL', 'nama_file' => 'lama.xlsx',
+            'periode_awal' => '2026-01-01', 'periode_akhir' => '2026-01-31',
+            'total_transaksi' => 1, 'total_kredit' => 1500,
+            'jumlah_matched' => 0, 'jumlah_unmatched' => 0, 'uploaded_by' => 1,
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $oldDetailId = DB::table('tb_bank_statement_detail')->insertGetId([
+            'bank_statement_id' => $existingId, 'tanggal' => '2026-01-08',
+            'no_referensi' => 'BUNGA-JAN', 'kredit' => 1500, 'debit' => 0,
+            'status_cocok' => 'DIABAIKAN',
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        $path  = $this->storeXlsx([
+            ['08/01/2026', 'Bunga bank (sama)', 'BUNGA-JAN', '', '1500', '501500'],
+        ]);
+        $batch = $this->makeBatch($path);
+        $this->service()->run($batch);
+        $batch->update(['force_replace' => true, 'status' => 'queued', 'phase' => 'queued']);
+        $this->service()->run($batch->fresh());
+        $batch->refresh();
+
+        $this->assertSame('completed', $batch->status);
+
+        $preserved = DB::table('tb_bank_statement_detail')->find($oldDetailId);
+        $this->assertNotNull($preserved);
+        $this->assertSame($batch->bank_statement_id, $preserved->bank_statement_id);
+        $this->assertSame('DIABAIKAN', $preserved->status_cocok);
+    }
+
+    public function test_run_treats_same_no_referensi_with_different_amount_as_separate_row(): void
+    {
+        DB::table('tb_pembayaran_ar')->insert([
+            'id' => 55, 'no_referensi' => 'TRF-KOREKSI', 'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        $existingId = DB::table('tb_bank_statement')->insertGetId([
+            'bank_type' => 'GENERAL', 'nama_file' => 'lama.xlsx',
+            'periode_awal' => '2026-01-01', 'periode_akhir' => '2026-01-31',
+            'total_transaksi' => 1, 'total_kredit' => 500000,
+            'jumlah_matched' => 1, 'jumlah_unmatched' => 0, 'uploaded_by' => 1,
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $oldDetailId = DB::table('tb_bank_statement_detail')->insertGetId([
+            'bank_statement_id' => $existingId, 'tanggal' => '2026-01-10',
+            'no_referensi' => 'TRF-KOREKSI', 'kredit' => 500000, 'debit' => 0,
+            'status_cocok' => 'MATCHED', 'pembayaran_ar_id' => 55, 'matched_by' => 3,
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        // File baru: no_referensi sama tapi nominal beda (mis. koreksi dari bank).
+        $path  = $this->storeXlsx([
+            ['10/01/2026', 'Transfer masuk (koreksi nominal)', 'TRF-KOREKSI', '', '600000', '600000'],
+        ]);
+        $batch = $this->makeBatch($path);
+        $this->service()->run($batch);
+        $batch->update(['force_replace' => true, 'status' => 'queued', 'phase' => 'queued']);
+        $this->service()->run($batch->fresh());
+        $batch->refresh();
+
+        $this->assertSame('completed', $batch->status);
+
+        // Baris lama tetap dipertahankan apa adanya.
+        $preserved = DB::table('tb_bank_statement_detail')->find($oldDetailId);
+        $this->assertNotNull($preserved);
+        $this->assertEqualsWithDelta(500000.0, (float) $preserved->kredit, 0.01);
+        $this->assertSame('MATCHED', $preserved->status_cocok);
+
+        // Baris baru dianggap transaksi terpisah, tetap di-insert.
+        $newRow = DB::table('tb_bank_statement_detail')
+            ->where('bank_statement_id', $batch->bank_statement_id)
+            ->where('no_referensi', 'TRF-KOREKSI')
+            ->where('kredit', 600000)
+            ->first();
+        $this->assertNotNull($newRow);
+        $this->assertNotSame($oldDetailId, $newRow->id);
+
+        $this->assertCount(2, DB::table('tb_bank_statement_detail')->where('bank_statement_id', $batch->bank_statement_id)->get());
+    }
+
+    public function test_run_preserves_matched_row_across_multiple_reuploads(): void
+    {
+        DB::table('tb_pembayaran_ar')->insert([
+            'id' => 55, 'no_referensi' => 'TRF001', 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $existingId = DB::table('tb_bank_statement')->insertGetId([
+            'bank_type' => 'GENERAL', 'nama_file' => 'lama.xlsx',
+            'periode_awal' => '2026-01-01', 'periode_akhir' => '2026-01-31',
+            'total_transaksi' => 1, 'total_kredit' => 500000,
+            'jumlah_matched' => 1, 'jumlah_unmatched' => 0, 'uploaded_by' => 1,
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $oldDetailId = DB::table('tb_bank_statement_detail')->insertGetId([
+            'bank_statement_id' => $existingId, 'tanggal' => '2026-01-10',
+            'no_referensi' => 'TRF001', 'kredit' => 500000, 'debit' => 0,
+            'status_cocok' => 'MATCHED', 'pembayaran_ar_id' => 55, 'matched_by' => 3,
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        // Reupload #1
+        $path1  = $this->storeXlsx([
+            ['10/01/2026', 'Transfer masuk', 'TRF001', '', '500000', '500000'],
+        ], 'r1.xlsx');
+        $batch1 = $this->makeBatch($path1);
+        $this->service()->run($batch1);
+        $batch1->update(['force_replace' => true, 'status' => 'queued', 'phase' => 'queued']);
+        $this->service()->run($batch1->fresh());
+        $batch1->refresh();
+        $this->assertSame('completed', $batch1->status);
+
+        $preservedAfter1 = DB::table('tb_bank_statement_detail')->find($oldDetailId);
+        $this->assertSame($batch1->bank_statement_id, $preservedAfter1->bank_statement_id);
+        $this->assertSame('MATCHED', $preservedAfter1->status_cocok);
+
+        // Reupload #2, periode yang sama lagi.
+        $path2  = $this->storeXlsx([
+            ['10/01/2026', 'Transfer masuk', 'TRF001', '', '500000', '500000'],
+        ], 'r2.xlsx');
+        $batch2 = $this->makeBatch($path2);
+        $this->service()->run($batch2);
+        $batch2->update(['force_replace' => true, 'status' => 'queued', 'phase' => 'queued']);
+        $this->service()->run($batch2->fresh());
+        $batch2->refresh();
+        $this->assertSame('completed', $batch2->status);
+
+        dump('DEBUG statements', BankStatement::all(['id', 'periode_awal', 'periode_akhir'])->toArray());
+        dump('DEBUG details', DB::table('tb_bank_statement_detail')->get(['id', 'bank_statement_id', 'no_referensi', 'status_cocok'])->toArray());
+        dump('DEBUG batch2', $batch2->only(['id', 'bank_statement_id', 'status', 'message']));
+
+        $preservedAfter2 = DB::table('tb_bank_statement_detail')->find($oldDetailId);
+        $this->assertSame($batch2->bank_statement_id, $preservedAfter2->bank_statement_id);
+        $this->assertSame('MATCHED', $preservedAfter2->status_cocok);
+        $this->assertSame(55, $preservedAfter2->pembayaran_ar_id);
+
+        $this->assertSame(1, BankStatement::count());
+    }
+
+    public function test_run_recomputes_header_period_to_include_reparented_rows(): void
+    {
+        DB::table('tb_pembayaran_ar')->insert([
+            'id' => 55, 'no_referensi' => 'TRF001', 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $existingId = DB::table('tb_bank_statement')->insertGetId([
+            'bank_type' => 'GENERAL', 'nama_file' => 'lama.xlsx',
+            'periode_awal' => '2026-01-01', 'periode_akhir' => '2026-01-31',
+            'total_transaksi' => 1, 'total_kredit' => 500000,
+            'jumlah_matched' => 1, 'jumlah_unmatched' => 0, 'uploaded_by' => 1,
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        DB::table('tb_bank_statement_detail')->insertGetId([
+            'bank_statement_id' => $existingId, 'tanggal' => '2026-01-25',
+            'no_referensi' => 'TRF001', 'kredit' => 500000, 'debit' => 0,
+            'status_cocok' => 'MATCHED', 'pembayaran_ar_id' => 55,
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        // File baru hanya mencakup awal bulan — tidak menyentuh baris tanggal 25.
+        $path  = $this->storeXlsx([
+            ['05/01/2026', 'Transfer masuk baru', 'TRF-NEW-1', '', '200000', '200000'],
+        ]);
+        $batch = $this->makeBatch($path);
+        $this->service()->run($batch);
+        $batch->update(['force_replace' => true, 'status' => 'queued', 'phase' => 'queued']);
+        $this->service()->run($batch->fresh());
+        $batch->refresh();
+
+        $newStatement = BankStatement::find($batch->bank_statement_id);
+        $this->assertSame('2026-01-05', $newStatement->periode_awal->toDateString());
+        $this->assertSame('2026-01-25', $newStatement->periode_akhir->toDateString());
+        $this->assertSame(2, $newStatement->total_transaksi);
+        $this->assertEqualsWithDelta(700000.0, (float) $newStatement->total_kredit, 0.01);
     }
 
     public function test_run_resets_stale_counters_left_over_from_a_previous_run(): void

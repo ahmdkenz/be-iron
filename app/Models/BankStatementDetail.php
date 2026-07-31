@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
@@ -59,5 +60,15 @@ class BankStatementDetail extends Model
     public function postedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'posted_by');
+    }
+
+    /**
+     * Baris dengan pembayaran/voucher nyata terhubung, atau ditandai DIABAIKAN —
+     * SELALU dipindahkan (reparent) apa adanya saat reupload rekening koran,
+     * tidak pernah di-unmatch/dihapus (lihat BankStatementImportService::finalize()).
+     */
+    public function scopeCarryOverEligible(Builder $q): Builder
+    {
+        return $q->where(fn (Builder $q2) => $q2->whereNotNull('pembayaran_ar_id')->orWhereNotNull('pembayaran_ap_id')->orWhere('status_cocok', 'DIABAIKAN'));
     }
 }

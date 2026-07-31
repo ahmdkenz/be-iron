@@ -4,6 +4,7 @@ namespace App\Domain\Finance\RekonsiliasiBankStatement\Services;
 
 use App\Domain\Finance\RekonsiliasiBankStatement\Parsers\BankParserFactory;
 use App\Models\BankStatement;
+use App\Models\BankStatementDetail;
 use App\Models\BankStatementImportBatch;
 use App\Models\BankStatementImportRow;
 use Illuminate\Support\Collection;
@@ -201,18 +202,29 @@ class BankStatementImportService
         // eksplisit tambahan (lihat global scope di model BankStatement) untuk
         // seluruh query list/detail/laporan lain di luar modul ini.
         DB::transaction(function () use ($batch, $overlaps) {
-            if ($batch->force_replace) {
-                foreach ($overlaps as $existing) {
-                    // Lepas tautan pembayaran/PDM/voucher AP yang sudah MATCHED lewat
-                    // domain logic unmatch() (recalculate invoice/tagihan, hapus payment
-                    // hasil "Catat Bayar/PDM/Voucher AP") sebelum statement lama dihapus —
-                    // menghindari data pembayaran menggantung tanpa tautan detail bank.
-                    $existing->details()->where('status_cocok', 'MATCHED')->get()
-                        ->each(fn($d) => $this->bankStatementService->unmatch($d));
-
-                    $existing->details()->delete();
-                    $existing->delete();
-                }
+            // Baris lama yang sudah dibayar/dicocokkan (atau ditandai DIABAIKAN)
+            // SELALU dipindahkan (reparent) ke statement baru apa adanya — tanpa
+            // syarat, terlepas dari apakah transaksinya masih ada di file baru
+            // atau tidak (mis. baris koreksi nominal, atau baris yang memang
+            // sudah tidak muncul lagi di file terbaru). Baris ini tidak pernah
+            // di-unmatch atau dihapus saat reupload.
+            //
+            // Kunci komposit (no_referensi + tanggal + nominal) HANYA dipakai
+            // untuk mencegah baris file baru yang mewakili transaksi persis sama
+            // ikut di-insert sebagai duplikat — bukan untuk memutuskan apakah
+            // baris lama boleh bertahan. no_referensi saja tidak cukup sebagai
+            // kunci karena TIDAK unik/tidak diindeks pada tb_bank_statement_detail.
+            $reparentIds = [];
+            $buckets     = [];
+            if ($batch->force_replace && $overlaps->isNotEmpty()) {
+                BankStatementDetail::whereIn('bank_statement_id', $overlaps->pluck('id'))
+                    ->carryOverEligible()
+                    ->get(['id', 'no_referensi', 'tanggal', 'debit', 'kredit'])
+                    ->each(function (BankStatementDetail $oldRow) use (&$buckets, &$reparentIds) {
+                        $reparentIds[] = $oldRow->id;
+                        $key = $this->compositeKey($oldRow->no_referensi, $oldRow->tanggal, $oldRow->debit, $oldRow->kredit);
+                        $buckets[$key] = ($buckets[$key] ?? 0) + 1;
+                    });
             }
 
             $statement = BankStatement::create([
@@ -230,34 +242,94 @@ class BankStatementImportService
             ]);
 
             $now = now();
+            $freshInsertedCount = 0;
+
             BankStatementImportRow::where('batch_id', $batch->id)
                 ->orderBy('row_number')
-                ->chunk(self::CHUNK, function ($rows) use ($statement, $now) {
-                    $insert = $rows->map(fn($r) => [
-                        'bank_statement_id' => $statement->id,
-                        'tanggal'           => $r->tanggal,
-                        'waktu_transaksi'   => $r->waktu_transaksi,
-                        'keterangan'        => $r->keterangan,
-                        'no_referensi'      => $r->no_referensi,
-                        'debit'             => $r->debit,
-                        'kredit'            => $r->kredit,
-                        'saldo'             => $r->saldo,
-                        'status_cocok'      => ($r->debit == 0 && $r->kredit == 0) ? 'DIABAIKAN' : 'UNMATCHED',
-                        'pembayaran_ar_id'  => null,
-                        'pembayaran_ap_id'  => null,
-                        'created_at'        => $now,
-                        'updated_at'        => $now,
-                    ])->all();
+                ->chunk(self::CHUNK, function ($rows) use ($statement, $now, &$buckets, &$freshInsertedCount) {
+                    $insert = [];
+                    foreach ($rows as $r) {
+                        // Baris file baru yang kuncinya persis sama dengan baris lama
+                        // yang sudah dipertahankan: JANGAN insert baris ini supaya
+                        // transaksi yang sama tidak tampil dobel — baris lamanya
+                        // sudah di-reparent apa adanya di bawah.
+                        $key = $this->compositeKey($r->no_referensi, $r->tanggal, $r->debit, $r->kredit);
+                        if (!empty($buckets[$key])) {
+                            $buckets[$key]--;
+                            continue;
+                        }
 
-                    \App\Models\BankStatementDetail::insert($insert);
+                        $freshInsertedCount++;
+                        $insert[] = [
+                            'bank_statement_id' => $statement->id,
+                            'tanggal'           => $r->tanggal,
+                            'waktu_transaksi'   => $r->waktu_transaksi,
+                            'keterangan'        => $r->keterangan,
+                            'no_referensi'      => $r->no_referensi,
+                            'debit'             => $r->debit,
+                            'kredit'            => $r->kredit,
+                            'saldo'             => $r->saldo,
+                            'status_cocok'      => ($r->debit == 0 && $r->kredit == 0) ? 'DIABAIKAN' : 'UNMATCHED',
+                            'pembayaran_ar_id'  => null,
+                            'pembayaran_ap_id'  => null,
+                            'created_at'        => $now,
+                            'updated_at'        => $now,
+                        ];
+                    }
+
+                    if (!empty($insert)) {
+                        BankStatementDetail::insert($insert);
+                    }
                 });
+
+            // Pindahkan seluruh baris protected/DIABAIKAN ke statement baru.
+            // Tidak ada kolom lain yang disentuh (status_cocok, pembayaran_ar_id,
+            // pembayaran_ap_id, matched_by tetap sama persis) — bukan unmatch,
+            // bukan recreate.
+            foreach (array_chunk($reparentIds, 500) as $chunk) {
+                BankStatementDetail::whereIn('id', $chunk)->update(['bank_statement_id' => $statement->id]);
+            }
+
+            if ($batch->force_replace) {
+                foreach ($overlaps as $existing) {
+                    // Sisa baris di statement lama sekarang pasti UNMATCHED tanpa
+                    // pembayaran (carryOverEligible di atas sudah memindahkan semua
+                    // yang MATCHED/DIABAIKAN) — aman dihapus langsung tanpa unmatch().
+                    $existing->details()->delete();
+                    $existing->delete();
+                }
+            }
+
+            // Agregat header dihitung ulang dari data riil (bukan disalin dari
+            // $batch) karena baris hasil reparent bisa memperluas rentang periode
+            // di luar file yang baru diupload.
+            $agg = BankStatementDetail::where('bank_statement_id', $statement->id)
+                ->selectRaw('COUNT(*) as total, COALESCE(SUM(kredit),0) as total_kredit, MIN(tanggal) as awal, MAX(tanggal) as akhir')
+                ->first();
+
+            $statement->update([
+                'total_transaksi' => $agg->total,
+                'total_kredit'    => $agg->total_kredit,
+                'periode_awal'    => $agg->awal,
+                'periode_akhir'   => $agg->akhir,
+            ]);
 
             $batch->update(['bank_statement_id' => $statement->id, 'phase' => 'auto_matching']);
 
-            $this->bankStatementService->autoMatch($statement);
+            // onlyUnmatched=true WAJIB: statement ini bisa berisi baris pre-matched
+            // hasil reparent. autoMatch() tanpa flag ini akan mengevaluasi ulang
+            // baris tsb, gagal menemukan kandidat (karena PembayaranAr-nya sendiri
+            // sudah dikecualikan dari daftar kandidat sebagai "sudah dipakai"), dan
+            // secara diam-diam meng-UNMATCH baris yang justru ingin dilindungi.
+            $this->bankStatementService->autoMatch($statement, true);
 
             $statement->refresh();
             $statement->update(['is_committed' => true]);
+
+            $preservedCount = count($reparentIds);
+            $message = $preservedCount > 0
+                ? "Import berhasil: {$freshInsertedCount} transaksi baru, {$preservedCount} transaksi lama (sudah dibayar/dicocokkan) dipertahankan."
+                : "Import berhasil: {$statement->total_transaksi} transaksi diproses.";
 
             $batch->update([
                 'status'         => 'completed',
@@ -266,9 +338,24 @@ class BankStatementImportService
                 'matched_rows'   => $statement->jumlah_matched,
                 'unmatched_rows' => $statement->jumlah_unmatched,
                 'ignored_rows'   => max(0, $statement->total_transaksi - $statement->jumlah_matched - $statement->jumlah_unmatched),
-                'message'        => "Import berhasil: {$statement->total_transaksi} transaksi diproses.",
+                'message'        => $message,
                 'finished_at'    => now(),
             ]);
         });
+    }
+
+    /**
+     * Kunci komposit untuk mendeteksi "baris yang sama" antara file lama & baru
+     * saat reupload. no_referensi saja tidak cukup (tidak unik/tidak diindeks di
+     * tb_bank_statement_detail, bisa kosong/berulang) — digabung dengan tanggal
+     * & nominal (dikonversi ke sen integer untuk menghindari isu perbandingan
+     * float pada kolom decimal(15,2)).
+     */
+    private function compositeKey(?string $noReferensi, $tanggal, $debit, $kredit): string
+    {
+        $ref  = trim((string) $noReferensi);
+        $date = $tanggal instanceof \DateTimeInterface ? $tanggal->format('Y-m-d') : (string) $tanggal;
+
+        return $ref . '|' . $date . '|' . (int) round(((float) $debit) * 100) . '|' . (int) round(((float) $kredit) * 100);
     }
 }
