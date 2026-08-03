@@ -2,9 +2,12 @@
 
 namespace App\Models;
 use App\Support\Traits\BlameableTrait;
+use Illuminate\Contracts\Encryption\DecryptException;
+use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
+use Illuminate\Support\Facades\Crypt;
 use Laravel\Sanctum\HasApiTokens;
 use Spatie\Permission\Traits\HasRoles;
 
@@ -34,10 +37,27 @@ class User extends Authenticatable
     protected function casts(): array
     {
         return [
-            'password'     => 'hashed',
-            'status'       => 'boolean',
-            'fonnte_token' => 'encrypted',
+            'password' => 'hashed',
+            'status'   => 'boolean',
         ];
+    }
+
+    protected function fonnteToken(): Attribute
+    {
+        return Attribute::make(
+            get: function (?string $value) {
+                if ($value === null) {
+                    return null;
+                }
+
+                try {
+                    return Crypt::decryptString($value);
+                } catch (DecryptException) {
+                    return null;
+                }
+            },
+            set: fn (?string $value) => $value === null ? null : Crypt::encryptString($value),
+        );
     }
 
     public function karyawan()
