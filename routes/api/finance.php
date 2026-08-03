@@ -81,13 +81,17 @@ Route::prefix('invoices')->group(function () {
     Route::patch('/{invoice}/recalculate', [InvoiceController::class, 'recalculate']);
 
     // Pembayaran per Invoice
-    Route::post('/{invoice}/pembayaran', [PembayaranArController::class, 'store']);
+    Route::post('/{invoice}/pembayaran', [PembayaranArController::class, 'store'])->middleware('role:ADMIN|MANAGER|SUPERVISOR|AR');
 });
 
 // ─── Pembayaran ───────────────────────────────────────────────────
-Route::get('/pembayaran', [PembayaranArController::class, 'index']);
-Route::get('/pembayaran/cek-referensi', [PembayaranArController::class, 'cekReferensi']);
-Route::delete('/pembayaran/{pembayaran}', [PembayaranArController::class, 'destroy']);
+// Sebelumnya tanpa role: middleware sama sekali (proteksi hanya di router Vue).
+// Ownership per-klien (PIC AR) sendiri sudah dicek di controller.
+Route::middleware('role:ADMIN|MANAGER|SUPERVISOR|AR')->group(function () {
+    Route::get('/pembayaran', [PembayaranArController::class, 'index']);
+    Route::get('/pembayaran/cek-referensi', [PembayaranArController::class, 'cekReferensi']);
+    Route::delete('/pembayaran/{pembayaran}', [PembayaranArController::class, 'destroy']);
+});
 
 // ─── Jurnal per PIC ───────────────────────────────────────────────
 Route::get('/jurnal-pic',                  [JurnalPicController::class, 'index']);
@@ -151,13 +155,21 @@ Route::prefix('rekonsiliasi-bank')->middleware('role:ADMIN|MANAGER|SUPERVISOR|AR
 });
 
 // ─── Pendapatan di Muka ───────────────────────────────────────────
-// Daftar/export laporan komparatif — hanya ADMIN/MANAGER/SUPERVISOR. Aksi
-// catat/batal/gunakan tetap dibuka untuk AR karena dipakai dalam alur
-// Rekonsiliasi Bank milik PIC AR sendiri.
-Route::get('/pendapatan-di-muka',                           [PendapatanDiMukaController::class, 'index'])->middleware('role:ADMIN|MANAGER|SUPERVISOR');
-Route::post('/pendapatan-di-muka/detail/{detail}/catat',    [PendapatanDiMukaController::class, 'store']);
-Route::delete('/pendapatan-di-muka/{pdm}/batal',            [PendapatanDiMukaController::class, 'cancel']);
-Route::post('/pendapatan-di-muka/{pdm}/gunakan',            [PendapatanDiMukaController::class, 'gunakan']);
+// Index/export dibuka untuk AR juga (sebelumnya ADMIN/MANAGER/SUPERVISOR-only,
+// yang membuat PIC AR tidak bisa "Gunakan" PDM kliennya sendiri untuk melunasi
+// invoice baru) — controller men-scope hasil ke klien milik PIC AR yang login,
+// ADMIN/MANAGER/SUPERVISOR tetap melihat semua (lihat PendapatanDiMukaController).
+// Aksi catat/batal/gunakan juga kini digating role yang sama (defense in depth,
+// ownership per-klien tetap dicek di controller).
+// export-excel didaftarkan terpisah di routes/api.php (grup throttle export
+// laporan lain) — role middleware-nya diupdate di sana juga, jangan didaftarkan
+// dobel di sini.
+Route::middleware('role:ADMIN|MANAGER|SUPERVISOR|AR')->group(function () {
+    Route::get('/pendapatan-di-muka',                           [PendapatanDiMukaController::class, 'index']);
+    Route::post('/pendapatan-di-muka/detail/{detail}/catat',    [PendapatanDiMukaController::class, 'store']);
+    Route::delete('/pendapatan-di-muka/{pdm}/batal',            [PendapatanDiMukaController::class, 'cancel']);
+    Route::post('/pendapatan-di-muka/{pdm}/gunakan',            [PendapatanDiMukaController::class, 'gunakan']);
+});
 
 // ─── Ending Balance ───────────────────────────────────────────────
 Route::prefix('ending-balance')->group(function () {

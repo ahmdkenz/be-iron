@@ -528,18 +528,28 @@ class ExportDataWorkbookService
         foreach ($rows as $index => $pembayaran) {
             $bankDetail = $pembayaran->bankStatementDetail ?: $pembayaran->sumberPembayaran?->bankStatementDetail;
 
+            // Multi Payment: invoice_id header NULL, alokasinya di items — tanpa
+            // fallback ini baris Multi Payment (baru ikut tampil sejak
+            // RiwayatPembayaranService men-scope lewat items juga) akan tampil
+            // kosong di kolom No Invoice/Klien/PIC AR/Entitas.
+            $isMultiPayment = $pembayaran->invoice_id === null && $pembayaran->items->isNotEmpty();
+            $primaryInvoice = $pembayaran->invoice ?? $pembayaran->items->first()?->invoice;
+            $noInvoiceLabel = $isMultiPayment
+                ? sprintf('%d Invoice (Multi Payment)', $pembayaran->items->count())
+                : ($primaryInvoice?->no_invoice ?? '');
+
             $dataRows[] = [
                 $index + 1,
                 $pembayaran->tanggal_pembayaran?->toDateString() ?? '',
-                $pembayaran->invoice?->no_invoice ?? '',
-                $pembayaran->invoice?->klienAr?->nama_klien ?? '',
+                $noInvoiceLabel,
+                $primaryInvoice?->klienAr?->nama_klien ?? '',
                 (float) $pembayaran->jumlah_pembayaran,
                 $pembayaran->metode_pembayaran ?? '',
                 $bankDetail?->status_cocok ?? 'MANUAL',
                 $pembayaran->no_referensi ?? '',
                 $this->jenisPembayaran($pembayaran),
-                $pembayaran->invoice?->karyawan?->nama_karyawan ?? '',
-                $pembayaran->invoice?->perusahaan?->nama_singkatan_perusahaan ?? '',
+                $primaryInvoice?->karyawan?->nama_karyawan ?? '',
+                $primaryInvoice?->perusahaan?->nama_singkatan_perusahaan ?? '',
                 $pembayaran->createdBy?->karyawan?->nama_karyawan ?? $pembayaran->createdBy?->username ?? '',
             ];
         }

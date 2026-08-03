@@ -226,6 +226,10 @@ class PendapatanDiMukaService
             ->when(
                 $filters['status'] ?? null,
                 fn(Builder $q, string $v) => $q->where('status', $v)
+            )
+            ->when(
+                $filters['pic_ar_karyawan_id'] ?? null,
+                fn(Builder $q, int $v) => $q->whereHas('klienAr', fn($q) => $q->where('karyawan_ar_id', $v))
             );
 
         $paginator = (clone $query)
@@ -280,6 +284,10 @@ class PendapatanDiMukaService
                 $filters['status'] ?? null,
                 fn(Builder $q, string $v) => $q->where('status', $v)
             )
+            ->when(
+                $filters['pic_ar_karyawan_id'] ?? null,
+                fn(Builder $q, int $v) => $q->whereHas('klienAr', fn($q) => $q->where('karyawan_ar_id', $v))
+            )
             ->latest('tanggal_pencatatan')
             ->get()
             ->map(fn(PendapatanDiMuka $pdm) => $this->formatRow($pdm))
@@ -310,6 +318,10 @@ class PendapatanDiMukaService
             ->when(
                 $filters['status'] ?? null,
                 fn(Builder $q, string $v) => $q->where('status', $v)
+            )
+            ->when(
+                $filters['pic_ar_karyawan_id'] ?? null,
+                fn(Builder $q, int $v) => $q->whereHas('klienAr', fn($q) => $q->where('karyawan_ar_id', $v))
             )
             ->latest('tanggal_pencatatan')
             ->get();

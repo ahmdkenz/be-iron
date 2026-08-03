@@ -2,11 +2,13 @@
 
 namespace App\Domain\Finance\PembayaranAr\Services;
 
+use App\Domain\Finance\EndingBalance\Services\EndingBalanceService;
 use App\Domain\Finance\EndingBalance\Services\EndingBalanceSyncBatcher;
 use App\Domain\Finance\Invoice\Services\InvoiceService;
 use App\Domain\Finance\PendapatanDiMuka\Services\PendapatanDiMukaService;
 use App\Models\BankStatement;
 use App\Models\BankStatementDetail;
+use App\Models\EndingBalanceKoreksi;
 use App\Models\Invoice;
 use App\Models\KlienAr;
 use App\Models\PembayaranAr;
@@ -23,6 +25,7 @@ class PembayaranArService
     public function __construct(
         private readonly InvoiceService $invoiceService,
         private readonly PendapatanDiMukaService $pdmService,
+        private readonly EndingBalanceService $endingBalanceService,
     ) {}
 
     public function create(Invoice $invoice, array $data, ?UploadedFile $buktiBayar = null): PembayaranAr
@@ -338,6 +341,34 @@ class PembayaranArService
             422,
             'Tidak dapat menghapus pembayaran ini karena Pendapatan di Muka sudah digunakan untuk melunasi invoice. Batalkan penggunaan PDM terlebih dahulu.'
         );
+
+        // Guard ini sebelumnya hanya dicek di jalur BankStatementService::unmatch()
+        // (hasApprovedKoreksi) — bisa dilewati lewat "Hapus" langsung di halaman
+        // detail invoice / PembayaranArController::destroy(). Dipindah ke sini
+        // supaya berlaku untuk SEMUA jalur hapus, termasuk Multi Payment (cek
+        // semua invoice yang tercakup lewat items).
+        $invoiceIds = $pembayaran->invoice_id
+            ? [$pembayaran->invoice_id]
+            : $pembayaran->items()->pluck('invoice_id')->filter()->unique()->values()->all();
+
+        if (!empty($invoiceIds)) {
+            abort_if(
+                EndingBalanceKoreksi::whereIn('invoice_id', $invoiceIds)->where('status', 'APPROVED')->exists(),
+                422,
+                'Tidak dapat menghapus pembayaran ini karena invoice terkait sudah memiliki Credit Note/Debit Note yang disetujui.'
+            );
+
+            $lockedInvoiceExists = Invoice::whereIn('id', $invoiceIds)
+                ->get(['id', 'klien_ar_id', 'tanggal_invoice'])
+                ->contains(fn(Invoice $inv) => $inv->klien_ar_id && $inv->tanggal_invoice
+                    && $this->endingBalanceService->isLockedForPeriod($inv->klien_ar_id, $inv->tanggal_invoice->toDateString()));
+
+            abort_if(
+                $lockedInvoiceExists,
+                422,
+                'Tidak dapat menghapus pembayaran ini karena periode invoice terkait sudah dikunci di Ending Balance.'
+            );
+        }
 
         // Kumpulkan alokasi anak DAN invoice tujuannya SEBELUM FK nullOnDelete berjalan.
         // Setelah $pembayaran->delete(), sumber_pembayaran_ar_id di-NULL sehingga

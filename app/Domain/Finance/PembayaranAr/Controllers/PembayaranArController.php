@@ -10,7 +10,9 @@ use App\Domain\Finance\PembayaranAr\Services\PembayaranArService;
 use App\Domain\Finance\PembayaranAr\Services\RiwayatPembayaranService;
 use App\Domain\Notification\Services\FinanceNotificationService;
 use App\Http\Controllers\Controller;
+use App\Models\KlienAr;
 use App\Models\PembayaranAr;
+use App\Models\PendapatanDiMuka;
 use App\Support\Helpers\RoleHelper;
 use App\Support\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
@@ -67,6 +69,20 @@ class PembayaranArController extends Controller
             );
         }
 
+        // PIC AR (AR murni) hanya boleh mencatat pembayaran untuk invoice klien
+        // yang di-assign ke mereka — mirip authorizeInvoiceOwnership() di
+        // BankStatementController, sebelumnya endpoint ini tidak dibatasi sama
+        // sekali di luar cek entitas di atas.
+        $picArKaryawanId = RoleHelper::picArKaryawanIdFor($user);
+        if ($picArKaryawanId !== null) {
+            $klienKaryawanArId = $invoice->klienAr()->withTrashed()->value('karyawan_ar_id');
+            abort_unless(
+                $klienKaryawanArId !== null && (int) $klienKaryawanArId === $picArKaryawanId,
+                403,
+                'Anda tidak memiliki akses untuk mencatat pembayaran invoice klien ini.'
+            );
+        }
+
         $pembayaran = $this->service->create(
             $invoice,
             $request->validated(),
@@ -88,10 +104,12 @@ class PembayaranArController extends Controller
         );
     }
 
-    public function destroy(int $id): JsonResponse
+    public function destroy(Request $request, int $id): JsonResponse
     {
-        $pembayaran = PembayaranAr::with('invoice')->find($id);
+        $pembayaran = PembayaranAr::with(['invoice.klienAr', 'items.invoice.klienAr'])->find($id);
         abort_if(!$pembayaran, 404, 'Data pembayaran tidak ditemukan');
+
+        $this->authorizeDeleteOwnership($pembayaran, $request->user()->loadMissing('karyawan'));
 
         $noInvoice = $pembayaran->invoice?->no_invoice;
         $klienArId = $pembayaran->invoice?->klien_ar_id;
@@ -106,6 +124,52 @@ class PembayaranArController extends Controller
         );
 
         return $this->successResponse(null, 'Pembayaran berhasil dihapus');
+    }
+
+    /**
+     * Hapus pembayaran sebelumnya tidak dibatasi sama sekali (bukan cuma FE-only
+     * gap) — cek di sini mencakup 3 bentuk pembayaran AR: invoice tunggal
+     * (invoice_id terisi), Multi Payment (invoice_id null, alokasi lewat items),
+     * dan shell PDM murni (invoice_id null, tanpa items — ownership diturunkan
+     * dari klien_ar_id milik PendapatanDiMuka yang menaunginya).
+     */
+    private function authorizeDeleteOwnership(PembayaranAr $pembayaran, $user): void
+    {
+        $invoices = $pembayaran->invoice
+            ? collect([$pembayaran->invoice])
+            : $pembayaran->items->map(fn($item) => $item->invoice)->filter()->unique('id')->values();
+
+        if (!RoleHelper::hasGlobalArAccess($user) && $user->karyawan) {
+            $luarEntitas = $invoices->contains(
+                fn($inv) => (int) $inv->perusahaan_id !== (int) $user->karyawan->perusahaan_id
+            );
+            abort_if($luarEntitas, 403, 'Anda tidak memiliki akses untuk menghapus pembayaran ini.');
+        }
+
+        $picArKaryawanId = RoleHelper::picArKaryawanIdFor($user);
+        if ($picArKaryawanId === null) {
+            return;
+        }
+
+        if ($invoices->isNotEmpty()) {
+            $luarScope = $invoices->contains(
+                fn($inv) => (int) ($inv->klienAr?->karyawan_ar_id ?? 0) !== $picArKaryawanId
+            );
+            abort_if($luarScope, 403, 'Anda tidak memiliki akses untuk menghapus pembayaran klien ini.');
+
+            return;
+        }
+
+        $klienArId = PendapatanDiMuka::where('sumber_pembayaran_ar_id', $pembayaran->id)->value('klien_ar_id');
+        $ownerKaryawanArId = $klienArId
+            ? KlienAr::withTrashed()->whereKey($klienArId)->value('karyawan_ar_id')
+            : null;
+
+        abort_if(
+            $ownerKaryawanArId === null || (int) $ownerKaryawanArId !== $picArKaryawanId,
+            403,
+            'Anda tidak memiliki akses untuk menghapus pembayaran ini.'
+        );
     }
 
     public function publicBukti(PembayaranAr $pembayaran): StreamedResponse

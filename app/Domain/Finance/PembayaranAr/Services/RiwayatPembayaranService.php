@@ -22,11 +22,20 @@ class RiwayatPembayaranService
         'invoice.klienAr',
         'invoice.perusahaan',
         'invoice.karyawan',
+        'items.invoice.klienAr',
+        'items.invoice.perusahaan',
+        'items.invoice.karyawan',
         'createdBy.karyawan',
         'bankStatementDetail',
         'sumberPembayaran.bankStatementDetail',
     ];
 
+    /**
+     * Multi Payment (header invoice_id NULL, alokasi lewat tb_pembayaran_ar_items)
+     * sebelumnya selalu hilang dari laporan ini karena setiap filter/scoping di
+     * bawah cuma whereHas('invoice', ...) — mustahil match kalau invoice_id null.
+     * Sekarang tiap klausa dicek lewat invoice tunggal ATAU salah satu item.
+     */
     public function query(array $filters, User $user): Builder
     {
         $user->loadMissing('karyawan');
@@ -39,26 +48,39 @@ class RiwayatPembayaranService
 
         $query = PembayaranAr::query()
             ->when($filters['klien_ar_id'] ?? null, fn(Builder $q, $v) =>
-                $q->whereHas('invoice', fn($q) => $q->where('klien_ar_id', $v))
+                $q->where(fn($q) => $q
+                    ->whereHas('invoice', fn($q) => $q->where('klien_ar_id', $v))
+                    ->orWhereHas('items', fn($q) => $q->where('klien_ar_id', $v))
+                )
             )
             ->when($filters['karyawan_id'] ?? null, fn(Builder $q, $v) =>
-                $q->whereHas('invoice', fn($q) => $q->where('karyawan_id', $v))
+                $q->where(fn($q) => $q
+                    ->whereHas('invoice', fn($q) => $q->where('karyawan_id', $v))
+                    ->orWhereHas('items.invoice', fn($q) => $q->where('karyawan_id', $v))
+                )
             )
             ->when($filters['metode_pembayaran'] ?? null, fn(Builder $q, $v) => $q->where('metode_pembayaran', $v))
             ->when($filters['tanggal_dari'] ?? null, fn(Builder $q, $v) => $q->whereDate('tanggal_pembayaran', '>=', $v))
             ->when($filters['tanggal_sampai'] ?? null, fn(Builder $q, $v) => $q->whereDate('tanggal_pembayaran', '<=', $v))
             ->when($segmentTypes, fn(Builder $q) =>
-                $q->whereHas('invoice', fn($q) =>
-                    $q->whereHas('klienAr', fn($q) => $q->whereIn('tipe_klien', $segmentTypes))
+                $q->where(fn($q) => $q
+                    ->whereHas('invoice.klienAr', fn($q) => $q->whereIn('tipe_klien', $segmentTypes))
+                    ->orWhereHas('items.invoice.klienAr', fn($q) => $q->whereIn('tipe_klien', $segmentTypes))
                 )
             );
 
         if ($user->karyawan && !RoleHelper::hasGlobalArAccess($user)) {
-            $query->whereHas('invoice', fn($q) => $q->where('perusahaan_id', $user->karyawan->perusahaan_id));
+            $query->where(fn($q) => $q
+                ->whereHas('invoice', fn($q) => $q->where('perusahaan_id', $user->karyawan->perusahaan_id))
+                ->orWhereHas('items.invoice', fn($q) => $q->where('perusahaan_id', $user->karyawan->perusahaan_id))
+            );
         }
 
         if (RoleHelper::isArOnly($user) && $user->karyawan) {
-            $query->whereHas('invoice.klienAr', fn($q) => $q->where('karyawan_ar_id', $user->karyawan->id));
+            $query->where(fn($q) => $q
+                ->whereHas('invoice.klienAr', fn($q) => $q->where('karyawan_ar_id', $user->karyawan->id))
+                ->orWhereHas('items.invoice.klienAr', fn($q) => $q->where('karyawan_ar_id', $user->karyawan->id))
+            );
         }
 
         return $query;

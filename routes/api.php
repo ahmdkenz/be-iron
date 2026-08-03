@@ -34,7 +34,7 @@ Route::prefix('v1')->group(function () {
                 Route::get('mutasi-piutang/export-excel',  [\App\Domain\Finance\MutasiPiutang\Controllers\MutasiPiutangController::class, 'exportExcel']);
                 Route::get('rekap-pembayaran/export-excel',[\App\Domain\Finance\RekapPembayaran\Controllers\RekapPembayaranController::class, 'exportExcel']);
                 Route::get('kinerja-ar/export-excel',      [\App\Domain\Finance\KinerjaAr\Controllers\KinerjaArController::class, 'exportExcel'])->middleware('role:ADMIN|MANAGER|SUPERVISOR');
-                Route::get('pendapatan-di-muka/export-excel', [\App\Domain\Finance\PendapatanDiMuka\Controllers\PendapatanDiMukaController::class, 'exportExcel'])->middleware('role:ADMIN|MANAGER|SUPERVISOR');
+                Route::get('pendapatan-di-muka/export-excel', [\App\Domain\Finance\PendapatanDiMuka\Controllers\PendapatanDiMukaController::class, 'exportExcel'])->middleware('role:ADMIN|MANAGER|SUPERVISOR|AR');
                 Route::get('rekening-koran/export-excel',  [\App\Domain\Finance\RekeningKoran\Controllers\RekeningKoranController::class, 'exportExcel'])->middleware('role:ADMIN|MANAGER|SUPERVISOR');
                 Route::get('opening-balance/export',       [\App\Domain\Finance\OpeningBalance\Controllers\OpeningBalanceController::class, 'export']);
 

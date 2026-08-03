@@ -6,7 +6,9 @@ use App\Domain\Finance\PendapatanDiMuka\Services\PendapatanDiMukaService;
 use App\Domain\Notification\Services\FinanceNotificationService;
 use App\Http\Controllers\Controller;
 use App\Models\BankStatementDetail;
+use App\Models\KlienAr;
 use App\Models\PendapatanDiMuka;
+use App\Support\Helpers\RoleHelper;
 use App\Support\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -41,6 +43,7 @@ class PendapatanDiMukaController extends Controller
         $filters = $request->only([
             'tanggal_dari', 'tanggal_sampai', 'investor_id', 'klien_ar_id', 'status', 'per_page',
         ]);
+        $this->applyPicArScope($filters, $request);
 
         $result = $this->service->getReport($filters);
 
@@ -61,6 +64,8 @@ class PendapatanDiMukaController extends Controller
             'keterangan'         => ['nullable', 'string', 'max:500'],
         ]);
 
+        $this->authorizeKlienArOwnership($detail->pembayaranAr?->invoice?->klienAr);
+
         $pdm = $this->service->store(
             $detail,
             (float) $request->jumlah,
@@ -77,6 +82,8 @@ class PendapatanDiMukaController extends Controller
     public function cancel(PendapatanDiMuka $pdm): JsonResponse
     {
         $pdm->loadMissing('klienAr');
+        $this->authorizeKlienArOwnership($pdm->klienAr);
+
         $klienArId = $pdm->klien_ar_id;
         $namaKlien = $pdm->klienAr?->nama_klien;
 
@@ -99,6 +106,8 @@ class PendapatanDiMukaController extends Controller
             'jumlah'     => ['required', 'numeric', 'min:0.01'],
             'keterangan' => ['nullable', 'string', 'max:500'],
         ]);
+
+        $this->authorizeKlienArOwnership($pdm->loadMissing('klienAr')->klienAr);
 
         $this->service->gunakan(
             $pdm,
@@ -125,6 +134,7 @@ class PendapatanDiMukaController extends Controller
         ]);
 
         $filters = $request->only(['tanggal_dari', 'tanggal_sampai', 'investor_id', 'klien_ar_id', 'status']);
+        $this->applyPicArScope($filters, $request);
         $rows    = $this->service->getAll($filters);
 
         $totalAktif = $rows->where('status', 'AKTIF')->sum('jumlah');
@@ -239,6 +249,38 @@ class PendapatanDiMukaController extends Controller
                 'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             ])
             ->deleteFileAfterSend(true);
+    }
+
+    // Index/export sebelumnya ADMIN/MANAGER/SUPERVISOR-only (PIC AR tidak bisa
+    // lihat/"Gunakan" PDM kliennya sendiri sama sekali). Kini dibuka untuk role
+    // AR juga, tapi di-scope ke klien milik PIC AR yang login — mirror pola
+    // ArFilterScope/RiwayatPembayaranService. ADMIN/MANAGER/SUPERVISOR tetap
+    // melihat semua klien (tidak di-scope).
+    private function applyPicArScope(array &$filters, Request $request): void
+    {
+        $user = $request->user()->loadMissing('karyawan');
+
+        $karyawanId = RoleHelper::picArKaryawanIdFor($user);
+        if ($karyawanId !== null) {
+            $filters['pic_ar_karyawan_id'] = $karyawanId;
+        }
+    }
+
+    // Sebelumnya store/cancel/gunakan sama sekali tidak mengecek kepemilikan PIC
+    // AR — mirror authorizeKlienArOwnership() di BankStatementController supaya
+    // PIC AR tidak bisa memproses PDM klien lain lewat endpoint ini.
+    private function authorizeKlienArOwnership(?KlienAr $klienAr): void
+    {
+        $karyawanId = RoleHelper::picArKaryawanIdFor(auth()->user());
+        if ($karyawanId === null) {
+            return; // Admin/Manager/Supervisor: tidak dibatasi
+        }
+
+        abort_unless(
+            $klienAr && (int) $klienAr->karyawan_ar_id === $karyawanId,
+            403,
+            'Anda tidak memiliki akses untuk memproses Pendapatan di Muka klien ini.'
+        );
     }
 
     private function formatPdm(PendapatanDiMuka $pdm): array

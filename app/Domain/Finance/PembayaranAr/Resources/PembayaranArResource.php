@@ -25,22 +25,41 @@ class PembayaranArResource extends JsonResource
             $bankDetail = $this->sumberPembayaran?->bankStatementDetail;
         }
 
+        // Multi Payment: invoice_id header selalu NULL, alokasi per invoice hidup
+        // di tb_pembayaran_ar_items — tanpa fallback ini kolom klien/perusahaan/
+        // PIC/no_invoice selalu kosong walau baris-nya sudah tampil di laporan
+        // (lihat RiwayatPembayaranService). Item pertama dipakai sebagai wakil
+        // klien/entitas/PIC karena createMultiPayment() mewajibkan semua invoice
+        // dalam 1 Multi Payment berasal dari entitas penagih yang sama.
+        $items          = $this->relationLoaded('items') ? $this->items : collect();
+        $isMultiPayment = $this->invoice_id === null && $items->isNotEmpty();
+        $primaryInvoice = $this->invoice ?? $items->first()?->invoice;
+
         return [
             'id'                    => $this->id,
             'invoice_id'            => $this->invoice_id,
-            'no_invoice'            => $this->whenLoaded('invoice', fn() => $this->invoice?->no_invoice),
-            'tanggal_invoice'       => $this->whenLoaded('invoice', fn() => $this->invoice?->tanggal_invoice?->format('d-m-Y')),
-            'tanggal_jatuh_tempo'   => $this->whenLoaded('invoice', fn() => $this->invoice?->tanggal_jatuh_tempo?->format('d-m-Y')),
-            'invoice_status'        => $this->whenLoaded('invoice', fn() => $this->invoice?->status),
-            'total_tagihan'         => $this->whenLoaded('invoice', fn() => (float) ($this->invoice?->total_tagihan ?? 0)),
-            'total_pembayaran_invoice' => $this->whenLoaded('invoice', fn() => (float) ($this->invoice?->total_pembayaran ?? 0)),
-            'sisa_tagihan'          => $this->whenLoaded('invoice', fn() => (float) ($this->invoice?->sisa_tagihan ?? 0)),
-            'klien_ar_id'           => $this->whenLoaded('invoice', fn() => $this->invoice?->klien_ar_id),
-            'kode_klien'            => $this->whenLoaded('invoice', fn() => $this->invoice?->klienAr?->kode_klien),
-            'klien'                 => $this->whenLoaded('invoice', fn() => $this->invoice?->klienAr?->nama_klien),
-            'tipe_klien'            => $this->whenLoaded('invoice', fn() => $this->invoice?->klienAr?->tipe_klien),
-            'perusahaan'            => $this->whenLoaded('invoice', fn() => $this->invoice?->perusahaan?->nama_singkatan_perusahaan),
-            'pic_ar'                => $this->whenLoaded('invoice', fn() => $this->invoice?->karyawan?->nama_karyawan),
+            'no_invoice'            => $isMultiPayment ? null : $this->whenLoaded('invoice', fn() => $this->invoice?->no_invoice),
+            'tanggal_invoice'       => $isMultiPayment ? null : $this->whenLoaded('invoice', fn() => $this->invoice?->tanggal_invoice?->format('d-m-Y')),
+            'tanggal_jatuh_tempo'   => $isMultiPayment ? null : $this->whenLoaded('invoice', fn() => $this->invoice?->tanggal_jatuh_tempo?->format('d-m-Y')),
+            'invoice_status'        => $isMultiPayment ? null : $this->whenLoaded('invoice', fn() => $this->invoice?->status),
+            'total_tagihan'         => $isMultiPayment ? null : $this->whenLoaded('invoice', fn() => (float) ($this->invoice?->total_tagihan ?? 0)),
+            'total_pembayaran_invoice' => $isMultiPayment ? null : $this->whenLoaded('invoice', fn() => (float) ($this->invoice?->total_pembayaran ?? 0)),
+            'sisa_tagihan'          => $isMultiPayment ? null : $this->whenLoaded('invoice', fn() => (float) ($this->invoice?->sisa_tagihan ?? 0)),
+            'klien_ar_id'           => $primaryInvoice?->klien_ar_id,
+            'kode_klien'            => $primaryInvoice?->klienAr?->kode_klien,
+            'klien'                 => $primaryInvoice?->klienAr?->nama_klien,
+            'tipe_klien'            => $primaryInvoice?->klienAr?->tipe_klien,
+            'perusahaan'            => $primaryInvoice?->perusahaan?->nama_singkatan_perusahaan,
+            'pic_ar'                => $primaryInvoice?->karyawan?->nama_karyawan,
+            'is_multi_payment'            => $isMultiPayment,
+            'multi_payment_klien_count'   => $isMultiPayment ? $items->pluck('klien_ar_id')->unique()->count() : null,
+            'multi_payment_invoices'      => $isMultiPayment
+                ? $items->map(fn($item) => [
+                    'invoice_id' => $item->invoice_id,
+                    'no_invoice' => $item->invoice?->no_invoice,
+                    'jumlah'     => (float) $item->jumlah_dialokasikan,
+                ])->values()->all()
+                : null,
             'tanggal_pembayaran'    => $this->tanggal_pembayaran?->format('d-m-Y'),
             'jumlah_pembayaran'     => (float) $this->jumlah_pembayaran,
             'metode_pembayaran'     => $this->metode_pembayaran,
