@@ -59,4 +59,28 @@ class KlienAr extends Model
     {
         return $this->belongsTo(User::class, 'updated_by');
     }
+
+    // Nomor kontak WA yang benar-benar dipakai untuk kirim tagihan. no_wa
+    // sendiri adalah field fallback manual (lihat label "No. WhatsApp
+    // (Fallback AR)" di Form.vue) — nomor riil investor RESTO justru ada di
+    // no_hp_pengelola (no_hp investor hampir tidak pernah diisi).
+    public function resolveContactPhone(): ?string
+    {
+        if ($this->tipe_klien === 'RESTO') {
+            $investor = $this->relationLoaded('resto') && $this->resto
+                && $this->resto->relationLoaded('investor')
+                ? $this->resto->investor
+                : null;
+
+            return $investor?->no_hp ?: ($investor?->no_hp_pengelola ?: ($this->no_wa ?: null));
+        }
+
+        if ($this->tipe_klien === 'PT') {
+            $perusahaan = $this->relationLoaded('perusahaan') ? $this->perusahaan : null;
+
+            return $perusahaan?->no_telp ?: ($this->no_wa ?: null);
+        }
+
+        return $this->no_wa ?: null;
+    }
 }

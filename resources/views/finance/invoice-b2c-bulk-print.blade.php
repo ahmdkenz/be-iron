@@ -248,9 +248,7 @@
       @foreach($group['invoices'] as $gi => $inv)
       <tr>
         <td class="text-center" style="color:#777;">{{ $no++ }}</td>
-        @if($gi === 0)
-        <td class="font-bold" rowspan="{{ count($group['invoices']) }}">{{ $group['nama_resto'] }}</td>
-        @endif
+        <td class="font-bold">{{ $group['nama_resto'] }}</td>
         <td class="font-bold" style="color:#b71c1c;">{{ $inv->no_invoice }}</td>
         <td class="text-center" style="color:#555;">{{ \Carbon\Carbon::parse($inv->tanggal_invoice)->isoFormat('D MMM YYYY') }}</td>
         <td class="text-center"><span class="badge badge-{{ $inv->status }}">{{ $inv->status }}</span></td>

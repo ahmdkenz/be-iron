@@ -24,6 +24,7 @@ class UpdateUserRequest extends FormRequest
             'role_id'     => ['sometimes', 'required', 'integer', 'exists:tb_role,id'],
             'no_hp'       => ['nullable', 'string', 'max:20'],
             'status'      => ['nullable', 'boolean'],
+            'fonnte_token' => ['nullable', 'string', 'max:255'],
         ];
     }
 

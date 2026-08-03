@@ -49,6 +49,12 @@ return Application::configure(basePath: dirname(__DIR__))
         $schedule->command('bank-statement:cleanup-stale-imports')
             ->everyFiveMinutes()
             ->withoutOverlapping();
+
+        // Baris tb_bulk_print_tokens (link publik "Kirim Bulk Investor") tidak
+        // ada gunanya lagi setelah signed URL-nya sendiri kedaluwarsa (30 hari).
+        $schedule->command('bulk-print-token:cleanup')
+            ->daily()
+            ->withoutOverlapping();
     })
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->api(prepend: [

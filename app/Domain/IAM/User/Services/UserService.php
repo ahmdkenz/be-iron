@@ -27,12 +27,13 @@ class UserService
     public function create(UserDTO $dto): User
     {
         $data = [
-            'username'    => $dto->username,
-            'email'       => $dto->email,
-            'password'    => Hash::make($dto->password),
-            'karyawan_id' => $dto->karyawan_id,
-            'no_hp'       => $dto->no_hp,
-            'status'      => $dto->status,
+            'username'     => $dto->username,
+            'email'        => $dto->email,
+            'password'     => Hash::make($dto->password),
+            'karyawan_id'  => $dto->karyawan_id,
+            'no_hp'        => $dto->no_hp,
+            'status'       => $dto->status,
+            'fonnte_token' => $dto->fonnte_token,
         ];
 
         $user = $this->repository->create($data);
@@ -54,6 +55,7 @@ class UserService
         ], fn($v) => $v !== null);
 
         $data['email'] = $dto->email;
+        $data['fonnte_token'] = $dto->fonnte_token;
 
         if ($dto->password) {
             $data['password'] = Hash::make($dto->password);

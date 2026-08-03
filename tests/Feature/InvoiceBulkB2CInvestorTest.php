@@ -18,10 +18,11 @@ use Tests\TestCase;
  * Menghindari RefreshDatabase karena migrate:fresh rusak di project ini
  * (lihat project_test_db_migrate_fresh_broken di memory) — InvoiceService
  * di-mock total, model relasi dipasang manual via setRelation() supaya
- * tidak ada lazy-load relasi yang menyentuh DB. Satu-satunya test yang
- * benar-benar butuh DB (403 lintas PIC AR, lewat authorizeKlienArOwnership
- * yang query KlienAr::withTrashed() langsung) membuat tabel tb_klien_ar
- * ad-hoc via Schema::create lalu drop lagi, tanpa menyentuh migrasi lain.
+ * tidak ada lazy-load relasi yang menyentuh DB. Test yang benar-benar butuh
+ * DB (403 lintas PIC AR lewat authorizeKlienArOwnership; happy-path "link"
+ * yang sekarang INSERT ke tb_bulk_print_tokens via BulkPrintToken::create())
+ * membuat tabelnya sendiri ad-hoc via Schema::create lalu drop lagi, tanpa
+ * menyentuh migrasi lain.
  */
 class InvoiceBulkB2CInvestorTest extends TestCase
 {
@@ -219,25 +220,40 @@ class InvoiceBulkB2CInvestorTest extends TestCase
 
     public function test_link_happy_path_menyertakan_share_url(): void
     {
-        $investor = $this->makeInvestor();
-        $resto  = $this->makeResto($investor);
-        $klien  = $this->makeKlienAr('RESTO', $resto);
-        $anchor = $this->makeAnchorInvoice($klien);
-        $invoices = collect([$anchor]);
+        // buildBulkB2CInvestorPayload() sekarang benar-benar INSERT ke
+        // tb_bulk_print_tokens (bukan cuma encode string) — tabel ini tidak
+        // ada di sqlite :memory: bawaan test (migrate:fresh rusak, lihat
+        // docblock class), jadi dibuat ad-hoc di sini persis pola tb_klien_ar
+        // di test_pic_ar_lain_ditolak_403().
+        Schema::create('tb_bulk_print_tokens', function ($table) {
+            $table->uuid('token')->primary();
+            $table->json('payload');
+            $table->timestamp('created_at')->useCurrent();
+        });
 
-        $service = $this->bindService();
-        $service->shouldReceive('findForPrintOrFail')->once()->andReturn($anchor);
-        $service->shouldReceive('resolveMatchingInvestorIds')->once()->andReturn([$investor->id]);
-        $service->shouldReceive('getBulkB2CInvestorInvoices')->once()->andReturn($invoices);
+        try {
+            $investor = $this->makeInvestor();
+            $resto  = $this->makeResto($investor);
+            $klien  = $this->makeKlienAr('RESTO', $resto);
+            $anchor = $this->makeAnchorInvoice($klien);
+            $invoices = collect([$anchor]);
 
-        $response = $this->actingAs($this->makeUser(['MANAGER']))
-            ->postJson('/api/v1/finance/invoices/bulk-b2c-investor/link', $this->basePayload());
+            $service = $this->bindService();
+            $service->shouldReceive('findForPrintOrFail')->once()->andReturn($anchor);
+            $service->shouldReceive('resolveMatchingInvestorIds')->once()->andReturn([$investor->id]);
+            $service->shouldReceive('getBulkB2CInvestorInvoices')->once()->andReturn($invoices);
 
-        $response->assertOk()->assertJsonPath('data.total_invoice', 1);
+            $response = $this->actingAs($this->makeUser(['MANAGER']))
+                ->postJson('/api/v1/finance/invoices/bulk-b2c-investor/link', $this->basePayload());
 
-        $shareUrl = $response->json('data.share_url');
-        $this->assertNotEmpty($shareUrl);
-        $this->assertStringContainsString('/invoices/bulk-print/', $shareUrl);
+            $response->assertOk()->assertJsonPath('data.total_invoice', 1);
+
+            $shareUrl = $response->json('data.share_url');
+            $this->assertNotEmpty($shareUrl);
+            $this->assertStringContainsString('/invoices/bulk-print/', $shareUrl);
+        } finally {
+            Schema::dropIfExists('tb_bulk_print_tokens');
+        }
     }
 
     public function test_investor_terduplikat_per_outlet_tetap_digabung(): void

@@ -24,7 +24,7 @@ class InvoiceListResource extends JsonResource
                 'id'         => $this->klienAr->id,
                 'kode_klien' => $this->klienAr->kode_klien,
                 'nama_klien' => $this->klienAr->nama_klien,
-                'no_wa'      => $this->klienAr->no_wa,
+                'no_wa'      => $this->klienAr->resolveContactPhone(),
             ] : null),
             'resto'                      => $this->whenLoaded('resto', fn() => $this->resto ? [
                 'id'         => $this->resto->id,

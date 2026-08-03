@@ -43,4 +43,14 @@ return [
         'timeout' => env('SHZ360_TIMEOUT', 15),
     ],
 
+    // WhatsApp blast (Fonnte) - kirim invoice/rekap tagihan otomatis dari
+    // halaman Invoice AR. Tidak ada token global di sini — tiap penerima
+    // pakai token device Fonnte milik PIC AR yang menangani klien tsb
+    // (tb_karyawan.fonnte_token), diisi ADMIN lewat form Data Karyawan.
+    'fonnte' => [
+        'base_url' => env('FONNTE_BASE_URL', 'https://api.fonnte.com'),
+        'timeout' => env('FONNTE_TIMEOUT', 15),
+        'delay_ms' => env('FONNTE_BLAST_DELAY_MS', 300),
+    ],
+
 ];

@@ -14,6 +14,7 @@ class UserResource extends JsonResource
             'username'         => $this->username,
             'email'            => $this->email,
             'no_hp'            => $this->no_hp,
+            'fonnte_token'     => $this->fonnte_token,
             'status'           => $this->status,
             'karyawan_id'      => $this->karyawan_id,
             'karyawan'         => $this->whenLoaded('karyawan', fn() => [

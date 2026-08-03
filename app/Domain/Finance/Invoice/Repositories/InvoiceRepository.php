@@ -16,7 +16,10 @@ class InvoiceRepository
             $perPage = max(1, (int) $filters['per_page']);
         }
 
-        $relations = $with ?? ['klienAr' => fn($q) => $q->withTrashed(), 'resto'];
+        $relations = $with ?? [
+            'klienAr' => fn($q) => $q->withTrashed()->with(['resto.investor', 'perusahaan']),
+            'resto',
+        ];
 
         return $this->applyFilters(Invoice::with($relations), $filters)
             ->latest('tanggal_invoice')

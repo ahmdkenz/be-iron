@@ -8,17 +8,19 @@ use App\Domain\Finance\Invoice\Requests\UpdateInvoiceRequest;
 use App\Domain\Finance\Invoice\Resources\InvoiceItemResource;
 use App\Domain\Finance\Invoice\Resources\InvoiceListResource;
 use App\Domain\Finance\Invoice\Resources\InvoiceResource;
+use App\Domain\Finance\Invoice\Services\FonnteApiClient;
 use App\Domain\Finance\Invoice\Services\InvoicePrintItemAggregator;
 use App\Domain\Finance\Invoice\Services\InvoiceService;
 use App\Http\Controllers\Controller;
+use App\Models\BulkPrintToken;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
+use App\Models\Investor;
 use App\Models\KlienAr;
 use App\Models\PembayaranArItem;
 use App\Models\Resto;
 use Carbon\Carbon;
 use App\Support\Helpers\ArFilterScope;
-use App\Support\Helpers\BulkPrintTokenCodec;
 use App\Support\Helpers\RoleHelper;
 use App\Support\Helpers\SignatureBarcodeHelper;
 use App\Support\Traits\ApiResponse;
@@ -28,6 +30,7 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
@@ -46,7 +49,10 @@ class InvoiceController extends Controller
 {
     use ApiResponse;
 
-    public function __construct(private readonly InvoiceService $service) {}
+    public function __construct(
+        private readonly InvoiceService $service,
+        private readonly FonnteApiClient $fonnte,
+    ) {}
 
     public function index(Request $request): JsonResponse
     {
@@ -1071,6 +1077,82 @@ class InvoiceController extends Controller
     }
 
     /**
+     * Blast pesan WA ke banyak penerima sekaligus lewat Fonnte. Pesan sudah
+     * dibangun penuh di FE (template Bahasa Indonesia tetap di client) — di
+     * sini backend cuma jadi proxy server-side supaya token Fonnte tidak
+     * pernah terekspos ke browser, lalu loop 1 call per penerima karena tiap
+     * penerima punya isi pesan berbeda (Fonnte hanya mendukung 1 message yang
+     * sama untuk semua target dalam 1 call).
+     *
+     * Token yang dipakai per penerima BUKAN 1 token perusahaan bersama —
+     * setiap klien punya PIC AR sendiri (klien_ar.karyawan_ar_id), dan tiap
+     * PIC punya device WA (token Fonnte) pribadinya sendiri. Klien yang
+     * PIC-nya belum setup device di-skip (bukan fallback ke token lain).
+     */
+    public function shareBlast(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'recipients'                  => ['required', 'array', 'min:1', 'max:30'],
+            'recipients.*.target'         => ['required', 'string', 'regex:/^\d{8,15}$/'],
+            'recipients.*.message'        => ['required', 'string', 'max:60000'],
+            'recipients.*.label'          => ['nullable', 'string', 'max:255'],
+            'recipients.*.klien_ar_id'    => ['nullable', 'integer'],
+            'recipients.*.invoice_ids'    => ['nullable', 'array'],
+            'recipients.*.invoice_ids.*'  => ['integer'],
+        ]);
+
+        Log::info('WA blast diminta', [
+            'user_id'    => auth()->id(),
+            'recipients' => array_map(
+                fn ($r) => [
+                    'target' => $r['target'],
+                    'label' => $r['label'] ?? null,
+                    'klien_ar_id' => $r['klien_ar_id'] ?? null,
+                    'invoice_ids' => $r['invoice_ids'] ?? [],
+                ],
+                $data['recipients']
+            ),
+        ]);
+
+        $klienArIds = collect($data['recipients'])->pluck('klien_ar_id')->filter()->unique()->values();
+        $tokenByKlienArId = KlienAr::whereIn('id', $klienArIds)
+            ->with(['karyawanAr:id', 'karyawanAr.user:id,karyawan_id,fonnte_token'])
+            ->get()
+            ->mapWithKeys(fn ($k) => [$k->id => $k->karyawanAr?->user?->fonnte_token])
+            ->all();
+
+        $toSend  = [];
+        $skipped = [];
+        foreach ($data['recipients'] as $r) {
+            $token = $tokenByKlienArId[$r['klien_ar_id'] ?? 0] ?? null;
+
+            if (!$token) {
+                $skipped[] = [
+                    'target'    => $r['target'],
+                    'label'     => $r['label'] ?? $r['target'],
+                    'success'   => false,
+                    'detail'    => 'PIC AR untuk klien ini belum setup device WhatsApp (token Fonnte kosong)',
+                    'fonnte_id' => null,
+                ];
+
+                continue;
+            }
+
+            $toSend[] = [...$r, 'token' => $token];
+        }
+
+        $results = array_merge($this->fonnte->blast($toSend), $skipped);
+        $sent    = count(array_filter($results, fn ($r) => $r['success']));
+
+        return $this->successResponse([
+            'total'   => count($results),
+            'sent'    => $sent,
+            'failed'  => count($results) - $sent,
+            'results' => $results,
+        ], 'Blast selesai');
+    }
+
+    /**
      * Endpoint publik (signed URL, tanpa auth) untuk PDF gabungan bulk print
      * per investor. Himpunan invoice_id dibaca dari token (snapshot saat
      * link dibuat), tapi nilai tiap invoice selalu diambil ulang dari DB
@@ -1078,13 +1160,15 @@ class InvoiceController extends Controller
      */
     public function publicBulkB2CPrint(string $token): Response
     {
-        try {
-            $payload = BulkPrintTokenCodec::decode($token);
-        } catch (\Throwable) {
-            abort(404, 'Dokumen tidak ditemukan atau tautan tidak valid');
-        }
+        $bulkToken = BulkPrintToken::find($token);
+        abort_if(!$bulkToken, 404, 'Dokumen tidak ditemukan atau tautan tidak valid');
 
-        $invoiceIds = $payload['invoice_ids'] ?? [];
+        // Token cuma kunci pencarian pendek (UUID) — payload asli (ID saja,
+        // bukan nama/tanggal) hidup di tb_bulk_print_tokens. Nama investor/
+        // klien anchor/PIC AR & rentang tanggal diturunkan ulang dari invoice
+        // hasil fetch di bawah.
+        $raw = $bulkToken->payload;
+        $invoiceIds = $raw['i'] ?? [];
         abort_if(empty($invoiceIds), 404, 'Dokumen tidak ditemukan');
 
         $invoices = $this->service->getBulkB2CInvestorInvoices(
@@ -1093,6 +1177,17 @@ class InvoiceController extends Controller
         );
 
         abort_if($invoices->isEmpty(), 404, 'Dokumen tidak ditemukan');
+
+        $investor    = Investor::find($raw['v'] ?? null);
+        $klienAnchor = KlienAr::with('karyawanAr')->find($raw['k'] ?? null);
+
+        $payload = [
+            'investor_nama'     => $investor?->nama_investor,
+            'klien_anchor_nama' => $klienAnchor?->nama_klien,
+            'pic_ar_nama'       => $klienAnchor?->karyawanAr?->nama_karyawan,
+            'tanggal_dari'      => $invoices->min('tanggal_invoice')?->format('Y-m-d'),
+            'tanggal_sampai'    => $invoices->max('tanggal_invoice')?->format('Y-m-d'),
+        ];
 
         $invoices->each(fn($inv) => $this->attachPrintItems($inv));
         $signaturesById = $invoices
@@ -1194,7 +1289,7 @@ class InvoiceController extends Controller
             'klien_anchor' => [
                 'id'         => $anchor->klienAr?->id,
                 'nama_klien' => $anchor->klienAr?->nama_klien,
-                'no_wa'      => $anchor->klienAr?->no_wa,
+                'no_wa'      => $anchor->klienAr?->resolveContactPhone(),
             ],
             'pic_ar' => [
                 'nama_karyawan' => $anchor->klienAr?->karyawanAr?->nama_karyawan,
@@ -1228,18 +1323,20 @@ class InvoiceController extends Controller
         ];
 
         if ($includeShareUrl) {
-            $token = BulkPrintTokenCodec::encode([
-                'invoice_ids'       => $invoices->pluck('id')->all(),
-                'investor_id'       => $investor->id,
-                'investor_nama'     => $investor->nama_investor,
-                'klien_anchor_nama' => $anchor->klienAr?->nama_klien,
-                'pic_ar_nama'       => $anchor->klienAr?->karyawanAr?->nama_karyawan,
-                'tanggal_dari'      => $ctx['tanggal_dari'],
-                'tanggal_sampai'    => $ctx['tanggal_sampai'],
+            // Payload (ID saja, key 1 huruf) disimpan di DB, bukan di dalam
+            // token — supaya panjang link konstan (UUID) berapa pun jumlah
+            // invoice yang digabung. Tanggal ditampilkan ulang di
+            // publicBulkB2CPrint() dari invoice hasil fetch.
+            $bulkToken = BulkPrintToken::create([
+                'payload' => [
+                    'i' => $invoices->pluck('id')->all(),
+                    'v' => $investor->id,
+                    'k' => $anchor->klienAr?->id,
+                ],
             ]);
 
             $result['share_url'] = URL::temporarySignedRoute(
-                'invoice.bulk-b2c-print', now()->addDays(30), ['token' => $token]
+                'invoice.bulk-b2c-print', now()->addDays(30), ['token' => $bulkToken->token]
             );
         }
 

@@ -21,19 +21,22 @@ class User extends Authenticatable
         'karyawan_id',
         'refresh_token',
         'no_hp',
+        'fonnte_token',
         'status',
     ];
 
     protected $hidden = [
         'password',
         'refresh_token',
+        'fonnte_token',
     ];
 
     protected function casts(): array
     {
         return [
-            'password' => 'hashed',
-            'status'   => 'boolean',
+            'password'     => 'hashed',
+            'status'       => 'boolean',
+            'fonnte_token' => 'encrypted',
         ];
     }
 
