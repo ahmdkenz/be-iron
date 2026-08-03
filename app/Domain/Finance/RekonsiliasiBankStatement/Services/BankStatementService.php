@@ -7,6 +7,7 @@ use App\Domain\Finance\PembayaranAp\Services\PembayaranApService;
 use App\Domain\Finance\PembayaranAr\Services\PembayaranArService;
 use App\Models\BankStatement;
 use App\Models\BankStatementDetail;
+use App\Models\EndingBalanceKoreksi;
 use App\Models\Invoice;
 use App\Models\KlienAr;
 use App\Models\PembayaranAr;
@@ -310,6 +311,7 @@ class BankStatementService
             'selisih_bank'     => $selisihBank,
             'matched_by'       => $d->matchedBy?->name,
             'can_manage_match' => RoleHelper::canManageMatchedRecord(auth()->user(), $d->matched_by),
+            'has_approved_koreksi' => $this->hasApprovedKoreksi($d),
             'kelebihan_bayar'  => $kelebihanBayar,
             'pembayaran'    => $pembayaran ? ($isMulti ? [
                 'id'                 => $pembayaran->id,
@@ -395,9 +397,40 @@ class BankStatementService
         return $detail->fresh()->load('pembayaranAr.invoice.klienAr', 'matchedBy');
     }
 
+    /**
+     * Invoice yang tertaut pembayaran baris ini sudah punya Credit Note/Debit Note
+     * berstatus APPROVED — kalau ya, pembayaran ini tidak boleh dibatalkan lewat
+     * rekonsiliasi (akan meninggalkan total_penyesuaian CN/DN tanpa pembayaran yang
+     * mendasarinya). Hanya jalur AR (PembayaranAr); Payment Voucher AP di luar scope.
+     */
+    private function hasApprovedKoreksi(BankStatementDetail $d): bool
+    {
+        $pembayaran = $d->pembayaranAr;
+        if (!$pembayaran) {
+            return false;
+        }
+
+        $invoiceIds = $pembayaran->invoice_id
+            ? [$pembayaran->invoice_id]
+            : $pembayaran->items->pluck('invoice_id')->filter()->unique()->values()->all();
+
+        if (empty($invoiceIds)) {
+            return false;
+        }
+
+        return EndingBalanceKoreksi::whereIn('invoice_id', $invoiceIds)
+            ->where('status', 'APPROVED')
+            ->exists();
+    }
+
     public function unmatch(BankStatementDetail $detail): BankStatementDetail
     {
         abort_if($detail->status_cocok !== 'MATCHED', 422, 'Hanya transaksi MATCHED yang dapat dibatalkan.');
+        abort_if(
+            $this->hasApprovedKoreksi($detail),
+            422,
+            'Invoice pada transaksi ini sudah punya Credit Note/Debit Note yang disetujui — pembatalan match tidak diizinkan lewat rekonsiliasi.',
+        );
 
         $pembayaran = $detail->pembayaranAr;
         $voucherAp  = $detail->pembayaranAp;
@@ -932,6 +965,11 @@ class BankStatementService
      * dipakai, nilai "kelebihan" bisa naik/turun sendiri tanpa ada uang yang
      * benar-benar berpindah (circular dependency). Subtotal tidak berubah
      * setelah invoice terkirim, jadi hasilnya stabil dipakai lintas panggilan.
+     *
+     * total_penyesuaian (CN/DN) ikut ditambahkan karena Credit Note mengurangi
+     * outstanding invoice dengan cara yang sama seperti pembayaran (lihat
+     * InvoiceService::recalculate()) — tanpa ini, CN yang disetujui setelah
+     * invoice lunas via bank akan membuat kelebihan bayar hilang begitu saja.
      */
     private function computeKelebihanTotal(PembayaranAr $pembayaran, BankStatementDetail $detail): float
     {
@@ -952,7 +990,7 @@ class BankStatementService
             return 0.0;
         }
 
-        $kelebihanFromInvoice = max(0, round((float) $inv->total_pembayaran - (float) $inv->subtotal, 2));
+        $kelebihanFromInvoice = max(0, round((float) $inv->total_pembayaran - (float) $inv->subtotal + (float) $inv->total_penyesuaian, 2));
         $kelebihanFromBank    = max(0, round((float) $detail->kredit - (float) $pembayaran->jumlah_pembayaran, 2));
 
         return max($kelebihanFromInvoice, $kelebihanFromBank);

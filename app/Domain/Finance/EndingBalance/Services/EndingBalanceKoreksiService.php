@@ -290,6 +290,12 @@ class EndingBalanceKoreksiService
         $invoice->save();
 
         $this->invoiceService->recalculate($invoice->fresh());
+
+        // CREDIT_NOTE bisa membuat invoice yang sudah lunas via rekonsiliasi bank
+        // jadi overpaid — auto-catat kelebihannya sebagai PDM (sama seperti jalur
+        // import-upsert). Untuk DEBIT_NOTE, ini hanya menyusutkan PDM yang sudah
+        // ada (jika ada), aman dipanggil untuk kedua tipe.
+        $this->invoiceService->handleExcessPaymentAfterUpdate($invoice->fresh());
     }
 
     /**

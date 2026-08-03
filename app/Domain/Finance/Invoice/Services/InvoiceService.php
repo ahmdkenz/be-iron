@@ -741,8 +741,10 @@ class InvoiceService
     }
 
     /**
-     * Dipanggil setelah import-upsert mengubah subtotal invoice yang sudah punya pembayaran.
-     * Jika invoice menjadi overpaid (total_pembayaran > subtotal baru), coba otomatis:
+     * Dipanggil setelah invoice yang sudah punya pembayaran berubah sehingga bisa
+     * jadi overpaid — baik dari import-upsert (subtotal berubah) maupun dari
+     * approval CN/DN (total_penyesuaian bertambah, lihat
+     * EndingBalanceKoreksiService::applyPenyesuaian()). Jika overpaid, coba otomatis:
      * - Recalculate PDM yang sudah ada, atau
      * - Buat PDM baru jika pembayaran berasal dari rekonsiliasi bank (ada bankStatementDetail).
      * Pembayaran manual (catat bayar) dibiarkan — user tangani lewat UI.
@@ -768,8 +770,10 @@ class InvoiceService
                 continue;
             }
 
-            // Hitung kelebihan terbaru setelah invoice diupdate
-            $kelebihanFromInvoice = max(0, round((float) $invoice->total_pembayaran - (float) $invoice->total_tagihan, 2));
+            // Hitung kelebihan terbaru setelah invoice diupdate. total_penyesuaian
+            // (CN/DN) ikut ditambahkan karena Credit Note mengurangi outstanding
+            // dengan cara yang sama seperti pembayaran (lihat recalculate()).
+            $kelebihanFromInvoice = max(0, round((float) $invoice->total_pembayaran - (float) $invoice->total_tagihan + (float) $invoice->total_penyesuaian, 2));
             $kelebihanFromBank    = max(0, round((float) $detail->kredit - (float) $pembayaran->jumlah_pembayaran, 2));
             $totalKelebihan       = max($kelebihanFromInvoice, $kelebihanFromBank);
             $dialokasi            = (float) $pembayaran->alokasiKelebihan()->sum('jumlah_pembayaran');

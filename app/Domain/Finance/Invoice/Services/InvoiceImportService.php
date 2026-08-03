@@ -509,7 +509,12 @@ class InvoiceImportService
             return $this->result('NEW_INVOICE', null, [], null, 0.0, $totalBaru, []);
         }
 
-        $totalLama  = round((float) ($existing['subtotal'] ?? 0), 2);
+        // Netkan total_penyesuaian (CN/DN yang sudah disetujui) dari baseline —
+        // subtotal invoice sengaja tidak pernah diubah saat CN/DN disetujui
+        // (lihat EndingBalanceKoreksiService::applyPenyesuaian()), jadi tanpa ini
+        // koreksi yang sudah approved akan selalu terdeteksi lagi sebagai selisih
+        // baru pada import berikutnya dan diajukan sebagai CN/DN duplikat.
+        $totalLama  = round((float) ($existing['subtotal'] ?? 0) - (float) ($existing['total_penyesuaian'] ?? 0), 2);
         $selisih    = round($totalBaru - $totalLama, 2);
         $headerDiff = $this->diffHeader($existing['header'] ?? [], $incoming['header'] ?? []);
         $itemsSama  = $this->itemsSignature($existing['items'] ?? []) === $this->itemsSignature($incoming['items'] ?? []);
@@ -517,6 +522,14 @@ class InvoiceImportService
         // Tidak ada perubahan sama sekali → tidak perlu disentuh, apa pun risikonya.
         if ($itemsSama && empty($headerDiff)) {
             return $this->result('UNCHANGED', 'Isi invoice sama dengan data existing.', [], null, $totalLama, $totalBaru, []);
+        }
+
+        // Selisih finansial sudah 0 dan sudah ada penyesuaian (CN/DN approved) yang
+        // menutupnya — item invoice asli sengaja tidak pernah diubah saat CN/DN disetujui,
+        // jadi item-level TIDAK akan pernah match lagi meski secara finansial sudah selesai.
+        // Jangan masuk staging kalau tidak ada perubahan lain (header) yang perlu ditinjau.
+        if ($selisih === 0.0 && empty($headerDiff) && round((float) ($existing['total_penyesuaian'] ?? 0), 2) !== 0.0) {
+            return $this->result('UNCHANGED', 'Selisih sudah tertutup oleh CN/DN yang sudah disetujui sebelumnya.', [], null, $totalLama, $totalBaru, []);
         }
 
         $risk = $this->collectRiskFlags($existing, $ebLocked);

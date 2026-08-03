@@ -23,8 +23,10 @@ class PendapatanDiMukaService
         $inv = $pembayaran->invoice;
         abort_if(!$inv, 422, 'Pembayaran tidak memiliki invoice.');
 
-        // Hitung sisa kelebihan — sama persis dengan logika di BankStatementService::getDetail()
-        $kelebihanFromInvoice = max(0, round((float) $inv->total_pembayaran - (float) $inv->total_tagihan, 2));
+        // Hitung sisa kelebihan — sama persis dengan logika di BankStatementService::getDetail().
+        // total_penyesuaian (CN/DN) ikut ditambahkan karena Credit Note mengurangi
+        // outstanding invoice dengan cara yang sama seperti pembayaran.
+        $kelebihanFromInvoice = max(0, round((float) $inv->total_pembayaran - (float) $inv->total_tagihan + (float) $inv->total_penyesuaian, 2));
         $kelebihanFromBank    = max(0, round((float) $detail->kredit - (float) $pembayaran->jumlah_pembayaran, 2));
         $total                = max($kelebihanFromInvoice, $kelebihanFromBank);
         $dialokasi            = (float) $pembayaran->alokasiKelebihan()->sum('jumlah_pembayaran');
@@ -159,7 +161,7 @@ class PendapatanDiMukaService
         $detail = $sumber->bankStatementDetail;
 
         $kelebihanFromInvoice = $inv
-            ? max(0, round((float) $inv->total_pembayaran - (float) $inv->total_tagihan, 2))
+            ? max(0, round((float) $inv->total_pembayaran - (float) $inv->total_tagihan + (float) $inv->total_penyesuaian, 2))
             : 0.0;
         $kelebihanFromBank = $detail
             ? max(0, round((float) $detail->kredit - (float) $sumber->jumlah_pembayaran, 2))
