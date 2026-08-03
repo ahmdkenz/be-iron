@@ -294,6 +294,10 @@
               <td class="dl-val"><strong style="color:#b71c1c;">{{ $invoice->klienAr->nama_klien }}</strong> @if($invoice->klienAr->alias)<span style="color:#666;">({{ $invoice->klienAr->alias }})</span>@endif</td>
             </tr>
             @if($invoice->klienAr->tipe_klien === 'RESTO' && $invoice->klienAr->resto)
+            <tr>
+              <td class="dl-lbl">Outlet</td><td class="dl-colon">:</td>
+              <td class="dl-val">{{ $invoice->klienAr->resto->nama_resto }} ({{ $invoice->klienAr->resto->kode_resto }})</td>
+            </tr>
             @endif
             @if($invoice->klienAr->perusahaan && $invoice->klienAr->tipe_klien === 'PT')
             <tr>

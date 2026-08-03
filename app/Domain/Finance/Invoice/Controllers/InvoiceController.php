@@ -923,6 +923,7 @@ class InvoiceController extends Controller
         $invoice->load([
             'klienAr.karyawanAr.perusahaan',
             'klienAr.perusahaan',
+            'klienAr.resto.investor',
             'perusahaan',
             'karyawan.perusahaan',
             'items.barang',
