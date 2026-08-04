@@ -79,9 +79,6 @@ Route::prefix('invoices')->group(function () {
     Route::delete('/{invoice}', [InvoiceController::class, 'destroy']);
     Route::patch('/{invoice}/status', [InvoiceController::class, 'changeStatus']);
     Route::patch('/{invoice}/recalculate', [InvoiceController::class, 'recalculate']);
-
-    // Pembayaran per Invoice
-    Route::post('/{invoice}/pembayaran', [PembayaranArController::class, 'store'])->middleware('role:ADMIN|MANAGER|SUPERVISOR|AR');
 });
 
 // ─── Pembayaran ───────────────────────────────────────────────────
@@ -89,7 +86,6 @@ Route::prefix('invoices')->group(function () {
 // Ownership per-klien (PIC AR) sendiri sudah dicek di controller.
 Route::middleware('role:ADMIN|MANAGER|SUPERVISOR|AR')->group(function () {
     Route::get('/pembayaran', [PembayaranArController::class, 'index']);
-    Route::get('/pembayaran/cek-referensi', [PembayaranArController::class, 'cekReferensi']);
     Route::delete('/pembayaran/{pembayaran}', [PembayaranArController::class, 'destroy']);
 });
 

@@ -465,25 +465,4 @@ class PembayaranArService
             });
         });
     }
-
-    public function cekDuplikatReferensi(string $noRef): ?array
-    {
-        $existing = PembayaranAr::with(['invoice.karyawan', 'invoice.klienAr'])
-            ->where('no_referensi', $noRef)
-            ->first();
-
-        if (!$existing) {
-            return null;
-        }
-
-        return [
-            'pembayaran_id'      => $existing->id,
-            'no_invoice'         => $existing->invoice?->no_invoice,
-            'klien'              => $existing->invoice?->klienAr?->nama_klien,
-            'pic'                => $existing->invoice?->karyawan?->nama_karyawan,
-            'tanggal_pembayaran' => $existing->tanggal_pembayaran?->format('d-m-Y'),
-            'jumlah_pembayaran'  => (float) $existing->jumlah_pembayaran,
-            'metode_pembayaran'  => $existing->metode_pembayaran,
-        ];
-    }
 }

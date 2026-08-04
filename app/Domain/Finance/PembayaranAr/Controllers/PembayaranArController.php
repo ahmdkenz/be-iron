@@ -3,8 +3,6 @@
 namespace App\Domain\Finance\PembayaranAr\Controllers;
 
 use App\Domain\Finance\Invoice\Resources\InvoiceResource;
-use App\Domain\Finance\Invoice\Services\InvoiceService;
-use App\Domain\Finance\PembayaranAr\Requests\StorePembayaranArRequest;
 use App\Domain\Finance\PembayaranAr\Resources\PembayaranArResource;
 use App\Domain\Finance\PembayaranAr\Services\PembayaranArService;
 use App\Domain\Finance\PembayaranAr\Services\RiwayatPembayaranService;
@@ -27,7 +25,6 @@ class PembayaranArController extends Controller
 
     public function __construct(
         private readonly PembayaranArService $service,
-        private readonly InvoiceService $invoiceService,
         private readonly RiwayatPembayaranService $riwayatService,
         private readonly FinanceNotificationService $financeNotificationService,
     ) {}
@@ -54,54 +51,6 @@ class PembayaranArController extends Controller
                 'total_jumlah' => $totalJumlah,
             ],
         ]);
-    }
-
-    public function store(StorePembayaranArRequest $request, int $invoiceId): JsonResponse
-    {
-        $invoice = $this->invoiceService->findOrFail($invoiceId);
-
-        $user = $request->user()->loadMissing('karyawan');
-        if (!RoleHelper::hasGlobalArAccess($user) && $user->karyawan) {
-            abort_if(
-                $invoice->perusahaan_id !== $user->karyawan->perusahaan_id,
-                403,
-                'Anda tidak memiliki akses untuk mencatat pembayaran invoice ini.'
-            );
-        }
-
-        // PIC AR (AR murni) hanya boleh mencatat pembayaran untuk invoice klien
-        // yang di-assign ke mereka — mirip authorizeInvoiceOwnership() di
-        // BankStatementController, sebelumnya endpoint ini tidak dibatasi sama
-        // sekali di luar cek entitas di atas.
-        $picArKaryawanId = RoleHelper::picArKaryawanIdFor($user);
-        if ($picArKaryawanId !== null) {
-            $klienKaryawanArId = $invoice->klienAr()->withTrashed()->value('karyawan_ar_id');
-            abort_unless(
-                $klienKaryawanArId !== null && (int) $klienKaryawanArId === $picArKaryawanId,
-                403,
-                'Anda tidak memiliki akses untuk mencatat pembayaran invoice klien ini.'
-            );
-        }
-
-        $pembayaran = $this->service->create(
-            $invoice,
-            $request->validated(),
-            $request->file('bukti_pembayaran'),
-        );
-
-        Log::channel('security')->info('Pembayaran dicatat', [
-            'user_id'        => $user->id,
-            'invoice_id'     => $invoice->id,
-            'no_invoice'     => $invoice->no_invoice,
-            'jumlah'         => $request->jumlah_pembayaran,
-            'metode'         => $request->metode_pembayaran,
-            'ip'             => $request->ip(),
-        ]);
-
-        return $this->createdResponse(
-            new PembayaranArResource($pembayaran),
-            'Pembayaran berhasil dicatat'
-        );
     }
 
     public function destroy(Request $request, int $id): JsonResponse
@@ -181,16 +130,5 @@ class PembayaranArController extends Controller
             $pembayaran->bukti_file_name,
             ['Content-Type' => $pembayaran->bukti_mime_type],
         );
-    }
-
-    public function cekReferensi(Request $request): JsonResponse
-    {
-        $request->validate([
-            'no_referensi' => ['required', 'string', 'max:100'],
-        ]);
-
-        $result = $this->service->cekDuplikatReferensi($request->no_referensi);
-
-        return $this->successResponse($result);
     }
 }
