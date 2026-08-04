@@ -28,7 +28,7 @@ class StoreOpeningBalanceRequest extends FormRequest
             'details'                               => ['nullable', 'array', 'min:1'],
             'details.*.no_invoice_asal'             => ['required_with:details', 'string', 'max:100'],
             'details.*.tanggal_invoice_asal'        => ['required_with:details', 'date'],
-            'details.*.deskripsi'                   => ['required_with:details', 'string', 'max:255'],
+            'details.*.deskripsi'                   => ['nullable', 'string', 'max:255'],
             'details.*.jumlah_tagihan_asal'         => ['required_with:details', 'numeric', 'min:0'],
             'details.*.sisa_tagihan_asal'           => ['required_with:details', 'numeric', 'min:0.01'],
             'details.*.keterangan'                  => ['nullable', 'string', 'max:500'],

@@ -390,7 +390,7 @@ class InvoiceService
             $obDetail = $invoice->openingBalanceDetails()->create([
                 'no_invoice_asal'      => $detail['no_invoice_asal'],
                 'tanggal_invoice_asal' => $detail['tanggal_invoice_asal'],
-                'deskripsi'            => $detail['deskripsi'],
+                'deskripsi'            => $detail['deskripsi'] ?? '',
                 'jumlah_tagihan_asal'  => $jumlahTagihan,
                 'sisa_tagihan_asal'    => $detail['sisa_tagihan_asal'],
                 'keterangan'           => $detail['keterangan'] ?? null,
