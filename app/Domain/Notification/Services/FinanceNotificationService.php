@@ -43,6 +43,32 @@ class FinanceNotificationService
         );
     }
 
+    /**
+     * Notifikasi agregat untuk hasil Import Master Opening Balance — dipakai sebagai
+     * pengganti obArSubmitted() per-baris (yang dibungkam via createOpeningBalance($data,
+     * notify: false) saat dipanggil dari import) supaya approver tidak dibanjiri ratusan
+     * notifikasi individual untuk satu batch import.
+     */
+    public function obArBulkSubmitted(int $count, ?int $actorId): void
+    {
+        if ($count < 1) {
+            return;
+        }
+
+        $this->dispatch(
+            $this->recipients->approvers(),
+            actorId: $actorId,
+            category: 'opening_balance_ar',
+            severity: 'info',
+            title: 'Opening Balance AR menunggu persetujuan',
+            body: sprintf('%d opening balance baru hasil import menunggu persetujuan Anda.', $count),
+            routeName: 'finance-opening-balance',
+            entityType: 'opening_balance_ar',
+            entityId: null,
+            actorName: null,
+        );
+    }
+
     public function obArApproved(Invoice $ob): void
     {
         $ob->loadMissing(['klienAr', 'approvedBy']);
@@ -153,7 +179,7 @@ class FinanceNotificationService
             severity: 'info',
             title: 'Koreksi Ending Balance AR menunggu persetujuan SPV',
             body: sprintf('%s mengajukan koreksi %s (%s) untuk klien %s.',
-                $koreksi->submittedBy?->name ?? 'Seseorang', $koreksi->tipe, $koreksi->no_dokumen ?? ('#' . $koreksi->id), $koreksi->klienAr?->nama_klien ?? '-'),
+                $koreksi->submittedBy?->name ?? 'Seseorang', $koreksi->tipe, $koreksi->no_dokumen ?? ('#'.$koreksi->id), $koreksi->klienAr?->nama_klien ?? '-'),
             routeName: 'finance-ending-balance',
             entityType: 'ending_balance_koreksi_ar',
             entityId: $koreksi->id,
@@ -172,7 +198,7 @@ class FinanceNotificationService
             severity: 'info',
             title: 'Koreksi Ending Balance AR menunggu persetujuan Manager',
             body: sprintf('SPV %s menyetujui koreksi %s (%s) untuk klien %s, menunggu persetujuan akhir.',
-                $koreksi->spv?->name ?? '-', $koreksi->tipe, $koreksi->no_dokumen ?? ('#' . $koreksi->id), $koreksi->klienAr?->nama_klien ?? '-'),
+                $koreksi->spv?->name ?? '-', $koreksi->tipe, $koreksi->no_dokumen ?? ('#'.$koreksi->id), $koreksi->klienAr?->nama_klien ?? '-'),
             routeName: 'finance-ending-balance',
             entityType: 'ending_balance_koreksi_ar',
             entityId: $koreksi->id,
@@ -191,7 +217,7 @@ class FinanceNotificationService
             severity: 'success',
             title: 'Koreksi Ending Balance AR disetujui',
             body: sprintf('Koreksi %s (%s) untuk klien %s telah disetujui oleh %s.',
-                $koreksi->tipe, $koreksi->no_dokumen ?? ('#' . $koreksi->id), $koreksi->klienAr?->nama_klien ?? '-', $koreksi->manager?->name ?? '-'),
+                $koreksi->tipe, $koreksi->no_dokumen ?? ('#'.$koreksi->id), $koreksi->klienAr?->nama_klien ?? '-', $koreksi->manager?->name ?? '-'),
             routeName: 'finance-ending-balance',
             entityType: 'ending_balance_koreksi_ar',
             entityId: $koreksi->id,
@@ -211,7 +237,7 @@ class FinanceNotificationService
             severity: 'warning',
             title: 'Koreksi Ending Balance AR ditolak',
             body: sprintf('Koreksi %s (%s) untuk klien %s ditolak oleh %s. Catatan: %s',
-                $koreksi->tipe, $koreksi->no_dokumen ?? ('#' . $koreksi->id), $koreksi->klienAr?->nama_klien ?? '-', $actor?->name ?? '-', $note),
+                $koreksi->tipe, $koreksi->no_dokumen ?? ('#'.$koreksi->id), $koreksi->klienAr?->nama_klien ?? '-', $actor?->name ?? '-', $note),
             routeName: 'finance-ending-balance',
             entityType: 'ending_balance_koreksi_ar',
             entityId: $koreksi->id,
@@ -232,7 +258,7 @@ class FinanceNotificationService
             severity: 'info',
             title: 'Koreksi Ending Balance AP menunggu persetujuan',
             body: sprintf('%s mengajukan koreksi %s (%s) untuk vendor %s.',
-                $koreksi->submittedBy?->name ?? 'Seseorang', $koreksi->tipe, $koreksi->no_dokumen ?? ('#' . $koreksi->id), $koreksi->vendorAp?->nama_vendor ?? '-'),
+                $koreksi->submittedBy?->name ?? 'Seseorang', $koreksi->tipe, $koreksi->no_dokumen ?? ('#'.$koreksi->id), $koreksi->vendorAp?->nama_vendor ?? '-'),
             routeName: 'ap-ending-balance-index',
             entityType: 'ending_balance_koreksi_ap',
             entityId: $koreksi->id,
@@ -251,7 +277,7 @@ class FinanceNotificationService
             severity: 'success',
             title: 'Koreksi Ending Balance AP disetujui',
             body: sprintf('Koreksi %s (%s) untuk vendor %s telah disetujui oleh %s.',
-                $koreksi->tipe, $koreksi->no_dokumen ?? ('#' . $koreksi->id), $koreksi->vendorAp?->nama_vendor ?? '-', $koreksi->approvedBy?->name ?? '-'),
+                $koreksi->tipe, $koreksi->no_dokumen ?? ('#'.$koreksi->id), $koreksi->vendorAp?->nama_vendor ?? '-', $koreksi->approvedBy?->name ?? '-'),
             routeName: 'ap-ending-balance-index',
             entityType: 'ending_balance_koreksi_ap',
             entityId: $koreksi->id,
@@ -270,7 +296,7 @@ class FinanceNotificationService
             severity: 'warning',
             title: 'Koreksi Ending Balance AP ditolak',
             body: sprintf('Koreksi %s (%s) untuk vendor %s ditolak oleh %s. Catatan: %s',
-                $koreksi->tipe, $koreksi->no_dokumen ?? ('#' . $koreksi->id), $koreksi->vendorAp?->nama_vendor ?? '-', $koreksi->approvedBy?->name ?? '-', $note),
+                $koreksi->tipe, $koreksi->no_dokumen ?? ('#'.$koreksi->id), $koreksi->vendorAp?->nama_vendor ?? '-', $koreksi->approvedBy?->name ?? '-', $note),
             routeName: 'ap-ending-balance-index',
             entityType: 'ending_balance_koreksi_ap',
             entityId: $koreksi->id,
@@ -285,9 +311,9 @@ class FinanceNotificationService
         $this->dispatch(
             $this->recipients->user($userId),
             actorId: null,
-            category: 'import_' . $type,
+            category: 'import_'.$type,
             severity: 'success',
-            title: $label . ' selesai',
+            title: $label.' selesai',
             body: $summary,
             routeName: $this->importRouteName($type),
         );
@@ -298,9 +324,9 @@ class FinanceNotificationService
         $this->dispatch(
             $this->recipients->user($userId),
             actorId: null,
-            category: 'import_' . $type,
+            category: 'import_'.$type,
             severity: 'error',
-            title: $label . ' gagal',
+            title: $label.' gagal',
             body: $message,
             routeName: $this->importRouteName($type),
         );
@@ -323,9 +349,10 @@ class FinanceNotificationService
     {
         return match ($type) {
             'invoice' => 'finance-invoice-index',
-            'master'  => 'master-unified-import',
-            'bank'    => 'finance-laporan-rekening-koran',
-            default   => 'finance-laporan',
+            'master' => 'master-unified-import',
+            'opening_balance' => 'master-unified-import',
+            'bank' => 'finance-laporan-rekening-koran',
+            default => 'finance-laporan',
         };
     }
 
@@ -349,7 +376,7 @@ class FinanceNotificationService
         $this->dispatch(
             $this->recipients->merge($groups),
             actorId: auth()->id(),
-            category: 'rekonsiliasi_bank_' . $action,
+            category: 'rekonsiliasi_bank_'.$action,
             severity: 'info',
             title: $title,
             body: $body,
@@ -374,7 +401,7 @@ class FinanceNotificationService
         ?string $actorName = null,
     ): void {
         $recipients = $recipients
-            ->reject(fn(User $user) => $actorId !== null && (int) $user->id === (int) $actorId)
+            ->reject(fn (User $user) => $actorId !== null && (int) $user->id === (int) $actorId)
             ->unique('id')
             ->values();
 

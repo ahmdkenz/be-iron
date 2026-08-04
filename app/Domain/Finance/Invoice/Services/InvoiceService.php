@@ -5,14 +5,17 @@ namespace App\Domain\Finance\Invoice\Services;
 use App\Domain\Finance\EndingBalance\Services\EndingBalanceService;
 use App\Domain\Finance\Invoice\DTO\InvoiceDTO;
 use App\Domain\Finance\Invoice\Repositories\InvoiceRepository;
+use App\Domain\Finance\PendapatanDiMuka\Services\PendapatanDiMukaService;
 use App\Domain\Notification\Services\FinanceNotificationService;
+use App\Models\EndingBalance;
+use App\Models\Investor;
 use App\Models\Invoice;
 use App\Models\InvoiceApprovalLog;
-use App\Models\Investor;
 use App\Models\KlienAr;
 use App\Models\OpeningBalanceDetail;
 use App\Models\PembayaranAr;
 use App\Models\PembayaranArLog;
+use App\Models\PendapatanDiMuka;
 use App\Models\User;
 use App\Support\Helpers\InvestorIdentityMatcher;
 use App\Support\Helpers\RoleHelper;
@@ -36,7 +39,7 @@ class InvoiceService
      */
     private function abortIfPeriodLocked(Invoice $invoice): void
     {
-        if (!$invoice->klien_ar_id || !$invoice->tanggal_invoice) {
+        if (! $invoice->klien_ar_id || ! $invoice->tanggal_invoice) {
             return;
         }
 
@@ -68,21 +71,24 @@ class InvoiceService
     public function findOrFail(int $id): Invoice
     {
         $invoice = $this->repository->findById($id);
-        abort_if(!$invoice, 404, 'Invoice tidak ditemukan');
+        abort_if(! $invoice, 404, 'Invoice tidak ditemukan');
+
         return $invoice;
     }
 
     public function findHeaderOrFail(int $id): Invoice
     {
         $invoice = $this->repository->findHeaderById($id);
-        abort_if(!$invoice, 404, 'Invoice tidak ditemukan');
+        abort_if(! $invoice, 404, 'Invoice tidak ditemukan');
+
         return $invoice;
     }
 
     public function findForPrintOrFail(int $id): Invoice
     {
         $invoice = $this->repository->findForPrintById($id);
-        abort_if(!$invoice, 404, 'Invoice tidak ditemukan');
+        abort_if(! $invoice, 404, 'Invoice tidak ditemukan');
+
         return $invoice;
     }
 
@@ -98,7 +104,7 @@ class InvoiceService
         return Investor::query()
             ->select(['id', 'nama_investor', 'ktp'])
             ->get()
-            ->filter(fn(Investor $inv) => InvestorIdentityMatcher::matches($anchorInvestor, $inv))
+            ->filter(fn (Investor $inv) => InvestorIdentityMatcher::matches($anchorInvestor, $inv))
             ->pluck('id')
             ->all();
     }
@@ -132,7 +138,7 @@ class InvoiceService
             'pembayarans',
         ]);
 
-        $sortKey = fn(Invoice $inv) => sprintf(
+        $sortKey = fn (Invoice $inv) => sprintf(
             '%s_%s',
             $inv->klienAr?->resto?->nama_resto ?? '',
             $inv->tanggal_invoice?->format('Y-m-d') ?? ''
@@ -147,13 +153,12 @@ class InvoiceService
 
         return $query
             ->where('is_opening_balance', false)
-            ->whereHas('klienAr', fn($q) => $q->where('tipe_klien', 'RESTO'))
-            ->whereHas('klienAr.resto', fn($q) => $q->whereIn('investor_id', $investorIds))
+            ->whereHas('klienAr', fn ($q) => $q->where('tipe_klien', 'RESTO'))
+            ->whereHas('klienAr.resto', fn ($q) => $q->whereIn('investor_id', $investorIds))
             ->whereIn('status', ['TERKIRIM', 'SEBAGIAN'])
             ->whereRaw('(subtotal - total_pembayaran - total_penyesuaian) > 0')
             ->whereBetween('tanggal_invoice', [$tanggalDari, $tanggalSampai])
-            ->when($picArKaryawanId, fn($q, $v) =>
-                $q->whereHas('klienAr', fn($q) => $q->where('karyawan_ar_id', $v))
+            ->when($picArKaryawanId, fn ($q, $v) => $q->whereHas('klienAr', fn ($q) => $q->where('karyawan_ar_id', $v))
             )
             ->get()
             ->sortBy($sortKey)
@@ -214,72 +219,72 @@ class InvoiceService
     public function generateOpeningBalanceNoInvoice(KlienAr $klien, string $tanggal): string
     {
         $klien->loadMissing('perusahaan');
-        $raw       = $klien->perusahaan?->nama_singkatan_perusahaan ?? strtoupper($klien->kode_klien);
+        $raw = $klien->perusahaan?->nama_singkatan_perusahaan ?? strtoupper($klien->kode_klien);
         $singkatan = strtoupper(preg_replace('/[^A-Za-z0-9]/', '', $raw));
-        $date      = Carbon::parse($tanggal);
-        $now       = Carbon::now();
+        $date = Carbon::parse($tanggal);
+        $now = Carbon::now();
 
-        return 'OB-' . $singkatan . '-' . $date->format('dmY') . $now->format('Hisv');
+        return 'OB-'.$singkatan.'-'.$date->format('dmY').$now->format('Hisv');
     }
 
     public function generateConsolidatedInvoiceNo(KlienAr $klien, ?string $tanggal = null): string
     {
         $klien->loadMissing('perusahaan');
-        $raw         = $klien->perusahaan?->nama_singkatan_perusahaan ?? 'ABB';
-        $singkatan   = strtoupper(preg_replace('/[^A-Za-z0-9]/', '', $raw));
+        $raw = $klien->perusahaan?->nama_singkatan_perusahaan ?? 'ABB';
+        $singkatan = strtoupper(preg_replace('/[^A-Za-z0-9]/', '', $raw));
         $invoiceDate = $tanggal ? Carbon::parse($tanggal) : Carbon::now();
-        $now         = Carbon::now();
+        $now = Carbon::now();
 
-        return 'SI-' . $singkatan . '-' . $invoiceDate->format('dmY') . $now->format('Hisv');
+        return 'SI-'.$singkatan.'-'.$invoiceDate->format('dmY').$now->format('Hisv');
     }
 
     public function create(InvoiceDTO $dto): Invoice
     {
         return DB::transaction(function () use ($dto) {
-            $klien     = KlienAr::with('perusahaan')->findOrFail($dto->klien_ar_id);
+            $klien = KlienAr::with('perusahaan')->findOrFail($dto->klien_ar_id);
             $carryover = $this->getMonthlyCarryover($dto->klien_ar_id, $dto->tanggal_invoice);
             $noInvoice = $this->generateConsolidatedInvoiceNo($klien, $dto->tanggal_invoice);
 
             $subtotal = collect($dto->items)->sum(
-                fn($item) => ($item['qty'] ?? 0) * ($item['harga_satuan'] ?? 0)
+                fn ($item) => ($item['qty'] ?? 0) * ($item['harga_satuan'] ?? 0)
             );
             $totalTagihan = $subtotal + $carryover;
 
             $invoice = $this->repository->create([
-                'no_invoice'                 => $noInvoice,
-                'tanggal_invoice'            => $dto->tanggal_invoice,
-                'tanggal_jatuh_tempo'        => $dto->tanggal_jatuh_tempo,
-                'klien_ar_id'                => $dto->klien_ar_id,
-                'resto_id'                   => $dto->resto_id,
-                'perusahaan_id'              => $klien->perusahaan_id,
-                'karyawan_id'                => $this->resolveInvoiceKaryawanId(auth()->user(), $klien),
-                'no_surat_jalan'             => $dto->no_surat_jalan,
-                'subtotal'                   => $subtotal,
+                'no_invoice' => $noInvoice,
+                'tanggal_invoice' => $dto->tanggal_invoice,
+                'tanggal_jatuh_tempo' => $dto->tanggal_jatuh_tempo,
+                'klien_ar_id' => $dto->klien_ar_id,
+                'resto_id' => $dto->resto_id,
+                'perusahaan_id' => $klien->perusahaan_id,
+                'karyawan_id' => $this->resolveInvoiceKaryawanId(auth()->user(), $klien),
+                'no_surat_jalan' => $dto->no_surat_jalan,
+                'subtotal' => $subtotal,
                 'tagihan_periode_sebelumnya' => $carryover,
-                'total_tagihan'              => $totalTagihan,
-                'total_pembayaran'           => 0,
-                'sisa_tagihan'               => $totalTagihan,
-                'status'                     => $dto->status,
-                'keterangan'                 => $dto->keterangan,
-                'prepared_token'             => Str::uuid()->toString(),
-                'approved_token'             => Str::uuid()->toString(),
-                'created_by'                 => auth()->id(),
+                'total_tagihan' => $totalTagihan,
+                'total_pembayaran' => 0,
+                'sisa_tagihan' => $totalTagihan,
+                'status' => $dto->status,
+                'keterangan' => $dto->keterangan,
+                'prepared_token' => Str::uuid()->toString(),
+                'approved_token' => Str::uuid()->toString(),
+                'created_by' => auth()->id(),
             ]);
 
             foreach ($dto->items as $item) {
                 $itemSubtotal = ($item['qty'] ?? 0) * ($item['harga_satuan'] ?? 0);
                 $invoice->items()->create([
-                    'barang_id'        => $item['barang_id'] ?? null,
-                    'kode_barang'      => $item['kode_barang'] ?? null,
-                    'nama_barang'      => $item['nama_barang'],
-                    'qty'              => $item['qty'],
-                    'satuan'           => $item['satuan'] ?? null,
-                    'harga_satuan'     => $item['harga_satuan'],
-                    'subtotal'         => $itemSubtotal,
-                    'keterangan'       => $item['keterangan'] ?? null,
+                    'barang_id' => $item['barang_id'] ?? null,
+                    'kode_barang' => $item['kode_barang'] ?? null,
+                    'nama_barang' => $item['nama_barang'],
+                    'qty' => $item['qty'],
+                    'satuan' => $item['satuan'] ?? null,
+                    'harga_satuan' => $item['harga_satuan'],
+                    'subtotal' => $itemSubtotal,
+                    'keterangan' => $item['keterangan'] ?? null,
                     'no_invoice_resto' => $item['no_invoice_resto'] ?? null,
-                    'kode_resto'       => $item['kode_resto'] ?? null,
-                    'nama_resto'       => $item['nama_resto'] ?? null,
+                    'kode_resto' => $item['kode_resto'] ?? null,
+                    'nama_resto' => $item['nama_resto'] ?? null,
                 ]);
             }
 
@@ -294,47 +299,50 @@ class InvoiceService
         });
     }
 
-    public function createOpeningBalance(array $data): Invoice
+    public function createOpeningBalance(array $data, bool $notify = true): Invoice
     {
         $user = auth()->user()->loadMissing('karyawan');
-        abort_if(!$user?->karyawan?->id, 422, 'User tidak terhubung dengan data karyawan');
+        abort_if(! $user?->karyawan?->id, 422, 'User tidak terhubung dengan data karyawan');
 
         $klien = KlienAr::findOrFail($data['klien_ar_id']);
 
-        return DB::transaction(function () use ($data, $klien, $user) {
-            $saldoAwal = !empty($data['details'])
-                ? collect($data['details'])->sum(fn($d) => (float) ($d['sisa_tagihan_asal'] ?? 0))
+        return DB::transaction(function () use ($data, $klien, $user, $notify) {
+            $saldoAwal = ! empty($data['details'])
+                ? collect($data['details'])->sum(fn ($d) => (float) ($d['sisa_tagihan_asal'] ?? 0))
                 : (float) ($data['saldo_awal'] ?? 0);
 
             $invoice = $this->repository->create([
-                'no_invoice'                 => $data['no_invoice'],
-                'tanggal_invoice'            => $data['tanggal'],
-                'klien_ar_id'                => $data['klien_ar_id'],
-                'perusahaan_id'              => $klien->perusahaan_id,
-                'karyawan_id'                => $this->resolveInvoiceKaryawanId($user, $klien),
-                'subtotal'                   => $saldoAwal,
+                'no_invoice' => $data['no_invoice'],
+                'tanggal_invoice' => $data['tanggal'],
+                'klien_ar_id' => $data['klien_ar_id'],
+                'perusahaan_id' => $klien->perusahaan_id,
+                'karyawan_id' => $this->resolveInvoiceKaryawanId($user, $klien),
+                'subtotal' => $saldoAwal,
                 'tagihan_periode_sebelumnya' => 0,
-                'total_tagihan'              => $saldoAwal,
-                'total_pembayaran'           => 0,
-                'sisa_tagihan'               => $saldoAwal,
-                'status'                     => 'DRAFT',
-                'approval_status'            => 'PENDING',
-                'submitted_at'               => now(),
-                'submitted_by'               => auth()->id(),
-                'is_opening_balance'         => true,
-                'keterangan'                 => $data['keterangan'] ?? 'Opening Balance',
-                'prepared_token'             => Str::uuid()->toString(),
-                'created_by'                 => auth()->id(),
+                'total_tagihan' => $saldoAwal,
+                'total_pembayaran' => 0,
+                'sisa_tagihan' => $saldoAwal,
+                'status' => 'DRAFT',
+                'approval_status' => 'PENDING',
+                'submitted_at' => now(),
+                'submitted_by' => auth()->id(),
+                'is_opening_balance' => true,
+                'keterangan' => $data['keterangan'] ?? 'Opening Balance',
+                'prepared_token' => Str::uuid()->toString(),
+                'created_by' => auth()->id(),
             ]);
 
             $this->createApprovalLog($invoice, 'SUBMITTED');
 
-            if (!empty($data['details'])) {
+            if (! empty($data['details'])) {
                 $this->syncOpeningBalanceDetails($invoice, $data['details']);
             }
 
             $submitted = $this->findOrFail($invoice->id);
-            $this->financeNotificationService->obArSubmitted($submitted);
+
+            if ($notify) {
+                $this->financeNotificationService->obArSubmitted($submitted);
+            }
 
             return $submitted;
         });
@@ -345,7 +353,7 @@ class InvoiceService
         $this->ensureOpeningBalance($invoice);
 
         abort_if(
-            !($invoice->status === 'DRAFT' && $invoice->approval_status === 'REJECTED'),
+            ! ($invoice->status === 'DRAFT' && $invoice->approval_status === 'REJECTED'),
             422,
             'Opening balance hanya dapat diedit setelah ditolak'
         );
@@ -354,24 +362,24 @@ class InvoiceService
 
         $klien = KlienAr::findOrFail($data['klien_ar_id']);
 
-        $saldoAwal = !empty($data['details'])
-            ? collect($data['details'])->sum(fn($d) => (float) ($d['sisa_tagihan_asal'] ?? 0))
+        $saldoAwal = ! empty($data['details'])
+            ? collect($data['details'])->sum(fn ($d) => (float) ($d['sisa_tagihan_asal'] ?? 0))
             : (float) ($data['saldo_awal'] ?? 0);
 
         $invoice->update([
-            'no_invoice'                 => $data['no_invoice'],
-            'tanggal_invoice'            => $data['tanggal'],
-            'klien_ar_id'                => $data['klien_ar_id'],
-            'perusahaan_id'              => $klien->perusahaan_id,
-            'subtotal'                   => $saldoAwal,
-            'total_tagihan'              => $saldoAwal,
-            'sisa_tagihan'               => $saldoAwal - $invoice->total_pembayaran,
-            'keterangan'                 => $data['keterangan'] ?? 'Opening Balance',
-            'updated_by'                 => auth()->id(),
+            'no_invoice' => $data['no_invoice'],
+            'tanggal_invoice' => $data['tanggal'],
+            'klien_ar_id' => $data['klien_ar_id'],
+            'perusahaan_id' => $klien->perusahaan_id,
+            'subtotal' => $saldoAwal,
+            'total_tagihan' => $saldoAwal,
+            'sisa_tagihan' => $saldoAwal - $invoice->total_pembayaran,
+            'keterangan' => $data['keterangan'] ?? 'Opening Balance',
+            'updated_by' => auth()->id(),
         ]);
 
         $invoice->openingBalanceDetails()->delete();
-        if (!empty($data['details'])) {
+        if (! empty($data['details'])) {
             $this->syncOpeningBalanceDetails($invoice, $data['details']);
         }
 
@@ -383,30 +391,30 @@ class InvoiceService
         foreach ($details as $detail) {
             $items = $detail['items'] ?? [];
 
-            $jumlahTagihan = !empty($items)
+            $jumlahTagihan = ! empty($items)
                 ? collect($items)->sum('subtotal')
                 : ($detail['jumlah_tagihan_asal'] ?? 0);
 
             $obDetail = $invoice->openingBalanceDetails()->create([
-                'no_invoice_asal'      => $detail['no_invoice_asal'],
+                'no_invoice_asal' => $detail['no_invoice_asal'],
                 'tanggal_invoice_asal' => $detail['tanggal_invoice_asal'],
-                'deskripsi'            => $detail['deskripsi'] ?? '',
-                'jumlah_tagihan_asal'  => $jumlahTagihan,
-                'sisa_tagihan_asal'    => $detail['sisa_tagihan_asal'],
-                'keterangan'           => $detail['keterangan'] ?? null,
-                'created_by'           => auth()->id(),
+                'deskripsi' => $detail['deskripsi'] ?? '',
+                'jumlah_tagihan_asal' => $jumlahTagihan,
+                'sisa_tagihan_asal' => $detail['sisa_tagihan_asal'],
+                'keterangan' => $detail['keterangan'] ?? null,
+                'created_by' => auth()->id(),
             ]);
 
             foreach ($items as $item) {
                 $obDetail->items()->create([
-                    'barang_id'    => $item['barang_id'] ?? null,
-                    'kode_barang'  => $item['kode_barang'] ?? null,
-                    'nama_barang'  => $item['nama_barang'],
-                    'qty'          => $item['qty'],
-                    'satuan'       => $item['satuan'] ?? null,
+                    'barang_id' => $item['barang_id'] ?? null,
+                    'kode_barang' => $item['kode_barang'] ?? null,
+                    'nama_barang' => $item['nama_barang'],
+                    'qty' => $item['qty'],
+                    'satuan' => $item['satuan'] ?? null,
                     'harga_satuan' => $item['harga_satuan'],
-                    'subtotal'     => $item['subtotal'],
-                    'keterangan'   => $item['keterangan'] ?? null,
+                    'subtotal' => $item['subtotal'],
+                    'keterangan' => $item['keterangan'] ?? null,
                 ]);
             }
         }
@@ -417,7 +425,7 @@ class InvoiceService
         $this->ensureOpeningBalance($invoice);
 
         abort_if(
-            !$invoice->canBeResubmitted(),
+            ! $invoice->canBeResubmitted(),
             422,
             'Opening balance hanya dapat diajukan ulang jika status approval ditolak'
         );
@@ -425,13 +433,13 @@ class InvoiceService
         return DB::transaction(function () use ($invoice, $note) {
             $invoice->update([
                 'approval_status' => 'PENDING',
-                'submitted_at'    => now(),
-                'submitted_by'    => auth()->id(),
-                'approved_at'     => null,
-                'approved_by'     => null,
-                'rejected_at'     => null,
-                'rejected_by'     => null,
-                'updated_by'      => auth()->id(),
+                'submitted_at' => now(),
+                'submitted_by' => auth()->id(),
+                'approved_at' => null,
+                'approved_by' => null,
+                'rejected_at' => null,
+                'rejected_by' => null,
+                'updated_by' => auth()->id(),
             ]);
 
             $this->createApprovalLog($invoice, 'RESUBMITTED', $note);
@@ -446,14 +454,14 @@ class InvoiceService
 
         return DB::transaction(function () use ($invoice, $note) {
             $invoice->update([
-                'status'          => 'TERKIRIM',
+                'status' => 'TERKIRIM',
                 'approval_status' => 'APPROVED',
-                'approved_at'     => now(),
-                'approved_by'     => auth()->id(),
-                'rejected_at'     => null,
-                'rejected_by'     => null,
-                'approved_token'  => Str::uuid()->toString(),
-                'updated_by'      => auth()->id(),
+                'approved_at' => now(),
+                'approved_by' => auth()->id(),
+                'rejected_at' => null,
+                'rejected_by' => null,
+                'approved_token' => Str::uuid()->toString(),
+                'updated_by' => auth()->id(),
             ]);
 
             $this->createApprovalLog($invoice, 'APPROVED', $note);
@@ -474,13 +482,13 @@ class InvoiceService
 
         return DB::transaction(function () use ($invoice, $note) {
             $invoice->update([
-                'status'          => 'DRAFT',
+                'status' => 'DRAFT',
                 'approval_status' => 'REJECTED',
-                'approved_at'     => null,
-                'approved_by'     => null,
-                'rejected_at'     => now(),
-                'rejected_by'     => auth()->id(),
-                'updated_by'      => auth()->id(),
+                'approved_at' => null,
+                'approved_by' => null,
+                'rejected_at' => now(),
+                'rejected_by' => auth()->id(),
+                'updated_by' => auth()->id(),
             ]);
 
             $this->createApprovalLog($invoice, 'REJECTED', $note);
@@ -502,27 +510,27 @@ class InvoiceService
 
         $this->abortIfPeriodLocked($invoice);
 
-        $klien    = KlienAr::findOrFail($dto->klien_ar_id);
+        $klien = KlienAr::findOrFail($dto->klien_ar_id);
         $carryover = $invoice->tagihan_periode_sebelumnya;
 
-        $subtotal     = collect($dto->items)->sum(
-            fn($item) => ($item['qty'] ?? 0) * ($item['harga_satuan'] ?? 0)
+        $subtotal = collect($dto->items)->sum(
+            fn ($item) => ($item['qty'] ?? 0) * ($item['harga_satuan'] ?? 0)
         );
         $totalTagihan = $subtotal + $carryover;
 
         $invoice->update([
-            'no_invoice'                 => $dto->no_invoice,
-            'tanggal_invoice'            => $dto->tanggal_invoice,
-            'tanggal_jatuh_tempo'        => $dto->tanggal_jatuh_tempo,
-            'klien_ar_id'                => $dto->klien_ar_id,
-            'resto_id'                   => $dto->resto_id,
-            'perusahaan_id'              => $klien->perusahaan_id,
-            'no_surat_jalan'             => $dto->no_surat_jalan,
-            'subtotal'                   => $subtotal,
-            'total_tagihan'              => $totalTagihan,
-            'sisa_tagihan'               => $totalTagihan - $invoice->total_pembayaran,
-            'keterangan'                 => $dto->keterangan,
-            'updated_by'                 => auth()->id(),
+            'no_invoice' => $dto->no_invoice,
+            'tanggal_invoice' => $dto->tanggal_invoice,
+            'tanggal_jatuh_tempo' => $dto->tanggal_jatuh_tempo,
+            'klien_ar_id' => $dto->klien_ar_id,
+            'resto_id' => $dto->resto_id,
+            'perusahaan_id' => $klien->perusahaan_id,
+            'no_surat_jalan' => $dto->no_surat_jalan,
+            'subtotal' => $subtotal,
+            'total_tagihan' => $totalTagihan,
+            'sisa_tagihan' => $totalTagihan - $invoice->total_pembayaran,
+            'keterangan' => $dto->keterangan,
+            'updated_by' => auth()->id(),
         ]);
 
         // Replace all items
@@ -530,17 +538,17 @@ class InvoiceService
         foreach ($dto->items as $item) {
             $itemSubtotal = ($item['qty'] ?? 0) * ($item['harga_satuan'] ?? 0);
             $invoice->items()->create([
-                'barang_id'        => $item['barang_id'] ?? null,
-                'kode_barang'      => $item['kode_barang'] ?? null,
-                'nama_barang'      => $item['nama_barang'],
-                'qty'              => $item['qty'],
-                'satuan'           => $item['satuan'] ?? null,
-                'harga_satuan'     => $item['harga_satuan'],
-                'subtotal'         => $itemSubtotal,
-                'keterangan'       => $item['keterangan'] ?? null,
+                'barang_id' => $item['barang_id'] ?? null,
+                'kode_barang' => $item['kode_barang'] ?? null,
+                'nama_barang' => $item['nama_barang'],
+                'qty' => $item['qty'],
+                'satuan' => $item['satuan'] ?? null,
+                'harga_satuan' => $item['harga_satuan'],
+                'subtotal' => $itemSubtotal,
+                'keterangan' => $item['keterangan'] ?? null,
                 'no_invoice_resto' => $item['no_invoice_resto'] ?? null,
-                'kode_resto'       => $item['kode_resto'] ?? null,
-                'nama_resto'       => $item['nama_resto'] ?? null,
+                'kode_resto' => $item['kode_resto'] ?? null,
+                'nama_resto' => $item['nama_resto'] ?? null,
             ]);
         }
 
@@ -550,20 +558,20 @@ class InvoiceService
     public function changeStatus(Invoice $invoice, string $status): Invoice
     {
         abort_if(
-            $invoice->requiresApproval() && !$invoice->isApprovedForFinanceFlow(),
+            $invoice->requiresApproval() && ! $invoice->isApprovedForFinanceFlow(),
             422,
             'Opening balance belum disetujui, status piutang belum dapat diubah'
         );
 
         $allowedTransitions = [
-            'DRAFT'    => ['TERKIRIM'],
+            'DRAFT' => ['TERKIRIM'],
             'TERKIRIM' => ['SEBAGIAN', 'LUNAS'],
             'SEBAGIAN' => ['LUNAS'],
-            'LUNAS'    => [],
+            'LUNAS' => [],
         ];
 
         abort_if(
-            !in_array($status, $allowedTransitions[$invoice->status] ?? []),
+            ! in_array($status, $allowedTransitions[$invoice->status] ?? []),
             422,
             "Invoice tidak dapat diubah dari status {$invoice->status} ke {$status}"
         );
@@ -587,14 +595,14 @@ class InvoiceService
         // PERNAH overlap dengan item Multi Payment (header invoice_id selalu NULL,
         // lihat PembayaranArService::createMultiPayment()), jadi kedua sumber ini
         // aman dijumlahkan tanpa risiko double-count.
-        $totalPembayaran  = $invoice->pembayarans()->sum('jumlah_pembayaran')
+        $totalPembayaran = $invoice->pembayarans()->sum('jumlah_pembayaran')
             + $invoice->pembayaranArItems()->sum('jumlah_dialokasikan');
         $totalPenyesuaian = (float) $invoice->total_penyesuaian;
-        $subtotal         = (float) $invoice->subtotal;
+        $subtotal = (float) $invoice->subtotal;
 
         // Untuk invoice reguler, hitung ulang tagihan_periode_sebelumnya dari riwayat aktual
         // agar data yang salah (misal OB-carryover terbalik) bisa dikoreksi lewat recalculate.
-        $newCarryover    = $invoice->is_opening_balance ? 0.0 : $this->sumOwnSisaBeforeInvoice($invoice);
+        $newCarryover = $invoice->is_opening_balance ? 0.0 : $this->sumOwnSisaBeforeInvoice($invoice);
         $newTotalTagihan = $invoice->is_opening_balance
             ? (float) $invoice->total_tagihan   // OB: total_tagihan akan dikoreksi oleh cascadeCarryoverToNext
             : $subtotal + $newCarryover;
@@ -611,26 +619,26 @@ class InvoiceService
             : $rawSisa <= 0;
 
         if ($terbayarEfektif <= 0) {
-            $status      = 'TERKIRIM';
+            $status = 'TERKIRIM';
             $sisaTagihan = $rawSisa;
         } elseif ($isLunas) {
-            $status      = 'LUNAS';
+            $status = 'LUNAS';
             $sisaTagihan = 0;
         } else {
-            $status      = 'SEBAGIAN';
+            $status = 'SEBAGIAN';
             $sisaTagihan = $rawSisa;
         }
 
         $updateData = [
             'total_pembayaran' => $totalPembayaran,
-            'sisa_tagihan'     => $sisaTagihan,
-            'status'           => $status,
-            'updated_by'       => auth()->id(),
+            'sisa_tagihan' => $sisaTagihan,
+            'status' => $status,
+            'updated_by' => auth()->id(),
         ];
 
-        if (!$invoice->is_opening_balance) {
+        if (! $invoice->is_opening_balance) {
             $updateData['tagihan_periode_sebelumnya'] = $newCarryover;
-            $updateData['total_tagihan']              = $newTotalTagihan;
+            $updateData['total_tagihan'] = $newTotalTagihan;
         }
 
         $invoice->update($updateData);
@@ -640,7 +648,7 @@ class InvoiceService
         // Invoice reguler bisa direferensikan oleh baris OB (snapshot statis) sebagai
         // "invoice periode sebelumnya". Sinkronkan snapshot tersebut agar nominal OB
         // ikut ter-recalculate saat invoice reguler dibayar / dibatalkan.
-        if (!$invoice->is_opening_balance) {
+        if (! $invoice->is_opening_balance) {
             $this->syncOpeningBalanceSnapshots($invoice->fresh());
         }
     }
@@ -674,7 +682,7 @@ class InvoiceService
             - (float) $invoice->total_penyesuaian);
 
         $details = OpeningBalanceDetail::where('no_invoice_asal', $invoice->no_invoice)
-            ->whereHas('invoice', fn($q) => $q->where('klien_ar_id', $invoice->klien_ar_id))
+            ->whereHas('invoice', fn ($q) => $q->where('klien_ar_id', $invoice->klien_ar_id))
             ->get();
 
         if ($details->isEmpty()) {
@@ -689,7 +697,7 @@ class InvoiceService
 
             $detail->update([
                 'sisa_tagihan_asal' => $sisaAsal,
-                'updated_by'        => auth()->id(),
+                'updated_by' => auth()->id(),
             ]);
 
             $affectedObIds[$detail->invoice_id] = true;
@@ -710,16 +718,16 @@ class InvoiceService
     private function recomputeOpeningBalanceFromDetails(Invoice $ob): void
     {
         $newSubtotal = (float) $ob->openingBalanceDetails()->sum('sisa_tagihan_asal');
-        $terbayarEf  = (float) $ob->total_pembayaran + (float) $ob->total_penyesuaian;
+        $terbayarEf = (float) $ob->total_pembayaran + (float) $ob->total_penyesuaian;
 
         $rawSisa = max(0, $newSubtotal - $terbayarEf);
         $isLunas = $rawSisa <= 0;
 
         $updateData = [
-            'subtotal'      => $newSubtotal,
+            'subtotal' => $newSubtotal,
             'total_tagihan' => $newSubtotal,
-            'sisa_tagihan'  => $isLunas ? 0 : $rawSisa,
-            'updated_by'    => auth()->id(),
+            'sisa_tagihan' => $isLunas ? 0 : $rawSisa,
+            'updated_by' => auth()->id(),
         ];
 
         // Hanya ubah status untuk OB yang sudah disetujui (masuk financial flow).
@@ -727,8 +735,8 @@ class InvoiceService
         if ($ob->approval_status === 'APPROVED') {
             $updateData['status'] = match (true) {
                 $terbayarEf <= 0 => $isLunas ? 'LUNAS' : 'TERKIRIM',
-                $isLunas         => 'LUNAS',
-                default          => 'SEBAGIAN',
+                $isLunas => 'LUNAS',
+                default => 'SEBAGIAN',
             };
         }
 
@@ -753,20 +761,21 @@ class InvoiceService
     {
         $invoice->loadMissing('pembayarans.bankStatementDetail');
 
-        $pdmService = app(\App\Domain\Finance\PendapatanDiMuka\Services\PendapatanDiMukaService::class);
+        $pdmService = app(PendapatanDiMukaService::class);
 
         foreach ($invoice->pembayarans->whereNull('sumber_pembayaran_ar_id') as $pembayaran) {
-            $existingPdm = \App\Models\PendapatanDiMuka::where('sumber_pembayaran_ar_id', $pembayaran->id)
+            $existingPdm = PendapatanDiMuka::where('sumber_pembayaran_ar_id', $pembayaran->id)
                 ->whereNotIn('status', ['DIBATALKAN'])
                 ->first();
 
             if ($existingPdm) {
                 $pdmService->recalculate($existingPdm);
+
                 continue;
             }
 
             $detail = $pembayaran->bankStatementDetail;
-            if (!$detail) {
+            if (! $detail) {
                 continue;
             }
 
@@ -774,10 +783,10 @@ class InvoiceService
             // (CN/DN) ikut ditambahkan karena Credit Note mengurangi outstanding
             // dengan cara yang sama seperti pembayaran (lihat recalculate()).
             $kelebihanFromInvoice = max(0, round((float) $invoice->total_pembayaran - (float) $invoice->total_tagihan + (float) $invoice->total_penyesuaian, 2));
-            $kelebihanFromBank    = max(0, round((float) $detail->kredit - (float) $pembayaran->jumlah_pembayaran, 2));
-            $totalKelebihan       = max($kelebihanFromInvoice, $kelebihanFromBank);
-            $dialokasi            = (float) $pembayaran->alokasiKelebihan()->sum('jumlah_pembayaran');
-            $sisa                 = max(0, round($totalKelebihan - $dialokasi, 2));
+            $kelebihanFromBank = max(0, round((float) $detail->kredit - (float) $pembayaran->jumlah_pembayaran, 2));
+            $totalKelebihan = max($kelebihanFromInvoice, $kelebihanFromBank);
+            $dialokasi = (float) $pembayaran->alokasiKelebihan()->sum('jumlah_pembayaran');
+            $sisa = max(0, round($totalKelebihan - $dialokasi, 2));
 
             if ($sisa > 0.01) {
                 try {
@@ -795,7 +804,7 @@ class InvoiceService
      */
     public function recalculateDraftEndingBalance(Invoice $invoice): void
     {
-        $ebList = \App\Models\EndingBalance::where('klien_ar_id', $invoice->klien_ar_id)
+        $ebList = EndingBalance::where('klien_ar_id', $invoice->klien_ar_id)
             ->where('status', 'DRAFT')
             ->where('periode_awal', '<=', $invoice->tanggal_invoice)
             ->where('periode_akhir', '>=', $invoice->tanggal_invoice)
@@ -805,7 +814,7 @@ class InvoiceService
             return;
         }
 
-        $ebService = app(\App\Domain\Finance\EndingBalance\Services\EndingBalanceService::class);
+        $ebService = app(EndingBalanceService::class);
         foreach ($ebList as $eb) {
             try {
                 $ebService->recalculate($eb, auth()->id());
@@ -822,7 +831,7 @@ class InvoiceService
     private function sumOpeningBalanceOriginPayments(Invoice $invoice): float
     {
         return (float) $invoice->pembayarans()
-            ->whereHas('sumberPembayaran.invoice', fn($q) => $q->where('is_opening_balance', true))
+            ->whereHas('sumberPembayaran.invoice', fn ($q) => $q->where('is_opening_balance', true))
             ->sum('jumlah_pembayaran');
     }
 
@@ -833,7 +842,7 @@ class InvoiceService
      */
     public function getSettleableOriginals(Invoice $ob): array
     {
-        if (!$ob->is_opening_balance) {
+        if (! $ob->is_opening_balance) {
             return ['available' => 0.0, 'invoices' => []];
         }
 
@@ -857,18 +866,18 @@ class InvoiceService
                     continue;
                 }
                 $invoices[] = [
-                    'id'              => $inv->id,
-                    'no_invoice'      => $inv->no_invoice,
+                    'id' => $inv->id,
+                    'no_invoice' => $inv->no_invoice,
                     'tanggal_invoice' => $inv->tanggal_invoice?->toDateString(),
-                    'sisa_tagihan'    => $sisa,
-                    'status'          => $inv->status,
+                    'sisa_tagihan' => $sisa,
+                    'status' => $inv->status,
                 ];
             }
         }
 
         return [
             'available' => $this->availableOpeningBalancePayment($ob),
-            'invoices'  => $invoices,
+            'invoices' => $invoices,
         ];
     }
 
@@ -884,7 +893,7 @@ class InvoiceService
         PembayaranAr $obPayment,
         array $selectedInvoiceIds
     ): void {
-        if (!$ob->is_opening_balance || !$ob->isApprovedForFinanceFlow()) {
+        if (! $ob->is_opening_balance || ! $ob->isApprovedForFinanceFlow()) {
             return;
         }
 
@@ -937,41 +946,41 @@ class InvoiceService
             }
 
             $child = PembayaranAr::create([
-                'invoice_id'              => $target->id,
-                'tanggal_pembayaran'      => $obPayment->tanggal_pembayaran,
-                'jumlah_pembayaran'       => $jumlah,
-                'metode_pembayaran'       => $obPayment->metode_pembayaran,
-                'no_referensi'            => $obPayment->no_referensi
-                                                ? $obPayment->no_referensi . '/OB-' . $this->nextObSettleSuffix($obPayment)
+                'invoice_id' => $target->id,
+                'tanggal_pembayaran' => $obPayment->tanggal_pembayaran,
+                'jumlah_pembayaran' => $jumlah,
+                'metode_pembayaran' => $obPayment->metode_pembayaran,
+                'no_referensi' => $obPayment->no_referensi
+                                                ? $obPayment->no_referensi.'/OB-'.$this->nextObSettleSuffix($obPayment)
                                                 : null,
-                'keterangan'              => 'Pelunasan otomatis dari OB ' . $ob->no_invoice,
+                'keterangan' => 'Pelunasan otomatis dari OB '.$ob->no_invoice,
                 'sumber_pembayaran_ar_id' => $obPayment->id,
-                'created_by'              => auth()->id(),
+                'created_by' => auth()->id(),
             ]);
 
             PembayaranArLog::create([
                 'pembayaran_ar_id' => $child->id,
-                'aksi'             => 'DIBUAT',
-                'actor_id'         => auth()->id(),
-                'data_sesudah'     => $child->toArray(),
+                'aksi' => 'DIBUAT',
+                'actor_id' => auth()->id(),
+                'data_sesudah' => $child->toArray(),
             ]);
 
             // Update invoice reguler langsung tanpa cascade/recalculate (mirror applyKelebihan).
-            $fresh     = $target->fresh();
-            $newTotal  = (float) $fresh->pembayarans()->sum('jumlah_pembayaran');
-            $subtotal  = (float) $fresh->subtotal;
-            $rawSisa   = max(0, (float) $fresh->total_tagihan - $newTotal);
-            $isLunas   = $subtotal > 0 ? $newTotal >= $subtotal : $rawSisa <= 0;
+            $fresh = $target->fresh();
+            $newTotal = (float) $fresh->pembayarans()->sum('jumlah_pembayaran');
+            $subtotal = (float) $fresh->subtotal;
+            $rawSisa = max(0, (float) $fresh->total_tagihan - $newTotal);
+            $isLunas = $subtotal > 0 ? $newTotal >= $subtotal : $rawSisa <= 0;
             $newStatus = match (true) {
-                $isLunas      => 'LUNAS',
+                $isLunas => 'LUNAS',
                 $newTotal > 0 => 'SEBAGIAN',
-                default       => 'TERKIRIM',
+                default => 'TERKIRIM',
             };
             $fresh->update([
                 'total_pembayaran' => $newTotal,
-                'sisa_tagihan'     => $isLunas ? 0 : $rawSisa,
-                'status'           => $newStatus,
-                'updated_by'       => auth()->id(),
+                'sisa_tagihan' => $isLunas ? 0 : $rawSisa,
+                'status' => $newStatus,
+                'updated_by' => auth()->id(),
             ]);
 
             $available = round($available - $jumlah, 2);
@@ -984,7 +993,7 @@ class InvoiceService
      */
     private function ownSisa(Invoice $invoice): float
     {
-        $subtotal   = (float) $invoice->subtotal;
+        $subtotal = (float) $invoice->subtotal;
         $totalBayar = (float) $invoice->pembayarans()->sum('jumlah_pembayaran');
 
         return $subtotal > 0
@@ -997,10 +1006,10 @@ class InvoiceService
      */
     private function availableOpeningBalancePayment(Invoice $ob): float
     {
-        $totalBayarOb    = (float) $ob->pembayarans()->sum('jumlah_pembayaran');
-        $sudahDialokasi  = (float) PembayaranAr::whereHas(
+        $totalBayarOb = (float) $ob->pembayarans()->sum('jumlah_pembayaran');
+        $sudahDialokasi = (float) PembayaranAr::whereHas(
             'sumberPembayaran',
-            fn($q) => $q->where('invoice_id', $ob->id)
+            fn ($q) => $q->where('invoice_id', $ob->id)
         )->sum('jumlah_pembayaran');
 
         return max(0, round($totalBayarOb - $sudahDialokasi, 2));
@@ -1011,11 +1020,11 @@ class InvoiceService
      */
     private function nextObSettleSuffix(PembayaranAr $obPayment): int
     {
-        $prefix = $obPayment->no_referensi . '/OB-';
-        $max    = 0;
+        $prefix = $obPayment->no_referensi.'/OB-';
+        $max = 0;
 
         $refs = PembayaranAr::where('sumber_pembayaran_ar_id', $obPayment->id)
-            ->where('no_referensi', 'LIKE', $prefix . '%')
+            ->where('no_referensi', 'LIKE', $prefix.'%')
             ->pluck('no_referensi');
 
         foreach ($refs as $ref) {
@@ -1071,7 +1080,7 @@ class InvoiceService
                 ->orderBy('id')
                 ->first();
 
-            if (!$nextInvoice) {
+            if (! $nextInvoice) {
                 return;
             }
 
@@ -1080,21 +1089,22 @@ class InvoiceService
             // Setelah koreksi (atau jika sudah benar), selalu teruskan cascade ke invoice reguler sesudahnya.
             if ($nextInvoice->is_opening_balance) {
                 if ((float) $nextInvoice->tagihan_periode_sebelumnya > 0.01) {
-                    $subtotalOb   = (float) $nextInvoice->subtotal;
+                    $subtotalOb = (float) $nextInvoice->subtotal;
                     $terbayarEfOb = (float) $nextInvoice->total_pembayaran + (float) $nextInvoice->total_penyesuaian;
-                    $rawSisaOb    = max(0, $subtotalOb - $terbayarEfOb);
-                    $isLunasOb    = $terbayarEfOb >= $subtotalOb;
+                    $rawSisaOb = max(0, $subtotalOb - $terbayarEfOb);
+                    $isLunasOb = $terbayarEfOb >= $subtotalOb;
 
                     $nextInvoice->update([
                         'tagihan_periode_sebelumnya' => 0,
-                        'total_tagihan'              => $subtotalOb,
-                        'sisa_tagihan'               => $isLunasOb ? 0 : $rawSisaOb,
-                        'status'                     => $terbayarEfOb <= 0 ? 'TERKIRIM' : ($isLunasOb ? 'LUNAS' : 'SEBAGIAN'),
-                        'updated_by'                 => auth()->id(),
+                        'total_tagihan' => $subtotalOb,
+                        'sisa_tagihan' => $isLunasOb ? 0 : $rawSisaOb,
+                        'status' => $terbayarEfOb <= 0 ? 'TERKIRIM' : ($isLunasOb ? 'LUNAS' : 'SEBAGIAN'),
+                        'updated_by' => auth()->id(),
                     ]);
                 }
                 // Lanjutkan cascade melewati OB agar invoice reguler sesudahnya ikut diperbarui
                 $current = $nextInvoice->fresh();
+
                 continue;
             }
 
@@ -1105,30 +1115,30 @@ class InvoiceService
                 return;
             }
 
-            $newTotalTagihan      = (float) $nextInvoice->subtotal + $newCarryover;
-            $subtotalNext         = (float) $nextInvoice->subtotal;
-            $totalPembayaranNext  = (float) $nextInvoice->total_pembayaran;
+            $newTotalTagihan = (float) $nextInvoice->subtotal + $newCarryover;
+            $subtotalNext = (float) $nextInvoice->subtotal;
+            $totalPembayaranNext = (float) $nextInvoice->total_pembayaran;
             $totalPenyesuaianNext = (float) $nextInvoice->total_penyesuaian;
-            $terbayarEfektifNext  = $totalPembayaranNext + $totalPenyesuaianNext;
+            $terbayarEfektifNext = $totalPembayaranNext + $totalPenyesuaianNext;
 
-            $rawSisaNext  = max(0, $newTotalTagihan - $terbayarEfektifNext);
-            $isLunasNext  = $subtotalNext > 0
+            $rawSisaNext = max(0, $newTotalTagihan - $terbayarEfektifNext);
+            $isLunasNext = $subtotalNext > 0
                 ? $terbayarEfektifNext >= $subtotalNext
                 : $rawSisaNext <= 0;
             $newSisaTagihan = $isLunasNext ? 0.0 : $rawSisaNext;
 
             $newStatus = match (true) {
                 $terbayarEfektifNext <= 0 => 'TERKIRIM',
-                $isLunasNext              => 'LUNAS',
-                default                   => 'SEBAGIAN',
+                $isLunasNext => 'LUNAS',
+                default => 'SEBAGIAN',
             };
 
             $nextInvoice->update([
                 'tagihan_periode_sebelumnya' => $newCarryover,
-                'total_tagihan'              => $newTotalTagihan,
-                'sisa_tagihan'               => $newSisaTagihan,
-                'status'                     => $newStatus,
-                'updated_by'                 => auth()->id(),
+                'total_tagihan' => $newTotalTagihan,
+                'sisa_tagihan' => $newSisaTagihan,
+                'status' => $newStatus,
+                'updated_by' => auth()->id(),
             ]);
 
             $current = $nextInvoice->fresh();
@@ -1170,7 +1180,7 @@ class InvoiceService
         $deleted = 0;
         foreach ($ids as $id) {
             $invoice = $this->repository->findById((int) $id);
-            if (!$invoice || $invoice->status !== 'DRAFT') {
+            if (! $invoice || $invoice->status !== 'DRAFT') {
                 continue;
             }
             try {
@@ -1180,13 +1190,14 @@ class InvoiceService
                 // skip jika gagal (misalnya cascade constraint)
             }
         }
+
         return $deleted;
     }
 
     private function ensureOpeningBalance(Invoice $invoice): void
     {
         abort_if(
-            !$invoice->is_opening_balance,
+            ! $invoice->is_opening_balance,
             422,
             'Data yang dipilih bukan opening balance'
         );
@@ -1197,7 +1208,7 @@ class InvoiceService
         $this->ensureOpeningBalance($invoice);
 
         abort_if(
-            !($invoice->status === 'DRAFT' && $invoice->approval_status === 'PENDING'),
+            ! ($invoice->status === 'DRAFT' && $invoice->approval_status === 'PENDING'),
             422,
             'Opening balance tidak berada pada status menunggu persetujuan'
         );
@@ -1207,9 +1218,9 @@ class InvoiceService
     {
         InvoiceApprovalLog::create([
             'invoice_id' => $invoice->id,
-            'action'     => $action,
-            'actor_id'   => auth()->id(),
-            'note'       => $note,
+            'action' => $action,
+            'actor_id' => auth()->id(),
+            'note' => $note,
         ]);
     }
 

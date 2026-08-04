@@ -5,29 +5,30 @@ namespace App\Domain\Finance\OpeningBalance\Controllers;
 use App\Domain\Finance\Invoice\Resources\InvoiceResource;
 use App\Domain\Finance\Invoice\Resources\OpeningBalanceDetailResource;
 use App\Domain\Finance\Invoice\Services\InvoiceService;
+use App\Domain\Finance\OpeningBalance\Jobs\ProcessOpeningBalanceImportJob;
 use App\Domain\Finance\OpeningBalance\Requests\StoreOpeningBalanceRequest;
+use App\Domain\Finance\OpeningBalance\Services\OpeningBalanceImportTemplateService;
 use App\Http\Controllers\Controller;
-use App\Models\Barang;
 use App\Models\Invoice;
 use App\Models\KlienAr;
-use App\Models\OpeningBalanceDetail;
-use App\Models\OpeningBalanceDetailItem;
+use App\Models\OpeningBalanceImportBatch;
 use App\Support\Helpers\ArFilterScope;
 use App\Support\Helpers\RoleHelper;
 use App\Support\Traits\ApiResponse;
+use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use PhpOffice\PhpSpreadsheet\Cell\DataType;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
 use PhpOffice\PhpSpreadsheet\Style\Border;
+use PhpOffice\PhpSpreadsheet\Style\Color;
 use PhpOffice\PhpSpreadsheet\Style\Fill;
-use PhpOffice\PhpSpreadsheet\Style\NumberFormat;
 use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx as XlsxWriter;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class OpeningBalanceController extends Controller
 {
@@ -39,7 +40,7 @@ class OpeningBalanceController extends Controller
     {
         $this->authorizeViewOpeningBalance();
 
-        $user    = auth()->user();
+        $user = auth()->user();
         $filters = $request->only([
             'search', 'status', 'klien_ar_id', 'karyawan_id',
             'tanggal_dari', 'tanggal_sampai', 'approval_status', 'per_page', 'segment',
@@ -48,13 +49,13 @@ class OpeningBalanceController extends Controller
         ArFilterScope::apply($filters, $user);
 
         $list = $this->service->paginate($filters, with: [
-            'klienAr' => fn($q) => $q->withTrashed(),
+            'klienAr' => fn ($q) => $q->withTrashed(),
             'resto', 'perusahaan', 'karyawan.perusahaan',
             'submittedBy', 'createdBy', 'updatedBy',
         ]);
 
         return $this->paginatedResponse(
-            $list->through(fn($invoice) => new InvoiceResource($invoice))
+            $list->through(fn ($invoice) => new InvoiceResource($invoice))
         );
     }
 
@@ -62,7 +63,7 @@ class OpeningBalanceController extends Controller
     {
         $this->authorizeViewOpeningBalance();
 
-        $user    = auth()->user();
+        $user = auth()->user();
         $filters = $request->only([
             'search', 'status', 'klien_ar_id', 'karyawan_id',
             'tanggal_dari', 'tanggal_sampai', 'approval_status', 'segment',
@@ -113,10 +114,10 @@ class OpeningBalanceController extends Controller
         $updated = $this->service->approveOpeningBalance($invoice, $payload['note'] ?? null);
 
         Log::channel('security')->info('Opening balance disetujui', [
-            'user_id'    => auth()->id(),
+            'user_id' => auth()->id(),
             'invoice_id' => $invoice->id,
             'no_invoice' => $invoice->no_invoice,
-            'ip'         => $request->ip(),
+            'ip' => $request->ip(),
         ]);
 
         return $this->successResponse(
@@ -137,11 +138,11 @@ class OpeningBalanceController extends Controller
         $updated = $this->service->rejectOpeningBalance($invoice, $payload['note']);
 
         Log::channel('security')->info('Opening balance ditolak', [
-            'user_id'    => auth()->id(),
+            'user_id' => auth()->id(),
             'invoice_id' => $invoice->id,
             'no_invoice' => $invoice->no_invoice,
-            'note'       => $payload['note'],
-            'ip'         => $request->ip(),
+            'note' => $payload['note'],
+            'ip' => $request->ip(),
         ]);
 
         return $this->successResponse(
@@ -180,17 +181,131 @@ class OpeningBalanceController extends Controller
         );
     }
 
+    // ─── Import Master Opening Balance (tab di halaman Import Master Data) ─────
+
+    public function importTemplate(Request $request, OpeningBalanceImportTemplateService $templates): BinaryFileResponse|StreamedResponse|JsonResponse
+    {
+        if ($request->query('format') === 'xlsx') {
+            if (! class_exists('ZipArchive')) {
+                return $this->errorResponse('Ekstensi PHP "zip" tidak aktif. Aktifkan extension=zip pada php.ini lalu restart server.', 500);
+            }
+
+            return response()
+                ->download($templates->buildXlsxFile(), 'template-import-master-opening-balance.xlsx', [
+                    'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                ])
+                ->deleteFileAfterSend(true);
+        }
+
+        return response()->streamDownload(function () use ($templates) {
+            $handle = fopen('php://output', 'w');
+            fprintf($handle, chr(0xEF).chr(0xBB).chr(0xBF)); // UTF-8 BOM
+            foreach ($templates->buildRows() as $row) {
+                // Titik koma, bukan koma — locale Excel Indonesia pakai ";" sebagai list
+                // separator sistem, sama seperti template Import Master Invoice.
+                fputcsv($handle, $row, ';');
+            }
+            fclose($handle);
+        }, 'template-import-master-opening-balance.csv', [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+        ]);
+    }
+
+    public function import(Request $request): JsonResponse
+    {
+        $user = auth()->user();
+        if (! RoleHelper::hasAnyRole($user, ['ADMIN', 'MANAGER', 'SUPERVISOR'])) {
+            return $this->unauthorizedResponse();
+        }
+
+        $request->validate([
+            'file' => ['required', 'file', 'mimes:csv,txt,xlsx,xls', 'max:10240'],
+        ]);
+
+        OpeningBalanceImportBatch::failStale();
+
+        if (OpeningBalanceImportBatch::active()) {
+            return $this->errorResponse('Masih ada proses Import Opening Balance yang berjalan. Tunggu sampai selesai sebelum mengunggah file baru.', 409);
+        }
+
+        $file = $request->file('file');
+        $ext = strtolower($file->getClientOriginalExtension());
+        $path = $file->store('opening-balance-imports');
+
+        $batch = OpeningBalanceImportBatch::create([
+            'user_id' => auth()->id(),
+            'original_filename' => $file->getClientOriginalName(),
+            'file_path' => $path,
+            'is_csv' => ! in_array($ext, ['xlsx', 'xls'], true),
+            'status' => 'queued',
+        ]);
+
+        ProcessOpeningBalanceImportJob::dispatch($batch->id);
+
+        return $this->successResponse([
+            'batch_id' => $batch->id,
+            'status' => $batch->status,
+        ], 'File diterima. Import Opening Balance sedang diproses di latar belakang.', 202);
+    }
+
+    public function importActive(): JsonResponse
+    {
+        OpeningBalanceImportBatch::failStale();
+
+        $batch = auth()->user() && RoleHelper::hasAnyRole(auth()->user(), ['ADMIN', 'MANAGER', 'SUPERVISOR'])
+            ? OpeningBalanceImportBatch::whereIn('status', ['queued', 'processing'])->latest('created_at')->first()
+            : null;
+
+        return $this->successResponse($batch ? $this->formatImportStatus($batch) : null);
+    }
+
+    public function importStatus(string $batch): JsonResponse
+    {
+        OpeningBalanceImportBatch::failStale();
+
+        $record = OpeningBalanceImportBatch::find($batch);
+        if (! $record) {
+            return $this->notFoundResponse('Batch import tidak ditemukan');
+        }
+
+        $user = auth()->user();
+        if ($record->user_id !== $user->id && ! RoleHelper::hasAnyRole($user, ['ADMIN', 'MANAGER', 'SUPERVISOR'])) {
+            return $this->unauthorizedResponse();
+        }
+
+        return $this->successResponse($this->formatImportStatus($record));
+    }
+
+    private function formatImportStatus(OpeningBalanceImportBatch $batch): array
+    {
+        return [
+            'batch_id' => $batch->id,
+            'status' => $batch->status,
+            'total_ob' => $batch->total_ob,
+            'processed_ob' => $batch->processed_ob,
+            'inserted_ob' => $batch->inserted_ob,
+            'skipped_ob' => $batch->skipped_ob,
+            'failed_ob' => $batch->failed_ob,
+            'total_detail' => $batch->total_detail,
+            'inserted_detail' => $batch->inserted_detail,
+            'total_item' => $batch->total_item,
+            'inserted_item' => $batch->inserted_item,
+            'errors' => $batch->errors ?? [],
+            'message' => $batch->message,
+        ];
+    }
+
     // ─── Export ───────────────────────────────────────────────────────────────
 
     public function export(Request $request): BinaryFileResponse|JsonResponse
     {
         $this->authorizeViewOpeningBalance();
 
-        if (!class_exists('ZipArchive')) {
+        if (! class_exists('ZipArchive')) {
             return $this->errorResponse('Ekstensi PHP "zip" tidak aktif. Aktifkan extension=zip pada php.ini lalu restart server.', 500);
         }
 
-        $user    = auth()->user();
+        $user = auth()->user();
         $filters = $request->only([
             'search', 'status', 'klien_ar_id', 'karyawan_id',
             'tanggal_dari', 'tanggal_sampai', 'approval_status',
@@ -200,7 +315,7 @@ class OpeningBalanceController extends Controller
 
         $records = $this->service->getAllForExport($filters);
 
-        $spreadsheet = new Spreadsheet();
+        $spreadsheet = new Spreadsheet;
 
         // Sheet 1: Data Opening Balance
         $sheet1 = $spreadsheet->getActiveSheet();
@@ -220,11 +335,11 @@ class OpeningBalanceController extends Controller
 
         $spreadsheet->setActiveSheetIndex(0);
 
-        $temp = tempnam(sys_get_temp_dir(), 'export_ob_') . '.xlsx';
+        $temp = tempnam(sys_get_temp_dir(), 'export_ob_').'.xlsx';
         (new XlsxWriter($spreadsheet))->save($temp);
 
         return response()
-            ->download($temp, 'Data Opening Balance-' . now()->format('Ymd-His') . '.xlsx', [
+            ->download($temp, 'Data Opening Balance-'.now()->format('Ymd-His').'.xlsx', [
                 'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             ])
             ->deleteFileAfterSend(true);
@@ -256,17 +371,17 @@ class OpeningBalanceController extends Controller
         $sheet->mergeCells("A1:{$lastCol}1");
         $sheet->setCellValue('A1', 'DATA OPENING BALANCE');
         $sheet->getStyle('A1')->applyFromArray([
-            'font'      => ['bold' => true, 'size' => 14, 'color' => ['argb' => 'FFFFFFFF']],
-            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF1B5E20']],
+            'font' => ['bold' => true, 'size' => 14, 'color' => ['argb' => 'FFFFFFFF']],
+            'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF1B5E20']],
             'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
         ]);
         $sheet->getRowDimension(1)->setRowHeight(36);
 
         $sheet->mergeCells("A2:{$lastCol}2");
-        $sheet->setCellValue('A2', 'Diekspor pada: ' . now()->format('d-m-Y H:i') . '   |   Total data: ' . $records->count() . ' opening balance');
+        $sheet->setCellValue('A2', 'Diekspor pada: '.now()->format('d-m-Y H:i').'   |   Total data: '.$records->count().' opening balance');
         $sheet->getStyle('A2')->applyFromArray([
-            'font'      => ['italic' => true, 'size' => 9, 'color' => ['argb' => 'FF33691E']],
-            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFF1F8E9']],
+            'font' => ['italic' => true, 'size' => 9, 'color' => ['argb' => 'FF33691E']],
+            'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFF1F8E9']],
             'alignment' => ['horizontal' => Alignment::HORIZONTAL_LEFT, 'vertical' => Alignment::VERTICAL_CENTER],
         ]);
         $sheet->getRowDimension(2)->setRowHeight(22);
@@ -277,10 +392,10 @@ class OpeningBalanceController extends Controller
             $sheet->getColumnDimension($col)->setWidth($width);
         }
         $sheet->getStyle("A4:{$lastCol}4")->applyFromArray([
-            'font'      => ['bold' => true, 'size' => 10, 'color' => ['argb' => 'FFFFFFFF']],
-            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF2E7D32']],
+            'font' => ['bold' => true, 'size' => 10, 'color' => ['argb' => 'FFFFFFFF']],
+            'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF2E7D32']],
             'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
-            'borders'   => ['allBorders' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FF1B5E20']]],
+            'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FF1B5E20']]],
         ]);
         $sheet->getRowDimension(4)->setRowHeight(22);
 
@@ -295,7 +410,7 @@ class OpeningBalanceController extends Controller
                 'B' => [$inv->klienAr?->nama_klien ?? '-',                             DataType::TYPE_STRING],
                 'C' => [$inv->klienAr?->kode_klien ?? '-',                             DataType::TYPE_STRING],
                 'D' => [$inv->perusahaan?->nama_singkatan_perusahaan ?? '-',           DataType::TYPE_STRING],
-                'E' => [$inv->tanggal_invoice ? \Carbon\Carbon::parse($inv->tanggal_invoice)->format('d-m-Y') : '-', DataType::TYPE_STRING],
+                'E' => [$inv->tanggal_invoice ? Carbon::parse($inv->tanggal_invoice)->format('d-m-Y') : '-', DataType::TYPE_STRING],
                 'F' => [(float) $inv->subtotal,         DataType::TYPE_NUMERIC],
                 'G' => [(float) $inv->total_pembayaran, DataType::TYPE_NUMERIC],
                 'H' => [(float) $inv->sisa_tagihan,     DataType::TYPE_NUMERIC],
@@ -303,7 +418,7 @@ class OpeningBalanceController extends Controller
                 'J' => [$inv->status ?? '-',                                           DataType::TYPE_STRING],
                 'K' => [$inv->approval_status ?? '-',                                  DataType::TYPE_STRING],
                 'L' => [$inv->createdBy?->username ?? '-',                             DataType::TYPE_STRING],
-                'M' => [$inv->created_at ? \Carbon\Carbon::parse($inv->created_at)->format('d-m-Y H:i') : '-', DataType::TYPE_STRING],
+                'M' => [$inv->created_at ? Carbon::parse($inv->created_at)->format('d-m-Y H:i') : '-', DataType::TYPE_STRING],
             ];
 
             foreach ($rowData as $col => [$val, $type]) {
@@ -315,27 +430,27 @@ class OpeningBalanceController extends Controller
             }
 
             $sheet->getStyle("A{$rowNum}:{$lastCol}{$rowNum}")->applyFromArray([
-                'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => $bg]],
-                'borders'   => ['allBorders' => ['borderStyle' => Border::BORDER_HAIR, 'color' => ['argb' => 'FFCFD8DC']]],
+                'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => $bg]],
+                'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_HAIR, 'color' => ['argb' => 'FFCFD8DC']]],
                 'alignment' => ['vertical' => Alignment::VERTICAL_CENTER],
             ]);
 
             // Status color
             $statusColors = ['DRAFT' => 'FF757575', 'TERKIRIM' => 'FF1565C0', 'SEBAGIAN' => 'FFE65100', 'LUNAS' => 'FF2E7D32'];
-            $statusColor  = $statusColors[$inv->status] ?? 'FF212121';
-            $sheet->getStyle("J{$rowNum}")->getFont()->setColor(new \PhpOffice\PhpSpreadsheet\Style\Color($statusColor))->setBold(true);
+            $statusColor = $statusColors[$inv->status] ?? 'FF212121';
+            $sheet->getStyle("J{$rowNum}")->getFont()->setColor(new Color($statusColor))->setBold(true);
 
             // Approval color
             $approvalColors = ['PENDING' => 'FFE65100', 'APPROVED' => 'FF2E7D32', 'REJECTED' => 'FFC62828'];
-            $approvalColor  = $approvalColors[$inv->approval_status] ?? 'FF212121';
-            $sheet->getStyle("K{$rowNum}")->getFont()->setColor(new \PhpOffice\PhpSpreadsheet\Style\Color($approvalColor))->setBold(true);
+            $approvalColor = $approvalColors[$inv->approval_status] ?? 'FF212121';
+            $sheet->getStyle("K{$rowNum}")->getFont()->setColor(new Color($approvalColor))->setBold(true);
 
             $sheet->getRowDimension($rowNum)->setRowHeight(18);
             $rowNum++;
         }
 
         if ($rowNum > 5) {
-            $sheet->getStyle("A4:{$lastCol}" . ($rowNum - 1))->applyFromArray([
+            $sheet->getStyle("A4:{$lastCol}".($rowNum - 1))->applyFromArray([
                 'borders' => ['outline' => ['borderStyle' => Border::BORDER_MEDIUM, 'color' => ['argb' => 'FF2E7D32']]],
             ]);
         }
@@ -362,8 +477,8 @@ class OpeningBalanceController extends Controller
         $sheet->mergeCells("A1:{$lastCol}1");
         $sheet->setCellValue('A1', 'RINCIAN INVOICE ASAL');
         $sheet->getStyle('A1')->applyFromArray([
-            'font'      => ['bold' => true, 'size' => 13, 'color' => ['argb' => 'FFFFFFFF']],
-            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF1B5E20']],
+            'font' => ['bold' => true, 'size' => 13, 'color' => ['argb' => 'FFFFFFFF']],
+            'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF1B5E20']],
             'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
         ]);
         $sheet->getRowDimension(1)->setRowHeight(30);
@@ -374,10 +489,10 @@ class OpeningBalanceController extends Controller
             $sheet->getColumnDimension($col)->setWidth($width);
         }
         $sheet->getStyle("A3:{$lastCol}3")->applyFromArray([
-            'font'      => ['bold' => true, 'size' => 10, 'color' => ['argb' => 'FFFFFFFF']],
-            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF2E7D32']],
+            'font' => ['bold' => true, 'size' => 10, 'color' => ['argb' => 'FFFFFFFF']],
+            'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF2E7D32']],
             'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
-            'borders'   => ['allBorders' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FF1B5E20']]],
+            'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FF1B5E20']]],
         ]);
         $sheet->getRowDimension(3)->setRowHeight(22);
 
@@ -391,7 +506,7 @@ class OpeningBalanceController extends Controller
                 $rowData = [
                     'A' => [$inv->no_invoice,                                                                         DataType::TYPE_STRING],
                     'B' => [$detail->no_invoice_asal,                                                                 DataType::TYPE_STRING],
-                    'C' => [$detail->tanggal_invoice_asal ? \Carbon\Carbon::parse($detail->tanggal_invoice_asal)->format('d-m-Y') : '-', DataType::TYPE_STRING],
+                    'C' => [$detail->tanggal_invoice_asal ? Carbon::parse($detail->tanggal_invoice_asal)->format('d-m-Y') : '-', DataType::TYPE_STRING],
                     'D' => [$detail->deskripsi,                                                                       DataType::TYPE_STRING],
                     'E' => [(float) $detail->jumlah_tagihan_asal,                                                     DataType::TYPE_NUMERIC],
                     'F' => [(float) $detail->sisa_tagihan_asal,                                                       DataType::TYPE_NUMERIC],
@@ -408,8 +523,8 @@ class OpeningBalanceController extends Controller
                 }
 
                 $sheet->getStyle("A{$rowNum}:{$lastCol}{$rowNum}")->applyFromArray([
-                    'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => $bg]],
-                    'borders'   => ['allBorders' => ['borderStyle' => Border::BORDER_HAIR, 'color' => ['argb' => 'FFCFD8DC']]],
+                    'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => $bg]],
+                    'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_HAIR, 'color' => ['argb' => 'FFCFD8DC']]],
                     'alignment' => ['vertical' => Alignment::VERTICAL_CENTER],
                 ]);
                 $sheet->getRowDimension($rowNum)->setRowHeight(18);
@@ -418,7 +533,7 @@ class OpeningBalanceController extends Controller
         }
 
         if ($rowNum > 4) {
-            $sheet->getStyle("A3:{$lastCol}" . ($rowNum - 1))->applyFromArray([
+            $sheet->getStyle("A3:{$lastCol}".($rowNum - 1))->applyFromArray([
                 'borders' => ['outline' => ['borderStyle' => Border::BORDER_MEDIUM, 'color' => ['argb' => 'FF2E7D32']]],
             ]);
         }
@@ -446,8 +561,8 @@ class OpeningBalanceController extends Controller
         $sheet->mergeCells("A1:{$lastCol}1");
         $sheet->setCellValue('A1', 'ITEM INVOICE ASAL');
         $sheet->getStyle('A1')->applyFromArray([
-            'font'      => ['bold' => true, 'size' => 13, 'color' => ['argb' => 'FFFFFFFF']],
-            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF1B5E20']],
+            'font' => ['bold' => true, 'size' => 13, 'color' => ['argb' => 'FFFFFFFF']],
+            'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF1B5E20']],
             'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
         ]);
         $sheet->getRowDimension(1)->setRowHeight(30);
@@ -458,10 +573,10 @@ class OpeningBalanceController extends Controller
             $sheet->getColumnDimension($col)->setWidth($width);
         }
         $sheet->getStyle("A3:{$lastCol}3")->applyFromArray([
-            'font'      => ['bold' => true, 'size' => 10, 'color' => ['argb' => 'FFFFFFFF']],
-            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF2E7D32']],
+            'font' => ['bold' => true, 'size' => 10, 'color' => ['argb' => 'FFFFFFFF']],
+            'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF2E7D32']],
             'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
-            'borders'   => ['allBorders' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FF1B5E20']]],
+            'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FF1B5E20']]],
         ]);
         $sheet->getRowDimension(3)->setRowHeight(22);
 
@@ -494,8 +609,8 @@ class OpeningBalanceController extends Controller
                     }
 
                     $sheet->getStyle("A{$rowNum}:{$lastCol}{$rowNum}")->applyFromArray([
-                        'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => $bg]],
-                        'borders'   => ['allBorders' => ['borderStyle' => Border::BORDER_HAIR, 'color' => ['argb' => 'FFCFD8DC']]],
+                        'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => $bg]],
+                        'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_HAIR, 'color' => ['argb' => 'FFCFD8DC']]],
                         'alignment' => ['vertical' => Alignment::VERTICAL_CENTER],
                     ]);
                     $sheet->getRowDimension($rowNum)->setRowHeight(18);
@@ -505,7 +620,7 @@ class OpeningBalanceController extends Controller
         }
 
         if ($rowNum > 4) {
-            $sheet->getStyle("A3:{$lastCol}" . ($rowNum - 1))->applyFromArray([
+            $sheet->getStyle("A3:{$lastCol}".($rowNum - 1))->applyFromArray([
                 'borders' => ['outline' => ['borderStyle' => Border::BORDER_MEDIUM, 'color' => ['argb' => 'FF2E7D32']]],
             ]);
         }
@@ -522,8 +637,8 @@ class OpeningBalanceController extends Controller
         $sheet->mergeCells('A1:B1');
         $sheet->setCellValue('A1', 'KETERANGAN FILE EXPORT OPENING BALANCE');
         $sheet->getStyle('A1')->applyFromArray([
-            'font'      => ['bold' => true, 'size' => 12, 'color' => ['argb' => 'FFFFFFFF']],
-            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF1B5E20']],
+            'font' => ['bold' => true, 'size' => 12, 'color' => ['argb' => 'FFFFFFFF']],
+            'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF1B5E20']],
             'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
         ]);
         $sheet->getRowDimension(1)->setRowHeight(30);
@@ -540,9 +655,9 @@ class OpeningBalanceController extends Controller
             $sheet->setCellValue("B{$row}", $desc);
             $bg = $i % 2 === 0 ? 'FFFFFFFF' : 'FFF1F8E9';
             $sheet->getStyle("A{$row}:B{$row}")->applyFromArray([
-                'font'      => ['size' => 9],
-                'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => $bg]],
-                'borders'   => ['allBorders' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FFE0E0E0']]],
+                'font' => ['size' => 9],
+                'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => $bg]],
+                'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FFE0E0E0']]],
                 'alignment' => ['vertical' => Alignment::VERTICAL_CENTER, 'wrapText' => true],
             ]);
             $sheet->getStyle("A{$row}")->getFont()->setBold(true);
@@ -556,7 +671,7 @@ class OpeningBalanceController extends Controller
     private function findOpeningBalanceOrFail(int $id): Invoice
     {
         $invoice = $this->service->findOrFail($id);
-        abort_if(!$invoice->is_opening_balance, 404, 'Opening balance tidak ditemukan');
+        abort_if(! $invoice->is_opening_balance, 404, 'Opening balance tidak ditemukan');
 
         if ($invoice->klien_ar_id) {
             $this->authorizeKlienArOwnership($invoice->klien_ar_id);
@@ -579,7 +694,7 @@ class OpeningBalanceController extends Controller
         $klien = KlienAr::withTrashed()->find($klienArId);
 
         abort_if(
-            !$klien || (int) $klien->karyawan_ar_id !== $picArKaryawanId,
+            ! $klien || (int) $klien->karyawan_ar_id !== $picArKaryawanId,
             403,
             'Anda hanya dapat mengelola opening balance untuk Client yang ditugaskan kepada Anda'
         );
@@ -588,7 +703,7 @@ class OpeningBalanceController extends Controller
     private function authorizeViewOpeningBalance(): void
     {
         abort_if(
-            !RoleHelper::canViewOpeningBalance(auth()->user()),
+            ! RoleHelper::canViewOpeningBalance(auth()->user()),
             403,
             'Tidak memiliki akses ke data opening balance'
         );
@@ -597,7 +712,7 @@ class OpeningBalanceController extends Controller
     private function authorizeOperateOpeningBalance(): void
     {
         abort_if(
-            !RoleHelper::canOperateOpeningBalance(auth()->user()),
+            ! RoleHelper::canOperateOpeningBalance(auth()->user()),
             403,
             'Tidak memiliki akses untuk mengelola opening balance'
         );
@@ -606,7 +721,7 @@ class OpeningBalanceController extends Controller
     private function authorizeApproveOpeningBalance(): void
     {
         abort_if(
-            !RoleHelper::canApproveOpeningBalance(auth()->user()),
+            ! RoleHelper::canApproveOpeningBalance(auth()->user()),
             403,
             'Tidak memiliki akses untuk menyetujui opening balance'
         );

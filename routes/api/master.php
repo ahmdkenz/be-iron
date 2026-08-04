@@ -1,5 +1,6 @@
 <?php
 
+use App\Domain\Finance\OpeningBalance\Controllers\OpeningBalanceController;
 use App\Domain\Master\Barang\Controllers\BarangController;
 use App\Domain\Master\Brand\Controllers\BrandController;
 use App\Domain\Master\Investor\Controllers\InvestorController;
@@ -18,20 +19,26 @@ Route::middleware('role:ADMIN|MANAGER|SUPERVISOR')->group(function () {
 
 Route::delete('/perusahaan/bulk', [PerusahaanController::class, 'bulkDestroy']);
 
-Route::get('/investor/export',                [InvestorController::class, 'export']);
-Route::delete('/investor/bulk',               [InvestorController::class, 'bulkDestroy']);
+Route::get('/investor/export', [InvestorController::class, 'export']);
+Route::delete('/investor/bulk', [InvestorController::class, 'bulkDestroy']);
 
-Route::get('/resto/export',                   [RestoController::class, 'export']);
-Route::delete('/resto/bulk',                  [RestoController::class, 'bulkDestroy']);
+Route::get('/resto/export', [RestoController::class, 'export']);
+Route::delete('/resto/bulk', [RestoController::class, 'bulkDestroy']);
 
-Route::get('/barang/external-catalog',      [BarangController::class, 'externalCatalog']);
-Route::delete('/barang/bulk',               [BarangController::class, 'bulkDestroy']);
+Route::get('/barang/external-catalog', [BarangController::class, 'externalCatalog']);
+Route::delete('/barang/bulk', [BarangController::class, 'bulkDestroy']);
 
 Route::middleware('role:ADMIN|MANAGER|SUPERVISOR')->group(function () {
-    Route::get('/master-data/import-template',    [UnifiedMasterController::class, 'importTemplate']);
-    Route::post('/master-data/import',            [UnifiedMasterController::class, 'import']);
-    Route::get('/master-data/import/latest',      [UnifiedMasterController::class, 'latestImport']);
+    Route::get('/master-data/import-template', [UnifiedMasterController::class, 'importTemplate']);
+    Route::post('/master-data/import', [UnifiedMasterController::class, 'import']);
+    Route::get('/master-data/import/latest', [UnifiedMasterController::class, 'latestImport']);
     Route::get('/master-data/import/{id}/status', [UnifiedMasterController::class, 'importStatus']);
+
+    // Tab "Import Master Opening Balance" — bulk import saldo awal piutang klien (backfill data historis).
+    Route::get('/master-data/opening-balance/import-template', [OpeningBalanceController::class, 'importTemplate']);
+    Route::post('/master-data/opening-balance/import', [OpeningBalanceController::class, 'import']);
+    Route::get('/master-data/opening-balance/import/active', [OpeningBalanceController::class, 'importActive']);
+    Route::get('/master-data/opening-balance/import/{batch}/status', [OpeningBalanceController::class, 'importStatus']);
 });
 
 Route::apiResource('perusahaan', PerusahaanController::class);
