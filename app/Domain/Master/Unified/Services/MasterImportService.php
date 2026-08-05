@@ -64,6 +64,62 @@ class MasterImportService
      */
     private const PARSE_CHUNK = 1000;
 
+    /**
+     * Batas jumlah entri "diperbarui/dilewati" yang disimpan per baris (bukan agregat —
+     * counter tetap akurat & tidak dibatasi). Mencegah kolom errors (json) & payload polling
+     * membengkak saat re-import file besar (±13.000 baris) yang sebagian besar tidak berubah.
+     */
+    private const MAX_DETAILS = 500;
+
+    /** Label field Indonesia untuk pesan "apa yang berubah" — dipakai formatDiffMessage(). */
+    private const INVESTOR_FIELD_LABELS = [
+        'nama_investor'   => 'Nama Investor',
+        'ktp'             => 'KTP',
+        'npwp'            => 'NPWP',
+        'no_hp'           => 'No. HP',
+        'pengelola'       => 'Pengelola',
+        'no_hp_pengelola' => 'No. HP Pengelola',
+        'kode_cabang'     => 'Kode Cabang',
+        'id_cabang'       => 'ID Cabang',
+        'status'          => 'Status',
+    ];
+
+    private const RESTO_FIELD_LABELS = [
+        'nama_resto'       => 'Nama Resto',
+        'supervisor'       => 'Supervisor',
+        'no_hp_supervisor' => 'No. HP Supervisor',
+        'stokis'           => 'Stokis',
+        'area'             => 'Area',
+        'kota'             => 'Kota',
+        'alamat'           => 'Alamat',
+        'no_telp'          => 'No. Telp',
+        'keterangan'       => 'Keterangan',
+        'perusahaan_id'    => 'Entitas (ID)',
+        'brand_id'         => 'Brand (ID)',
+        'investor_id'      => 'Investor (ID)',
+        'karyawan_id'      => 'PIC Resto (ID)',
+        'tgl_aktif'        => 'Tanggal Aktif',
+        'status'           => 'Status',
+    ];
+
+    private const KLIEN_AR_FIELD_LABELS = [
+        'nama_klien'     => 'Nama Klien',
+        'tipe_klien'     => 'Tipe Klien',
+        'no_npwp'        => 'NPWP',
+        'no_wa'          => 'No. WA',
+        'perusahaan_id'  => 'Entitas (ID)',
+        'karyawan_ar_id' => 'PIC AR (ID)',
+        'resto_id'       => 'Resto (ID)',
+        'status'         => 'Status',
+    ];
+
+    private const BARANG_FIELD_LABELS = [
+        'nama_barang' => 'Nama Barang',
+        'spesifikasi' => 'Spesifikasi',
+        'keterangan'  => 'Keterangan',
+        'status'      => 'Status',
+    ];
+
     public function __construct(
         private readonly InvestorService $investorService,
         private readonly RestoService    $restoService,
@@ -84,21 +140,35 @@ class MasterImportService
 
         $batch->update(['status' => 'processing']);
 
-        $errors = [];
+        $errors  = [];
+        $details = [];
+        $counts  = ['investor_skipped' => 0, 'resto_skipped' => 0];
 
         try {
-            $this->processMasterDataSheet($spreadsheet, $batch, $errors);
-            $this->processMasterBarangSheet($spreadsheet, $batch, $errors);
+            $counts = $this->processMasterDataSheet($spreadsheet, $batch, $errors, $details);
+            $this->processMasterBarangSheet($spreadsheet, $batch, $errors, $details);
             $this->noticeInvoiceSheetIgnored($spreadsheet, $errors);
         } finally {
             $spreadsheet->disconnectWorksheets();
             unset($spreadsheet);
         }
 
+        $batch     = $batch->fresh();
+        $detailTotal = $counts['investor_skipped'] + $counts['resto_skipped']
+            + $batch->investor_updated + $batch->resto_updated
+            + $batch->klien_updated    + $batch->klien_skipped
+            + $batch->barang_updated   + $batch->barang_skipped;
+
         $batch->update([
             'status'  => 'completed',
-            'errors'  => $errors,
-            'message' => $this->buildSummaryMessage($batch->fresh()),
+            'errors'  => [
+                'gagal'            => $errors,
+                'detail'           => $details,
+                'detail_total'     => $detailTotal,
+                'investor_skipped' => $counts['investor_skipped'],
+                'resto_skipped'    => $counts['resto_skipped'],
+            ],
+            'message' => $this->buildSummaryMessage($batch, $counts['investor_skipped'], $counts['resto_skipped']),
         ]);
     }
 
@@ -106,12 +176,15 @@ class MasterImportService
     //  Sheet 1: MASTER DATA (Investor + Resto + KlienAr)
     // ──────────────────────────────────────────────────────────────
 
-    private function processMasterDataSheet(\PhpOffice\PhpSpreadsheet\Spreadsheet $spreadsheet, ImportMasterBatch $batch, array &$errors): void
+    /** @return array{investor_skipped: int, resto_skipped: int} */
+    private function processMasterDataSheet(\PhpOffice\PhpSpreadsheet\Spreadsheet $spreadsheet, ImportMasterBatch $batch, array &$errors, array &$details): array
     {
+        $noSkip = ['investor_skipped' => 0, 'resto_skipped' => 0];
+
         $sheetIndex = $this->findSheetIndex($spreadsheet, 'MASTER DATA');
         if ($sheetIndex === null) {
             $errors[] = ['sheet' => 'MASTER DATA', 'row' => 0, 'message' => 'Sheet "MASTER DATA" tidak ditemukan dalam file.'];
-            return;
+            return $noSkip;
         }
 
         $sheet    = $spreadsheet->getSheet($sheetIndex);
@@ -119,13 +192,13 @@ class MasterImportService
 
         if (!$detected['found']) {
             $errors[] = ['sheet' => 'MASTER DATA', 'row' => 0, 'message' => 'Header "nama_investor" tidak ditemukan di sheet MASTER DATA.'];
-            return;
+            return $noSkip;
         }
 
         $headerRow = array_map(fn($c) => $this->normalizeHeaderName((string) $c), $detected['headerRow']);
         if (in_array('nama_klien', $headerRow)) {
             $errors[] = ['sheet' => 'MASTER DATA', 'row' => 0, 'message' => 'Template lama masih memiliki kolom nama_klien. Download template terbaru.'];
-            return;
+            return $noSkip;
         }
 
         // Header-based column lookup — toleran terhadap perubahan urutan kolom dan template lama/baru
@@ -147,8 +220,8 @@ class MasterImportService
         $karyawanNameById = $karyawanRecords->pluck('nama_karyawan', 'id')->all();
         $perusahaanMap    = $this->buildPerusahaanMap();
 
-        $invIns = $invUpd = $invFail = 0;
-        $resIns = $resUpd = $resFail = 0;
+        $invIns = $invUpd = $invFail = $invSkip = 0;
+        $resIns = $resUpd = $resFail = $resSkip = 0;
         $kliIns = $kliUpd = $kliFail = $kliSkip = 0;
         $processed  = 0;
         // -1 supaya increment pertama ($lineNumber++ di awal closure) pas di $detected['dataStart'] —
@@ -161,8 +234,8 @@ class MasterImportService
         try {
             $this->chunkMasterRows($sheet, $detected['dataStart'], $detected['highestColumn'], self::PARSE_CHUNK,
                 function (array $row) use (
-                    &$errors, &$inChunk, &$processed, &$lineNumber,
-                    &$invIns, &$invUpd, &$invFail, &$resIns, &$resUpd, &$resFail,
+                    &$errors, &$details, &$inChunk, &$processed, &$lineNumber,
+                    &$invIns, &$invUpd, &$invFail, &$invSkip, &$resIns, &$resUpd, &$resFail, &$resSkip,
                     &$kliIns, &$kliUpd, &$kliFail, &$kliSkip,
                     &$karyawanMap, &$karyawanNameById,
                     $col, $batch, $actingUserId, $brandMap, $karyawanNikMap, $perusahaanMap,
@@ -244,12 +317,16 @@ class MasterImportService
 
                         try {
                             if ($existing) {
-                                if ($this->investorHasChanged($existing, $invData)) {
+                                $invDiff = $this->investorDiff($existing, $invData);
+                                if (!empty($invDiff)) {
                                     $existing->updated_by = $actingUserId;
                                     $investor = $this->investorService->update($existing, InvestorDTO::fromRequest($invData));
                                     $invUpd++;
+                                    $this->pushDetail($details, 'MASTER DATA', $lineNumber, '[Investor] ' . $this->formatDiffMessage($invDiff, self::INVESTOR_FIELD_LABELS));
                                 } else {
                                     $investor = $existing;
+                                    $invSkip++;
+                                    $this->pushDetail($details, 'MASTER DATA', $lineNumber, '[Investor] Data sudah sama persis dengan data tersimpan — tidak ada perubahan, baris dilewati.');
                                 }
                             } else {
                                 $investor = $this->investorService->create(InvestorDTO::fromRequest($invData));
@@ -360,12 +437,16 @@ class MasterImportService
                         } else {
                             try {
                                 if ($existingResto) {
-                                    if ($this->restoHasChanged($existingResto, $resData)) {
+                                    $resDiff = $this->restoDiff($existingResto, $resData);
+                                    if (!empty($resDiff)) {
                                         $existingResto->updated_by = $actingUserId;
                                         $resto = $this->restoService->update($existingResto, RestoDTO::fromRequest($resData));
                                         $resUpd++;
+                                        $this->pushDetail($details, 'MASTER DATA', $lineNumber, '[Resto] ' . $this->formatDiffMessage($resDiff, self::RESTO_FIELD_LABELS));
                                     } else {
                                         $resto = $existingResto;
+                                        $resSkip++;
+                                        $this->pushDetail($details, 'MASTER DATA', $lineNumber, '[Resto] Data sudah sama persis dengan data tersimpan — tidak ada perubahan, baris dilewati.');
                                     }
                                 } else {
                                     $resto = $this->restoService->create(RestoDTO::fromRequest($resData));
@@ -525,12 +606,15 @@ class MasterImportService
 
                             try {
                                 if ($existingKlien) {
-                                    if ($this->klienArHasChanged($existingKlien, $kliData)) {
+                                    $kliDiff = $this->klienArDiff($existingKlien, $kliData);
+                                    if (!empty($kliDiff)) {
                                         $existingKlien->updated_by = $actingUserId;
                                         $this->klienArService->update($existingKlien, KlienArDTO::fromRequest($kliData));
                                         $kliUpd++;
+                                        $this->pushDetail($details, 'MASTER DATA', $lineNumber, '[Client] ' . $this->formatDiffMessage($kliDiff, self::KLIEN_AR_FIELD_LABELS));
                                     } else {
                                         $kliSkip++;
+                                        $this->pushDetail($details, 'MASTER DATA', $lineNumber, '[Client] Data sudah sama persis dengan data tersimpan — tidak ada perubahan, baris dilewati.');
                                     }
                                 } else {
                                     $this->klienArService->create(KlienArDTO::fromRequest($kliData));
@@ -557,13 +641,15 @@ class MasterImportService
             'resto_inserted'    => $resIns,  'resto_updated'    => $resUpd,  'resto_failed'    => $resFail,
             'klien_inserted'    => $kliIns,  'klien_updated'    => $kliUpd,  'klien_failed'    => $kliFail,  'klien_skipped' => $kliSkip,
         ]);
+
+        return ['investor_skipped' => $invSkip, 'resto_skipped' => $resSkip];
     }
 
     // ──────────────────────────────────────────────────────────────
     //  Sheet 2: MASTER BARANG (Barang)
     // ──────────────────────────────────────────────────────────────
 
-    private function processMasterBarangSheet(\PhpOffice\PhpSpreadsheet\Spreadsheet $spreadsheet, ImportMasterBatch $batch, array &$errors): void
+    private function processMasterBarangSheet(\PhpOffice\PhpSpreadsheet\Spreadsheet $spreadsheet, ImportMasterBatch $batch, array &$errors, array &$details): void
     {
         $sheetIndex = $this->findSheetIndex($spreadsheet, 'MASTER BARANG');
         if ($sheetIndex === null) {
@@ -599,7 +685,7 @@ class MasterImportService
         try {
             $this->chunkMasterRows($sheet, $detected['dataStart'], $detected['highestColumn'], self::PARSE_CHUNK,
                 function (array $row) use (
-                    &$errors, &$inChunk, &$processed, &$lineNumber,
+                    &$errors, &$details, &$inChunk, &$processed, &$lineNumber,
                     &$brgIns, &$brgUpd, &$brgSkip, &$brgFail,
                     $col, $batch, $actingUserId,
                 ) {
@@ -660,7 +746,8 @@ class MasterImportService
 
                 try {
                     if ($existing) {
-                        if ($this->barangHasChanged($existing, $data)) {
+                        $brgDiff = $this->barangDiff($existing, $data);
+                        if (!empty($brgDiff)) {
                             $existing->update([
                                 'nama_barang' => $data['nama_barang'],
                                 'spesifikasi' => $data['spesifikasi'],
@@ -669,8 +756,10 @@ class MasterImportService
                                 'updated_by'  => $actingUserId,
                             ]);
                             $brgUpd++;
+                            $this->pushDetail($details, 'MASTER BARANG', $lineNumber, $this->formatDiffMessage($brgDiff, self::BARANG_FIELD_LABELS));
                         } else {
                             $brgSkip++;
+                            $this->pushDetail($details, 'MASTER BARANG', $lineNumber, 'Data sudah sama persis dengan data tersimpan — tidak ada perubahan, baris dilewati.');
                         }
                     } else {
                         Barang::create([
@@ -1017,14 +1106,14 @@ class MasterImportService
         return $map;
     }
 
-    private function buildSummaryMessage(ImportMasterBatch $batch): string
+    private function buildSummaryMessage(ImportMasterBatch $batch, int $investorSkipped = 0, int $restoSkipped = 0): string
     {
         $parts = [];
         if ($batch->master_total > 0) {
             $parts[] = sprintf(
-                'MASTER DATA: Investor +%d ~%d ✗%d | Resto +%d ~%d ✗%d | Client +%d ~%d ⊘%d ✗%d',
-                $batch->investor_inserted, $batch->investor_updated, $batch->investor_failed,
-                $batch->resto_inserted,    $batch->resto_updated,    $batch->resto_failed,
+                'MASTER DATA: Investor +%d ~%d ⊘%d ✗%d | Resto +%d ~%d ⊘%d ✗%d | Client +%d ~%d ⊘%d ✗%d',
+                $batch->investor_inserted, $batch->investor_updated, $investorSkipped, $batch->investor_failed,
+                $batch->resto_inserted,    $batch->resto_updated,    $restoSkipped,    $batch->resto_failed,
                 $batch->klien_inserted,    $batch->klien_updated,    $batch->klien_skipped, $batch->klien_failed,
             );
         }
@@ -1150,26 +1239,70 @@ class MasterImportService
         return $i === 0 ? null : $i;
     }
 
-    private function investorHasChanged(Investor $existing, array $import): bool
+    /**
+     * Tambah 1 entri detail (diperbarui/dilewati), dibatasi MAX_DETAILS agar payload/kolom json
+     * tidak membengkak pada import ±13.000 baris — counter agregat tetap akurat & tidak dibatasi.
+     */
+    private function pushDetail(array &$details, string $sheet, int $row, string $message): void
     {
-        foreach (['nama_investor', 'ktp', 'npwp', 'no_hp', 'pengelola', 'no_hp_pengelola', 'kode_cabang', 'id_cabang'] as $f) {
-            if ($this->normalizeStr($existing->{$f}) !== $this->normalizeStr($import[$f])) {
-                return true;
-            }
+        if (count($details) < self::MAX_DETAILS) {
+            $details[] = ['sheet' => $sheet, 'row' => $row, 'message' => $message];
         }
-        return (bool) $existing->status !== (bool) ($import['status'] ?? true);
     }
 
-    private function restoHasChanged(Resto $existing, array $import): bool
+    /** Format hasil *Diff() jadi pesan siap-tampil: "Label: lama → baru; Label2: lama2 → baru2". */
+    private function formatDiffMessage(array $diff, array $fieldLabels): string
     {
+        $parts = [];
+        foreach ($diff as $field => $change) {
+            $label   = $fieldLabels[$field] ?? $field;
+            $lama    = $change['lama'] ?? '(kosong)';
+            $baru    = $change['baru'] ?? '(kosong)';
+            $parts[] = "{$label}: {$lama} → {$baru}";
+        }
+        return implode('; ', $parts);
+    }
+
+    private function statusLabel(bool $status): string
+    {
+        return $status ? 'Aktif' : 'Nonaktif';
+    }
+
+    /** @return array<string, array{lama: ?string, baru: ?string}> field yang berubah — kosong berarti tidak ada perubahan. */
+    private function investorDiff(Investor $existing, array $import): array
+    {
+        $diff = [];
+        foreach (['nama_investor', 'ktp', 'npwp', 'no_hp', 'pengelola', 'no_hp_pengelola', 'kode_cabang', 'id_cabang'] as $f) {
+            $lama = $this->normalizeStr($existing->{$f});
+            $baru = $this->normalizeStr($import[$f]);
+            if ($lama !== $baru) {
+                $diff[$f] = ['lama' => $lama, 'baru' => $baru];
+            }
+        }
+        $statusLama = (bool) $existing->status;
+        $statusBaru = (bool) ($import['status'] ?? true);
+        if ($statusLama !== $statusBaru) {
+            $diff['status'] = ['lama' => $this->statusLabel($statusLama), 'baru' => $this->statusLabel($statusBaru)];
+        }
+        return $diff;
+    }
+
+    /** @return array<string, array{lama: ?string, baru: ?string}> */
+    private function restoDiff(Resto $existing, array $import): array
+    {
+        $diff = [];
         foreach (['nama_resto', 'supervisor', 'no_hp_supervisor', 'stokis', 'area', 'kota', 'alamat', 'no_telp', 'keterangan'] as $f) {
-            if ($this->normalizeStr($existing->{$f}) !== $this->normalizeStr($import[$f])) {
-                return true;
+            $lama = $this->normalizeStr($existing->{$f});
+            $baru = $this->normalizeStr($import[$f]);
+            if ($lama !== $baru) {
+                $diff[$f] = ['lama' => $lama, 'baru' => $baru];
             }
         }
         foreach (['perusahaan_id', 'brand_id', 'investor_id', 'karyawan_id'] as $f) {
-            if ($this->normalizeId($existing->{$f}) !== $this->normalizeId($import[$f])) {
-                return true;
+            $lama = $this->normalizeId($existing->{$f});
+            $baru = $this->normalizeId($import[$f]);
+            if ($lama !== $baru) {
+                $diff[$f] = ['lama' => $lama !== null ? (string) $lama : null, 'baru' => $baru !== null ? (string) $baru : null];
             }
         }
         // tgl_aktif: bandingkan sebagai Y-m-d
@@ -1177,33 +1310,58 @@ class MasterImportService
             ? (is_string($existing->tgl_aktif) ? substr($existing->tgl_aktif, 0, 10) : $existing->tgl_aktif->format('Y-m-d'))
             : null;
         if ($existingDate !== $import['tgl_aktif']) {
-            return true;
+            $diff['tgl_aktif'] = ['lama' => $existingDate, 'baru' => $import['tgl_aktif']];
         }
-        return (bool) $existing->status !== (bool) ($import['status'] ?? true);
+        $statusLama = (bool) $existing->status;
+        $statusBaru = (bool) ($import['status'] ?? true);
+        if ($statusLama !== $statusBaru) {
+            $diff['status'] = ['lama' => $this->statusLabel($statusLama), 'baru' => $this->statusLabel($statusBaru)];
+        }
+        return $diff;
     }
 
-    private function barangHasChanged(Barang $existing, array $import): bool
+    /** @return array<string, array{lama: ?string, baru: ?string}> */
+    private function barangDiff(Barang $existing, array $import): array
     {
+        $diff = [];
         foreach (['nama_barang', 'spesifikasi', 'keterangan'] as $f) {
-            if ($this->normalizeStr($existing->{$f}) !== $this->normalizeStr($import[$f])) {
-                return true;
+            $lama = $this->normalizeStr($existing->{$f});
+            $baru = $this->normalizeStr($import[$f]);
+            if ($lama !== $baru) {
+                $diff[$f] = ['lama' => $lama, 'baru' => $baru];
             }
         }
-        return (bool) $existing->status !== (bool) ($import['status'] ?? true);
+        $statusLama = (bool) $existing->status;
+        $statusBaru = (bool) ($import['status'] ?? true);
+        if ($statusLama !== $statusBaru) {
+            $diff['status'] = ['lama' => $this->statusLabel($statusLama), 'baru' => $this->statusLabel($statusBaru)];
+        }
+        return $diff;
     }
 
-    private function klienArHasChanged(KlienAr $existing, array $import): bool
+    /** @return array<string, array{lama: ?string, baru: ?string}> */
+    private function klienArDiff(KlienAr $existing, array $import): array
     {
+        $diff = [];
         foreach (['nama_klien', 'tipe_klien', 'no_npwp', 'no_wa'] as $f) {
-            if ($this->normalizeStr($existing->{$f}) !== $this->normalizeStr($import[$f])) {
-                return true;
+            $lama = $this->normalizeStr($existing->{$f});
+            $baru = $this->normalizeStr($import[$f]);
+            if ($lama !== $baru) {
+                $diff[$f] = ['lama' => $lama, 'baru' => $baru];
             }
         }
         foreach (['perusahaan_id', 'karyawan_ar_id', 'resto_id'] as $f) {
-            if ($this->normalizeId($existing->{$f}) !== $this->normalizeId($import[$f])) {
-                return true;
+            $lama = $this->normalizeId($existing->{$f});
+            $baru = $this->normalizeId($import[$f]);
+            if ($lama !== $baru) {
+                $diff[$f] = ['lama' => $lama !== null ? (string) $lama : null, 'baru' => $baru !== null ? (string) $baru : null];
             }
         }
-        return (bool) $existing->status !== (bool) ($import['status'] ?? true);
+        $statusLama = (bool) $existing->status;
+        $statusBaru = (bool) ($import['status'] ?? true);
+        if ($statusLama !== $statusBaru) {
+            $diff['status'] = ['lama' => $this->statusLabel($statusLama), 'baru' => $this->statusLabel($statusBaru)];
+        }
+        return $diff;
     }
 }

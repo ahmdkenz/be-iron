@@ -94,14 +94,18 @@ class UnifiedMasterController extends Controller
             return $this->successResponse(null);
         }
 
+        $decoded = $this->decodeImportDetails($batch);
+
         return $this->successResponse([
             'imported_at'       => $batch->updated_at->toIso8601String(),
             'imported_by'       => $batch->user?->name,
             'investor_inserted' => $batch->investor_inserted,
             'investor_updated'  => $batch->investor_updated,
+            'investor_skipped'  => $decoded['investor_skipped'],
             'investor_failed'   => $batch->investor_failed,
             'resto_inserted'    => $batch->resto_inserted,
             'resto_updated'     => $batch->resto_updated,
+            'resto_skipped'     => $decoded['resto_skipped'],
             'resto_failed'      => $batch->resto_failed,
             'klien_inserted'    => $batch->klien_inserted,
             'klien_updated'     => $batch->klien_updated,
@@ -128,6 +132,8 @@ class UnifiedMasterController extends Controller
             return $this->unauthorizedResponse();
         }
 
+        $decoded = $this->decodeImportDetails($batch);
+
         return $this->successResponse([
             'batch_id'          => $batch->id,
             'status'            => $batch->status,
@@ -135,9 +141,11 @@ class UnifiedMasterController extends Controller
             'master_processed'  => $batch->master_processed,
             'investor_inserted' => $batch->investor_inserted,
             'investor_updated'  => $batch->investor_updated,
+            'investor_skipped'  => $decoded['investor_skipped'],
             'investor_failed'   => $batch->investor_failed,
             'resto_inserted'    => $batch->resto_inserted,
             'resto_updated'     => $batch->resto_updated,
+            'resto_skipped'     => $decoded['resto_skipped'],
             'resto_failed'      => $batch->resto_failed,
             'klien_inserted'    => $batch->klien_inserted,
             'klien_updated'     => $batch->klien_updated,
@@ -149,9 +157,32 @@ class UnifiedMasterController extends Controller
             'barang_updated'    => $batch->barang_updated,
             'barang_skipped'    => $batch->barang_skipped,
             'barang_failed'     => $batch->barang_failed,
-            'errors'            => $batch->errors ?? [],
+            'errors'            => $decoded['failed'],
+            'details'           => $decoded['detail'],
+            'details_total'     => $decoded['detail_total'],
             'message'           => $batch->message,
         ]);
+    }
+
+    /**
+     * Kolom `errors` (json) menyimpan struktur gabungan sejak fitur penjelasan
+     * diperbarui/dilewati ditambahkan: {gagal, detail, detail_total, investor_skipped,
+     * resto_skipped} — bukan lagi list datar. Batch lama (sebelum perubahan ini) masih
+     * berbentuk list datar berisi kegagalan saja, jadi dideteksi via key 'gagal' dan
+     * diperlakukan sebagai daftar gagal apa adanya (tanpa detail/skip investor-resto).
+     */
+    private function decodeImportDetails(ImportMasterBatch $batch): array
+    {
+        $raw          = $batch->errors ?? [];
+        $isStructured = is_array($raw) && array_key_exists('gagal', $raw);
+
+        return [
+            'failed'           => $isStructured ? ($raw['gagal'] ?? []) : $raw,
+            'detail'           => $isStructured ? ($raw['detail'] ?? []) : [],
+            'detail_total'     => $isStructured ? ($raw['detail_total'] ?? 0) : 0,
+            'investor_skipped' => $isStructured ? ($raw['investor_skipped'] ?? 0) : 0,
+            'resto_skipped'    => $isStructured ? ($raw['resto_skipped'] ?? 0) : 0,
+        ];
     }
 
     // ──────────────────────────────────────────────────────────────
