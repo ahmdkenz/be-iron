@@ -234,6 +234,16 @@ class OpeningBalanceImportServiceTest extends TestCase
         $this->assertNull($this->invoke('importDate', '-'));
     }
 
+    public function test_import_date_menerima_nama_bulan_indonesia(): void
+    {
+        $this->assertSame('2026-05-28', $this->invoke('importDate', '28 Mei 2026'));
+    }
+
+    public function test_import_date_string_tidak_valid_mengembalikan_null(): void
+    {
+        $this->assertNull($this->invoke('importDate', 'tanggal ngasal'));
+    }
+
     public function test_import_num_parses_indonesian_thousand_format(): void
     {
         $this->assertSame(15000000.0, $this->invoke('importNum', '15.000.000'));
@@ -652,5 +662,52 @@ class OpeningBalanceImportServiceTest extends TestCase
         $this->assertArrayNotHasKey('1', $result['detailsByOb'], 'Detail orphan harus dibuang dari hasil.');
         $this->assertCount(1, $result['errors']);
         $this->assertSame('Rincian Invoice Asal', $result['errors'][0]['sheet']);
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    //  detectFormulaError() — rumus Excel yang gagal dievaluasi (mis. =A1/0) dikembalikan
+    //  PhpSpreadsheet sebagai string kode error, bukan exception, sehingga tanpa deteksi
+    //  khusus akan lolos ke importNum()/importDate() dan diam-diam jadi 0/null.
+    // ──────────────────────────────────────────────────────────────
+
+    public function test_detect_formula_error_mendeteksi_semua_kode_error_excel(): void
+    {
+        $codes = ['#DIV/0!', '#REF!', '#VALUE!', '#NAME?', '#NULL!', '#NUM!', '#N/A', '#GETTING_DATA', '#SPILL!', '#CALC!'];
+
+        foreach ($codes as $code) {
+            $row = ['Klien A', '', $code, '', '', '', '', ''];
+
+            $message = $this->invoke('detectFormulaError', $row, 'Rincian Invoice Asal', 12);
+
+            $this->assertNotNull($message, "Kode error {$code} harus terdeteksi.");
+            $this->assertStringContainsString('Baris 12', $message);
+            $this->assertStringContainsString($code, $message);
+        }
+    }
+
+    public function test_detect_formula_error_null_untuk_baris_normal(): void
+    {
+        $row = ['Klien A', 'RESTO01', '01-06-2026', 'Deskripsi', '100000', '50000', 'Keterangan'];
+
+        $this->assertNull($this->invoke('detectFormulaError', $row, 'Rincian Invoice Asal', 12));
+    }
+
+    public function test_detect_formula_error_menyertakan_nama_sheet_yang_benar_untuk_multi_sheet(): void
+    {
+        $row = ['1', 'INV-001', '#REF!', 'Deskripsi', '', '', ''];
+
+        $message = $this->invoke('detectFormulaError', $row, 'Item Invoice Asal', 8);
+
+        $this->assertStringContainsString("sheet 'Item Invoice Asal'", $message, 'Pesan harus menyebut nama sheet yang benar supaya baris 8 tidak ambigu antar 3 sheet OB.');
+    }
+
+    public function test_detect_formula_error_melaporkan_huruf_kolom_yang_akurat(): void
+    {
+        // Index 4 (0-based) = kolom E di file fisik (A=0, B=1, C=2, D=3, E=4).
+        $row = ['', '', '', '', '#DIV/0!'];
+
+        $message = $this->invoke('detectFormulaError', $row, 'Data Opening Balance', 20);
+
+        $this->assertStringContainsString('kolom E', $message, 'Huruf kolom harus cocok dengan posisi fisik di file Excel (index 4 = kolom E).');
     }
 }

@@ -797,8 +797,65 @@ class InvoiceImportServiceTest extends TestCase
         $this->assertSame($expected, $this->invoke('importDate', (string) $serial));
     }
 
-    public function test_import_date_string_bukan_tanggal_dikembalikan_apa_adanya(): void
+    public function test_import_date_string_bukan_tanggal_mengembalikan_null(): void
     {
-        $this->assertSame('bukan-tanggal', $this->invoke('importDate', 'bukan-tanggal'));
+        $this->assertNull($this->invoke('importDate', 'bukan-tanggal'));
+    }
+
+    public function test_import_date_menerima_nama_bulan_indonesia(): void
+    {
+        $this->assertSame('2026-05-28', $this->invoke('importDate', '28 Mei 2026'));
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    //  detectFormulaError() — rumus Excel yang gagal dievaluasi (mis. =A1/0) dikembalikan
+    //  PhpSpreadsheet sebagai string kode error, bukan exception, sehingga tanpa deteksi
+    //  khusus akan lolos ke importNum()/importDate() dan diam-diam jadi 0/null.
+    // ──────────────────────────────────────────────────────────────
+
+    public function test_detect_formula_error_mendeteksi_semua_kode_error_excel(): void
+    {
+        $codes = ['#DIV/0!', '#REF!', '#VALUE!', '#NAME?', '#NULL!', '#NUM!', '#N/A', '#GETTING_DATA', '#SPILL!', '#CALC!'];
+
+        foreach ($codes as $code) {
+            $row = ['Klien Satu', '01-06-2026', '', '', '', '', '', '', '', 'Barang A', $code, 'pcs', '1000', 'B2B'];
+
+            $message = $this->invoke('detectFormulaError', $row, 'Data Sheet', 15);
+
+            $this->assertNotNull($message, "Kode error {$code} harus terdeteksi.");
+            $this->assertStringContainsString('Baris 15', $message);
+            $this->assertStringContainsString($code, $message);
+            $this->assertStringContainsString('rumus Excel', $message);
+        }
+    }
+
+    public function test_detect_formula_error_null_untuk_baris_normal(): void
+    {
+        $row = ['Klien Satu', '01-06-2026', '', '', '', '', '', '', '', 'Barang A', '5', 'pcs', '1000', 'B2B'];
+
+        $this->assertNull($this->invoke('detectFormulaError', $row, 'Data Sheet', 15));
+    }
+
+    public function test_detect_formula_error_tidak_false_positive_pada_teks_biasa_berisi_pagar(): void
+    {
+        $row = ['Klien Satu', '01-06-2026', '', '', '', '', '', '', '', 'Harga #1 termurah', '5', 'pcs', '1000', 'B2B'];
+
+        $this->assertNull(
+            $this->invoke('detectFormulaError', $row, 'Data Sheet', 15),
+            'Teks biasa yang kebetulan mengandung "#" tidak boleh dianggap kode error Excel.',
+        );
+    }
+
+    public function test_detect_formula_error_melaporkan_huruf_kolom_yang_akurat(): void
+    {
+        // Index 10 (0-based) = kolom qty = kolom K di file fisik (A=0, B=1, ..., K=10).
+        $row = array_fill(0, 14, '');
+        $row[10] = '#DIV/0!';
+
+        $message = $this->invoke('detectFormulaError', $row, 'Data Sheet', 20);
+
+        $this->assertStringContainsString('kolom K', $message, 'Huruf kolom harus cocok dengan posisi fisik di file Excel (index 10 = kolom K).');
+        $this->assertStringNotContainsString('kolom J', $message);
+        $this->assertStringNotContainsString('kolom L', $message);
     }
 }

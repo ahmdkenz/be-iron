@@ -78,7 +78,7 @@ class OpeningBalanceImportTemplateService
             ['# Baris OB: tipe_klien wajib diisi PT/B2B atau RESTO/B2C (sinonim, boleh pilih salah satu istilah). PT/B2B = saldo konsolidasi (tanpa resto spesifik) — nama_klien wajib cocok Client AR PT aktif secara unik, kode_resto WAJIB DIKOSONGKAN. RESTO/B2C = saldo per outlet — kode_resto WAJIB diisi & divalidasi ke MASTER DATA (harus terdaftar & punya Client AR aktif tipe RESTO). saldo_awal harus > 0 (kecuali diisi lewat baris RINCIAN, lihat baris berikut).'],
             ['# Baris RINCIAN: no_invoice_asal, tanggal_invoice_asal, sisa_tagihan_asal wajib. deskripsi opsional (boleh kosong untuk data lampau yang tidak diketahui deskripsinya). Total sisa_tagihan_asal semua baris RINCIAN untuk 1 no_urut_ob harus SAMA PERSIS dengan saldo_awal OB terkait.'],
             ['# Baris ITEM: no_urut_ob & no_invoice_asal wajib (harus cocok baris RINCIAN terkait) — field lain (kode_barang, nama_barang, qty, satuan, harga_satuan) OPSIONAL, boleh dikosongkan untuk data lampau yang tidak diketahui detail itemnya. kode_barang opsional (dicari juga via nama_barang). subtotal opsional (otomatis = qty x harga_satuan jika kosong).'],
-            ['# Format tanggal: DD-MM-YYYY. Upload hanya bisa dilakukan oleh role ADMIN, MANAGER, atau SUPERVISOR. Baris [CONTOH] & baris diawali "#" otomatis diabaikan saat import.'],
+            ['# Format tanggal: DD-MM-YYYY, atau nama bulan Indonesia (mis. 1 Januari 2023). Upload hanya bisa dilakukan oleh role ADMIN, MANAGER, atau SUPERVISOR. Baris [CONTOH] & baris diawali "#" otomatis diabaikan saat import.'],
         ];
 
         $rows[] = self::CSV_HEADERS;
@@ -290,7 +290,7 @@ class OpeningBalanceImportTemplateService
             '7. Baris yang gagal (klien tidak ditemukan/ambigu, data tidak valid, dsb) TIDAK menggagalkan baris lain — hasil akhir menampilkan rincian baris mana yang gagal dan alasannya.',
             '8. Semua Opening Balance hasil import berstatus DRAFT dan tetap harus disetujui (approve) oleh Manager/Supervisor di halaman Opening Balance — sama seperti input manual.',
             '9. Hapus baris [CONTOH] sebelum upload atau biarkan (sistem otomatis mengabaikan baris berawalan "[CONTOH]" atau "#").',
-            '10. Format tanggal: DD-MM-YYYY (mis. 01-01-2023).',
+            '10. Format tanggal: DD-MM-YYYY (mis. 01-01-2023), atau nama bulan Indonesia (mis. 1 Januari 2023).',
             '11. Upload hanya bisa dilakukan oleh role ADMIN, MANAGER, atau SUPERVISOR, lewat halaman "Import Master Data" — tab "Import Master Opening Balance".',
             '12. Untuk data dalam jumlah sangat besar (mis. backfill saldo historis bertahunan), gunakan Template CSV — mendukung volume jauh lebih besar dari XLSX. Template CSV JUGA mendukung Rincian Invoice Asal & Item secara opsional (lewat kolom tipe_baris: OB/RINCIAN/ITEM dalam 1 tabel) — bukan cuma saldo agregat. Lihat petunjuk di dalam file CSV-nya.',
         ];
@@ -312,7 +312,7 @@ class OpeningBalanceImportTemplateService
             ['nama_klien',   'Nama Client AR aktif. Untuk tipe_klien PT/B2B: dicocokkan case-insensitive, DITOLAK jika ambigu (cocok >1 klien PT). Untuk RESTO/B2C: harus sesuai MASTER DATA outlet tsb.', 'Ya', 'Nama Klien Contoh'],
             ['kode_resto',   'Kode resto (tb_resto) — WAJIB untuk tipe_klien RESTO/B2C, WAJIB DIKOSONGKAN untuk PT/B2B. Divalidasi ketat ke MASTER DATA & harus punya Client AR aktif tipe RESTO.', 'RESTO/B2C saja', 'KD-001'],
             ['nama_resto',   'Nama resto (informasi tambahan, tidak divalidasi ketat) — isi untuk baris RESTO/B2C.', 'Opsional', 'Nama Resto Contoh'],
-            ['tanggal',      'Tanggal Opening Balance (format DD-MM-YYYY)', 'Ya', '01-01-2023'],
+            ['tanggal',      'Tanggal Opening Balance (format DD-MM-YYYY atau nama bulan Indonesia)', 'Ya', '01-01-2023'],
             ['saldo_awal',   'Nominal saldo awal piutang (harus lebih dari 0)', 'Ya', '15000000'],
             ['keterangan',   'Keterangan tambahan', 'Opsional', 'Saldo awal per Januari 2023'],
             ['tipe_klien',   'PT atau B2B (saldo konsolidasi head office, TANPA resto spesifik) — atau RESTO atau B2C (saldo per outlet). Sinonim, bebas pilih salah satu istilah. Menentukan cara pencocokan klien & kewajiban kode_resto.', 'Ya', 'RESTO / B2C'],
@@ -323,7 +323,7 @@ class OpeningBalanceImportTemplateService
         $this->buildColumnDescriptionBlock($sheet, $row, 'DESKRIPSI KOLOM — Sheet "Rincian Invoice Asal" (opsional)', 'FF6A1B9A', 'FFAB47BC', [
             ['no_urut_ob',           'Harus cocok dengan kolom no_urut di sheet Data Opening Balance', 'Ya', '1'],
             ['no_invoice_asal',      'Nomor invoice historis dari sistem lama (bebas format)', 'Ya', 'INV-LAMA-001'],
-            ['tanggal_invoice_asal', 'Tanggal invoice asal (format DD-MM-YYYY)', 'Ya', '15-01-2022'],
+            ['tanggal_invoice_asal', 'Tanggal invoice asal (format DD-MM-YYYY atau nama bulan Indonesia)', 'Ya', '15-01-2022'],
             ['deskripsi',            'Deskripsi singkat invoice asal', 'Opsional', 'Tagihan pengiriman Januari 2022'],
             ['jumlah_tagihan_asal',  'Nominal tagihan awal invoice asal (opsional — otomatis dihitung dari total item jika diisi)', 'Opsional', '15000000'],
             ['sisa_tagihan_asal',    'Sisa tagihan invoice asal — total semua baris untuk 1 no_urut_ob harus = saldo_awal OB terkait', 'Ya', '15000000'],

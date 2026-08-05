@@ -8,10 +8,10 @@ use App\Models\Invoice;
 use App\Models\KlienAr;
 use App\Models\OpeningBalanceImportBatch;
 use App\Models\Resto;
+use App\Support\Helpers\ImportDateParser;
 use Illuminate\Support\Facades\Storage;
 use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
 use PhpOffice\PhpSpreadsheet\IOFactory;
-use PhpOffice\PhpSpreadsheet\Shared\Date as PhpSpreadsheetDate;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 use Throwable;
@@ -42,6 +42,25 @@ use Throwable;
 class OpeningBalanceImportService
 {
     private const MAX_STORED_ERRORS = 200;
+
+    /**
+     * Kode error kalkulasi Excel standar → penjelasan bahasa awam. Rumus yang gagal (mis. =A1/0)
+     * dikembalikan PhpSpreadsheet sebagai string kode ini (bukan exception), jadi kalau tidak
+     * dideteksi khusus akan lolos ke importNum()/importDate() dan diam-diam jadi 0/null.
+     * Hanya relevan untuk jalur XLSX — CSV dibaca via fgetcsv() sehingga tidak pernah berisi rumus.
+     */
+    private const EXCEL_FORMULA_ERRORS = [
+        '#DIV/0!'       => 'rumus melakukan pembagian dengan angka nol',
+        '#REF!'         => 'rumus merujuk ke sel/baris/kolom yang sudah dihapus atau tidak valid',
+        '#VALUE!'       => 'rumus mendapat jenis data yang salah (misalnya teks dihitung seperti angka)',
+        '#NAME?'        => 'rumus menggunakan nama fungsi atau referensi yang tidak dikenali Excel',
+        '#NULL!'        => 'rumus merujuk ke perpotongan sel yang tidak valid',
+        '#NUM!'         => 'rumus menghasilkan angka yang tidak valid (terlalu besar/kecil atau tidak masuk akal)',
+        '#N/A'          => 'rumus tidak menemukan data yang dicari (misalnya VLOOKUP gagal menemukan hasil)',
+        '#GETTING_DATA' => 'rumus sedang mengambil data dari sumber luar yang tidak tersedia',
+        '#SPILL!'       => 'hasil rumus tumpah ke sel lain yang sudah terisi data',
+        '#CALC!'        => 'rumus gagal dihitung oleh Excel',
+    ];
 
     private const CSV_TIPE_OB = 'OB';
 
@@ -187,16 +206,16 @@ class OpeningBalanceImportService
 
             $saldoAwal = ! empty($details) ? $sisaSum : $row['saldo_awal'];
 
-            $data = [
-                'no_invoice' => $this->invoiceService->generateOpeningBalanceNoInvoice($klien, $row['tanggal']),
-                'tanggal' => $row['tanggal'],
-                'klien_ar_id' => $klien->id,
-                'saldo_awal' => $saldoAwal,
-                'keterangan' => $row['keterangan'] ?: 'Opening Balance (Import)',
-                'details' => $details,
-            ];
-
             try {
+                $data = [
+                    'no_invoice' => $this->invoiceService->generateOpeningBalanceNoInvoice($klien, $row['tanggal']),
+                    'tanggal' => $row['tanggal'],
+                    'klien_ar_id' => $klien->id,
+                    'saldo_awal' => $saldoAwal,
+                    'keterangan' => $row['keterangan'] ?: 'Opening Balance (Import)',
+                    'details' => $details,
+                ];
+
                 $this->invoiceService->createOpeningBalance($data, notify: false);
                 $insertedOb++;
                 $insertedDetail += count($details);
@@ -761,6 +780,12 @@ class OpeningBalanceImportService
                 return;
             } // baris kosong
 
+            if ($formulaError = $this->detectFormulaError($row, 'Data Opening Balance', $lineNumber)) {
+                $errors[] = ['sheet' => 'Data Opening Balance', 'row' => $lineNumber, 'message' => $formulaError];
+
+                return;
+            }
+
             if ($noUrutRaw === '') {
                 $errors[] = ['sheet' => 'Data Opening Balance', 'row' => $lineNumber, 'message' => 'no_urut wajib diisi.'];
 
@@ -823,6 +848,12 @@ class OpeningBalanceImportService
                 return;
             } // baris kosong
 
+            if ($formulaError = $this->detectFormulaError($row, 'Rincian Invoice Asal', $lineNumber)) {
+                $errors[] = ['sheet' => 'Rincian Invoice Asal', 'row' => $lineNumber, 'message' => $formulaError];
+
+                return;
+            }
+
             $noInvoiceAsal = trim($row[1] ?? '');
             if ($noUrutOb === '' || $noInvoiceAsal === '') {
                 $errors[] = ['sheet' => 'Rincian Invoice Asal', 'row' => $lineNumber, 'message' => 'no_urut_ob dan no_invoice_asal wajib diisi.'];
@@ -877,6 +908,12 @@ class OpeningBalanceImportService
             if ($noUrutOb === '' && trim($row[1] ?? '') === '') {
                 return;
             } // baris kosong
+
+            if ($formulaError = $this->detectFormulaError($row, 'Item Invoice Asal', $lineNumber)) {
+                $errors[] = ['sheet' => 'Item Invoice Asal', 'row' => $lineNumber, 'message' => $formulaError];
+
+                return;
+            }
 
             $noInvoiceAsal = trim($row[1] ?? '');
             $qty = $this->importNum($row[4] ?? null);
@@ -984,6 +1021,29 @@ class OpeningBalanceImportService
         return trim(preg_replace('/\(\s*\*\s*\)\s*$/', '', strtolower(trim($raw))));
     }
 
+    /**
+     * Deteksi sel yang berisi kode error kalkulasi Excel (rumus gagal, mis. =A1/0 → "#DIV/0!")
+     * di mana pun dalam baris, dan kembalikan pesan siap-tampil (bahasa awam, sebut sheet, baris,
+     * & kolom persis sesuai file fisik) atau null kalau baris bersih. $row harus 0-based dari
+     * kolom A (hasil rangeToArray("A...")) supaya nomor kolom yang dilaporkan akurat.
+     */
+    private function detectFormulaError(array $row, string $sheetName, int $lineNumber): ?string
+    {
+        foreach ($row as $idx => $val) {
+            $s = trim((string) $val);
+            if (isset(self::EXCEL_FORMULA_ERRORS[$s])) {
+                $col         = Coordinate::stringFromColumnIndex($idx + 1);
+                $explanation = self::EXCEL_FORMULA_ERRORS[$s];
+
+                return "Baris {$lineNumber}: sheet '{$sheetName}' kolom {$col} berisi rumus Excel yang error "
+                    . "(kode {$s}: {$explanation}). Buka file Excel Anda, ganti sel tersebut dengan angka/teks "
+                    . "biasa (bukan rumus), lalu upload ulang.";
+            }
+        }
+
+        return null;
+    }
+
     private function importValue(mixed $val): ?string
     {
         $s = trim((string) $val);
@@ -993,26 +1053,7 @@ class OpeningBalanceImportService
 
     private function importDate(mixed $val): ?string
     {
-        $s = trim((string) $val);
-        if ($s === '' || $s === '-') {
-            return null;
-        }
-
-        if (preg_match('/^(\d{1,2})-(\d{1,2})-(\d{4})$/', $s, $m)) {
-            return sprintf('%04d-%02d-%02d', (int) $m[3], (int) $m[2], (int) $m[1]);
-        }
-        if (preg_match('/^(\d{4})-(\d{1,2})-(\d{1,2})$/', $s, $m)) {
-            return sprintf('%04d-%02d-%02d', (int) $m[1], (int) $m[2], (int) $m[3]);
-        }
-        if (is_numeric($s)) {
-            try {
-                return PhpSpreadsheetDate::excelToDateTimeObject((float) $s)->format('Y-m-d');
-            } catch (Throwable) {
-                return $s;
-            }
-        }
-
-        return $s;
+        return ImportDateParser::parse($val);
     }
 
     private function importNum(mixed $val): float

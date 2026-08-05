@@ -27,6 +27,18 @@ class ImportMasterJob implements ShouldQueue
 
     public int $timeout = 1800;
 
+    /**
+     * Pesan ramah untuk PhpOffice\PhpSpreadsheet\Calculation\Exception (rumus gagal fatal,
+     * mis. circular reference atau referensi ke sheet/file lain yang tidak ikut di-upload) —
+     * menggantikan pesan teknis mentah PhpSpreadsheet yang tidak bisa ditindaklanjuti user awam.
+     */
+    private const FORMULA_CALCULATION_ERROR_MESSAGE = 'File Excel yang Anda upload berisi rumus yang tidak bisa '
+        . 'dihitung oleh sistem. Penyebab paling umum: (1) ada rumus yang saling merujuk satu sama lain tanpa '
+        . 'henti (disebut "circular reference"), atau (2) rumus mengambil data dari sheet/file Excel lain yang '
+        . 'tidak ikut di-upload. Cara mengatasi: buka file Excel Anda, cari sel yang berisi rumus (biasanya '
+        . 'diawali tanda "="), lalu ganti dengan nilai angka/teks biasa — bisa dengan cara salin sel tersebut '
+        . '(Copy) lalu tempel sebagai nilai saja (Paste Special > Values). Setelah itu simpan file dan upload ulang.';
+
     public function __construct(private readonly string $batchId) {}
 
     public function handle(MasterImportService $service, FinanceNotificationService $notifications): void
@@ -47,6 +59,12 @@ class ImportMasterJob implements ShouldQueue
 
         try {
             $service->process($batch);
+        } catch (\PhpOffice\PhpSpreadsheet\Calculation\Exception $e) {
+            Log::error('ImportMasterJob: rumus Excel gagal dihitung', ['batch_id' => $batch->id, 'error' => $e->getMessage()]);
+            $batch->update([
+                'status'  => 'failed',
+                'message' => self::FORMULA_CALCULATION_ERROR_MESSAGE,
+            ]);
         } catch (Throwable $e) {
             Log::error('ImportMasterJob: import gagal', ['batch_id' => $batch->id, 'error' => $e->getMessage()]);
             $batch->update([

@@ -980,4 +980,51 @@ class MasterImportServiceTest extends TestCase
         $this->assertCount(5, $collected, 'Tidak boleh ada baris hilang/dobel di batas antar-chunk (chunkSize=2 vs 5 baris data).');
         $this->assertSame($expected, $collected);
     }
+
+    // ──────────────────────────────────────────────────────────────
+    //  detectFormulaError() — rumus Excel yang gagal dievaluasi (mis. =A1/0) dikembalikan
+    //  PhpSpreadsheet sebagai string kode error, bukan exception, sehingga tanpa deteksi
+    //  khusus akan lolos ke importValue()/importDate() begitu saja.
+    // ──────────────────────────────────────────────────────────────
+
+    public function test_detect_formula_error_mendeteksi_semua_kode_error_excel(): void
+    {
+        $codes = ['#DIV/0!', '#REF!', '#VALUE!', '#NAME?', '#NULL!', '#NUM!', '#N/A', '#GETTING_DATA', '#SPILL!', '#CALC!'];
+
+        foreach ($codes as $code) {
+            $row = ['Investor A', $code, '', '', '', ''];
+
+            $message = $this->invoke('detectFormulaError', $row, 'MASTER DATA', 10);
+
+            $this->assertNotNull($message, "Kode error {$code} harus terdeteksi.");
+            $this->assertStringContainsString('Baris 10', $message);
+            $this->assertStringContainsString($code, $message);
+        }
+    }
+
+    public function test_detect_formula_error_null_untuk_baris_normal(): void
+    {
+        $row = ['Investor A', '1234567890', '987654321', '08123456789', 'PT', 'AKTIF'];
+
+        $this->assertNull($this->invoke('detectFormulaError', $row, 'MASTER DATA', 10));
+    }
+
+    public function test_detect_formula_error_membedakan_sheet_master_data_dan_master_barang(): void
+    {
+        $row = ['BRG001', '#VALUE!', '', '', '', ''];
+
+        $message = $this->invoke('detectFormulaError', $row, 'MASTER BARANG', 5);
+
+        $this->assertStringContainsString("sheet 'MASTER BARANG'", $message, 'Pesan harus menyebut nama sheet yang benar supaya tidak tertukar dengan MASTER DATA.');
+    }
+
+    public function test_detect_formula_error_melaporkan_huruf_kolom_yang_akurat(): void
+    {
+        // Index 1 (0-based) = kolom B di file fisik.
+        $row = ['BRG001', '#REF!', '', '', '', ''];
+
+        $message = $this->invoke('detectFormulaError', $row, 'MASTER BARANG', 5);
+
+        $this->assertStringContainsString('kolom B', $message, 'Huruf kolom harus cocok dengan posisi fisik di file Excel (index 1 = kolom B).');
+    }
 }
