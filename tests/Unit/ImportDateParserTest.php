@@ -40,6 +40,29 @@ class ImportDateParserTest extends TestCase
         }
     }
 
+    public function test_format_dd_mon_yy_singkatan_inggris(): void
+    {
+        $this->assertSame('2026-07-01', ImportDateParser::parse('01-Jul-26'));
+    }
+
+    public function test_semua_bulan_singkatan_inggris(): void
+    {
+        $bulan = [
+            'Jan' => '01', 'Feb' => '02', 'Mar' => '03', 'Apr' => '04',
+            'May' => '05', 'Jun' => '06', 'Jul' => '07', 'Aug' => '08',
+            'Sep' => '09', 'Oct' => '10', 'Nov' => '11', 'Dec' => '12',
+        ];
+
+        foreach ($bulan as $nama => $num) {
+            $this->assertSame("2026-{$num}-01", ImportDateParser::parse("01-{$nama}-26"), "Gagal parse bulan {$nama}");
+        }
+    }
+
+    public function test_singkatan_bulan_inggris_salah_mengembalikan_null(): void
+    {
+        $this->assertNull(ImportDateParser::parse('01-Xyz-26'));
+    }
+
     public function test_serial_excel_numerik(): void
     {
         // 46170 = 28 Mei 2026 (serial Excel, epoch 1900).

@@ -21,6 +21,12 @@ class ImportDateParser
         'september' => 9, 'oktober' => 10, 'november' => 11, 'desember' => 12,
     ];
 
+    private const BULAN_EN = [
+        'jan' => 1, 'feb' => 2, 'mar' => 3, 'apr' => 4,
+        'may' => 5, 'jun' => 6, 'jul' => 7, 'aug' => 8,
+        'sep' => 9, 'oct' => 10, 'nov' => 11, 'dec' => 12,
+    ];
+
     public static function parse(mixed $val): ?string
     {
         $s = trim((string) $val);
@@ -38,6 +44,14 @@ class ImportDateParser
             $bulan = self::BULAN[strtolower($m[2])] ?? null;
             if ($bulan !== null) {
                 return sprintf('%04d-%02d-%02d', (int) $m[3], $bulan, (int) $m[1]);
+            }
+
+            return null;
+        }
+        if (preg_match('/^(\d{1,2})-([A-Za-z]{3})-(\d{2})$/', $s, $m)) {
+            $bulan = self::BULAN_EN[strtolower($m[2])] ?? null;
+            if ($bulan !== null) {
+                return sprintf('%04d-%02d-%02d', 2000 + (int) $m[3], $bulan, (int) $m[1]);
             }
 
             return null;
