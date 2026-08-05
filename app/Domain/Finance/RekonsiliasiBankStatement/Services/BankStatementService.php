@@ -2,6 +2,7 @@
 
 namespace App\Domain\Finance\RekonsiliasiBankStatement\Services;
 
+use App\Domain\Finance\EndingBalance\Services\EndingBalanceSyncBatcher;
 use App\Domain\Finance\Invoice\Services\InvoiceService;
 use App\Domain\Finance\PembayaranAp\Services\PembayaranApService;
 use App\Domain\Finance\PembayaranAr\Services\PembayaranArService;
@@ -435,39 +436,44 @@ class BankStatementService
         $pembayaran = $detail->pembayaranAr;
         $voucherAp  = $detail->pembayaranAp;
 
-        return DB::transaction(function () use ($detail, $pembayaran, $voucherAp) {
-            // Payment Voucher AP dari rekonsiliasi bank selalu dibuat lewat flow
-            // "Catat Voucher AP" — jadi selalu ikut dihapus penuh saat dibatalkan.
-            // PembayaranApService::delete() melepas tautan detail bank, recalculate
-            // sisa_tagihan tiap TagihanAp terkait, dan refresh counter statement.
-            if ($voucherAp) {
-                $this->pembayaranApService->delete($voucherAp);
+        // EndingBalanceSyncBatcher::run() membungkus DI LUAR DB::transaction() supaya
+        // dedup sync EB dari PembayaranArService::delete() (jalur Multi Payment) benar-benar
+        // aktif ketika dipanggil lewat sini — lihat catatan di delete().
+        return EndingBalanceSyncBatcher::run(function () use ($detail, $pembayaran, $voucherAp) {
+            return DB::transaction(function () use ($detail, $pembayaran, $voucherAp) {
+                // Payment Voucher AP dari rekonsiliasi bank selalu dibuat lewat flow
+                // "Catat Voucher AP" — jadi selalu ikut dihapus penuh saat dibatalkan.
+                // PembayaranApService::delete() melepas tautan detail bank, recalculate
+                // sisa_tagihan tiap TagihanAp terkait, dan refresh counter statement.
+                if ($voucherAp) {
+                    $this->pembayaranApService->delete($voucherAp);
+
+                    return $detail->fresh();
+                }
+
+                // Pembayaran yang dibuat otomatis oleh "Catat Bayar" harus ikut dibatalkan
+                // agar invoice tidak tetap tercatat terbayar (mencegah dobel bayar saat
+                // detail bank dicocokkan ulang). PembayaranArService::delete() sudah
+                // melepas tautan detail bank, recalculate invoice, dan refresh counter.
+                if ($pembayaran && $pembayaran->dibuat_dari_rekonsiliasi) {
+                    $this->pembayaranArService->delete($pembayaran);
+
+                    return $detail->fresh();
+                }
+
+                // Pembayaran pre-existing yang dicocokkan manual: cukup lepas tautannya,
+                // pembayaran tetap dipertahankan.
+                $detail->update([
+                    'status_cocok'    => 'UNMATCHED',
+                    'pembayaran_ar_id'=> null,
+                    'matched_by'      => null,
+                    ...$this->pendingPayload(),
+                ]);
+
+                $this->refreshCounter($detail->bank_statement_id);
 
                 return $detail->fresh();
-            }
-
-            // Pembayaran yang dibuat otomatis oleh "Catat Bayar" harus ikut dibatalkan
-            // agar invoice tidak tetap tercatat terbayar (mencegah dobel bayar saat
-            // detail bank dicocokkan ulang). PembayaranArService::delete() sudah
-            // melepas tautan detail bank, recalculate invoice, dan refresh counter.
-            if ($pembayaran && $pembayaran->dibuat_dari_rekonsiliasi) {
-                $this->pembayaranArService->delete($pembayaran);
-
-                return $detail->fresh();
-            }
-
-            // Pembayaran pre-existing yang dicocokkan manual: cukup lepas tautannya,
-            // pembayaran tetap dipertahankan.
-            $detail->update([
-                'status_cocok'    => 'UNMATCHED',
-                'pembayaran_ar_id'=> null,
-                'matched_by'      => null,
-                ...$this->pendingPayload(),
-            ]);
-
-            $this->refreshCounter($detail->bank_statement_id);
-
-            return $detail->fresh();
+            });
         });
     }
 
@@ -897,17 +903,23 @@ class BankStatementService
             'Total alokasi (Rp ' . number_format($totalAlokasi, 0, ',', '.') . ') tidak boleh melebihi nominal kredit rekening koran (Rp ' . number_format($detail->kredit, 0, ',', '.') . ').'
         );
 
-        return DB::transaction(function () use ($detail, $alokasi, $keterangan, $buktiBayar) {
-            $pembayaran = $this->pembayaranArService->createMultiPayment([
-                'tanggal_pembayaran'       => $detail->tanggal,
-                'metode_pembayaran'        => 'TRANSFER',
-                'no_referensi'             => $detail->no_referensi ?: null,
-                'keterangan'               => $keterangan,
-                'dibuat_dari_rekonsiliasi' => true,
-                'alokasi'                  => $alokasi,
-            ], $buktiBayar);
+        // EndingBalanceSyncBatcher::run() harus membungkus DI LUAR DB::transaction()
+        // supaya dedup sync EB (dijalankan di dalam PembayaranArService::createMultiPayment())
+        // benar-benar aktif — lihat catatan di createMultiPayment() untuk kenapa
+        // membungkus di dalam transaksi tidak pernah efektif.
+        return EndingBalanceSyncBatcher::run(function () use ($detail, $alokasi, $keterangan, $buktiBayar) {
+            return DB::transaction(function () use ($detail, $alokasi, $keterangan, $buktiBayar) {
+                $pembayaran = $this->pembayaranArService->createMultiPayment([
+                    'tanggal_pembayaran'       => $detail->tanggal,
+                    'metode_pembayaran'        => 'TRANSFER',
+                    'no_referensi'             => $detail->no_referensi ?: null,
+                    'keterangan'               => $keterangan,
+                    'dibuat_dari_rekonsiliasi' => true,
+                    'alokasi'                  => $alokasi,
+                ], $buktiBayar);
 
-            return $this->manualMatch($detail, $pembayaran->id);
+                return $this->manualMatch($detail, $pembayaran->id);
+            });
         });
     }
 

@@ -197,14 +197,17 @@ class PembayaranArService
                 ]);
             }
 
-            // Dedup resync Ending Balance per klien+periode — tanpa ini, Multi
-            // Payment yang menyentuh N klien berbeda memicu N kali full recompute
-            // + cascade 6 bulan dalam 1 transaksi yang sama.
-            EndingBalanceSyncBatcher::run(function () use ($invoices) {
-                foreach ($invoices as $invoice) {
-                    $this->invoiceService->recalculate($invoice);
-                }
-            });
+            // Dedup resync Ending Balance per klien+periode ditangani oleh pemanggil
+            // (BankStatementService::matchWithNewMultiPayment()) yang membungkus
+            // EndingBalanceSyncBatcher::run() DI LUAR DB::transaction() ini —
+            // membungkusnya DI DALAM transaksi (seperti sebelumnya di sini) tidak
+            // pernah efektif: DB::afterCommit yang memicu sync baru jalan setelah
+            // transaksi paling luar commit, dan saat itu scope run() di sini sudah
+            // lama closed (isActive() sudah balik false), jadi InvoiceObserver
+            // selalu jatuh ke jalur sync langsung per-invoice alih-alih collect().
+            foreach ($invoices as $invoice) {
+                $this->invoiceService->recalculate($invoice);
+            }
 
             if ($buktiBayar) {
                 try {
@@ -383,82 +386,89 @@ class PembayaranArService
         // id-nya sebelum items ikut terhapus oleh cascadeOnDelete saat header dihapus.
         $multiInvoiceIds = $pembayaran->items()->pluck('invoice_id')->unique()->sort()->values();
 
-        DB::transaction(function () use ($pembayaran, $childAllocations, $affectedInvoices, $invoiceId, $pdm, $sumberId, $multiInvoiceIds) {
-            // Lock semua invoice Multi Payment terkait di urutan id ascending
-            // (sama seperti PembayaranApService::delete()) sebelum header dihapus,
-            // supaya recalculate() di bawah tidak balapan dengan proses lain yang
-            // menyentuh invoice yang sama.
-            $multiInvoices = $multiInvoiceIds->isNotEmpty()
-                ? Invoice::whereIn('id', $multiInvoiceIds)->lockForUpdate()->get()->keyBy('id')
-                : collect();
+        // EndingBalanceSyncBatcher::run() HARUS membungkus DI LUAR DB::transaction()
+        // (bukan di dalam) supaya dedup sync EB benar-benar aktif — lihat catatan di
+        // PembayaranArService::createMultiPayment(). delete() punya 2 pemanggil nyata
+        // (langsung lewat PembayaranArController::destroy(), dan lewat
+        // BankStatementService::unmatch() yang membungkus transaksinya sendiri di
+        // luar ini) — membungkus di sini membuat kedua jalur benar tanpa saling
+        // konflik, karena EndingBalanceSyncBatcher::run() aman untuk nesting.
+        EndingBalanceSyncBatcher::run(function () use ($pembayaran, $childAllocations, $affectedInvoices, $invoiceId, $pdm, $sumberId, $multiInvoiceIds) {
+            DB::transaction(function () use ($pembayaran, $childAllocations, $affectedInvoices, $invoiceId, $pdm, $sumberId, $multiInvoiceIds) {
+                // Lock semua invoice Multi Payment terkait di urutan id ascending
+                // (sama seperti PembayaranApService::delete()) sebelum header dihapus,
+                // supaya recalculate() di bawah tidak balapan dengan proses lain yang
+                // menyentuh invoice yang sama.
+                $multiInvoices = $multiInvoiceIds->isNotEmpty()
+                    ? Invoice::whereIn('id', $multiInvoiceIds)->lockForUpdate()->get()->keyBy('id')
+                    : collect();
 
-            PembayaranArLog::create([
-                'pembayaran_ar_id' => $pembayaran->id,
-                'aksi'             => 'DIHAPUS',
-                'actor_id'         => auth()->id(),
-                'data_sebelum'     => $pembayaran->toArray(),
-            ]);
-
-            foreach ($childAllocations as $alloc) {
                 PembayaranArLog::create([
-                    'pembayaran_ar_id' => $alloc->id,
+                    'pembayaran_ar_id' => $pembayaran->id,
                     'aksi'             => 'DIHAPUS',
                     'actor_id'         => auth()->id(),
-                    'data_sebelum'     => $alloc->toArray(),
-                ]);
-            }
-
-            $pembayaran->alokasiKelebihan()->delete();
-
-            if ($pdm) {
-                $pdm->delete();
-            }
-
-            $linkedStatementIds = BankStatementDetail::where('pembayaran_ar_id', $pembayaran->id)
-                ->pluck('bank_statement_id')
-                ->unique()
-                ->all();
-            BankStatementDetail::where('pembayaran_ar_id', $pembayaran->id)
-                ->update([
-                    'pembayaran_ar_id' => null,
-                    'status_cocok'     => 'UNMATCHED',
-                    'status_posting_2' => 'PENDING',
-                    'posted_at'        => null,
-                    'posted_by'        => null,
-                    'matched_by'       => null,
+                    'data_sebelum'     => $pembayaran->toArray(),
                 ]);
 
-            $pembayaran->delete();
-
-            if ($sumberId) {
-                $parentPdm = PendapatanDiMuka::where('sumber_pembayaran_ar_id', $sumberId)->first();
-                if ($parentPdm && $parentPdm->status !== 'DIBATALKAN') {
-                    $this->pdmService->recalculate($parentPdm->fresh());
+                foreach ($childAllocations as $alloc) {
+                    PembayaranArLog::create([
+                        'pembayaran_ar_id' => $alloc->id,
+                        'aksi'             => 'DIHAPUS',
+                        'actor_id'         => auth()->id(),
+                        'data_sebelum'     => $alloc->toArray(),
+                    ]);
                 }
-            }
 
-            foreach ($linkedStatementIds as $statementId) {
-                $matched   = BankStatementDetail::where('bank_statement_id', $statementId)->where('status_cocok', 'MATCHED')->count();
-                $unmatched = BankStatementDetail::where('bank_statement_id', $statementId)->where('status_cocok', 'UNMATCHED')->count();
-                BankStatement::where('id', $statementId)->update([
-                    'jumlah_matched'   => $matched,
-                    'jumlah_unmatched' => $unmatched,
-                ]);
-            }
+                $pembayaran->alokasiKelebihan()->delete();
 
-            // invoice_id bisa null untuk pembayaran shell PDM tanpa invoice (Catat sebagai PDM).
-            $invoice = $invoiceId ? Invoice::find($invoiceId) : null;
-            if ($invoice) {
-                $this->invoiceService->recalculate($invoice);
-            }
-
-            foreach ($affectedInvoices as $targetInvoice) {
-                if ($targetInvoice->id !== $invoiceId) {
-                    $this->invoiceService->recalculate($targetInvoice->fresh());
+                if ($pdm) {
+                    $pdm->delete();
                 }
-            }
 
-            EndingBalanceSyncBatcher::run(function () use ($multiInvoices) {
+                $linkedStatementIds = BankStatementDetail::where('pembayaran_ar_id', $pembayaran->id)
+                    ->pluck('bank_statement_id')
+                    ->unique()
+                    ->all();
+                BankStatementDetail::where('pembayaran_ar_id', $pembayaran->id)
+                    ->update([
+                        'pembayaran_ar_id' => null,
+                        'status_cocok'     => 'UNMATCHED',
+                        'status_posting_2' => 'PENDING',
+                        'posted_at'        => null,
+                        'posted_by'        => null,
+                        'matched_by'       => null,
+                    ]);
+
+                $pembayaran->delete();
+
+                if ($sumberId) {
+                    $parentPdm = PendapatanDiMuka::where('sumber_pembayaran_ar_id', $sumberId)->first();
+                    if ($parentPdm && $parentPdm->status !== 'DIBATALKAN') {
+                        $this->pdmService->recalculate($parentPdm->fresh());
+                    }
+                }
+
+                foreach ($linkedStatementIds as $statementId) {
+                    $matched   = BankStatementDetail::where('bank_statement_id', $statementId)->where('status_cocok', 'MATCHED')->count();
+                    $unmatched = BankStatementDetail::where('bank_statement_id', $statementId)->where('status_cocok', 'UNMATCHED')->count();
+                    BankStatement::where('id', $statementId)->update([
+                        'jumlah_matched'   => $matched,
+                        'jumlah_unmatched' => $unmatched,
+                    ]);
+                }
+
+                // invoice_id bisa null untuk pembayaran shell PDM tanpa invoice (Catat sebagai PDM).
+                $invoice = $invoiceId ? Invoice::find($invoiceId) : null;
+                if ($invoice) {
+                    $this->invoiceService->recalculate($invoice);
+                }
+
+                foreach ($affectedInvoices as $targetInvoice) {
+                    if ($targetInvoice->id !== $invoiceId) {
+                        $this->invoiceService->recalculate($targetInvoice->fresh());
+                    }
+                }
+
                 foreach ($multiInvoices as $invoice) {
                     $this->invoiceService->recalculate($invoice);
                 }

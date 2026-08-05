@@ -6,6 +6,7 @@ use App\Domain\Finance\EndingBalance\Services\EndingBalanceService;
 use App\Domain\Finance\EndingBalance\Services\EndingBalanceSyncBatcher;
 use App\Models\Invoice;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class InvoiceObserver
 {
@@ -49,7 +50,20 @@ class InvoiceObserver
                 return;
             }
 
-            $this->ebService->syncEbForKlien($klienId, $periodeAwal, $periodeAkhir, $userId);
+            // Sengaja try/catch (meniru EndingBalanceSyncBatcher::flush()) — closure ini
+            // jalan lewat DB::afterCommit SETELAH transaksi invoice sudah commit, jadi
+            // exception di sini tidak boleh membuat request tampak gagal padahal datanya
+            // sudah tersimpan benar.
+            try {
+                $this->ebService->syncEbForKlien($klienId, $periodeAwal, $periodeAkhir, $userId);
+            } catch (\Throwable $e) {
+                Log::error('InvoiceObserver: gagal sync EB', [
+                    'klien_ar_id'   => $klienId,
+                    'periode_awal'  => $periodeAwal,
+                    'periode_akhir' => $periodeAkhir,
+                    'error'         => $e->getMessage(),
+                ]);
+            }
         });
     }
 }

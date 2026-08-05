@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Domain\Finance\EndingBalance\Services\EndingBalanceService;
 use App\Domain\Finance\Invoice\Services\InvoiceService;
 use App\Domain\Finance\PembayaranAr\Services\PembayaranArService;
 use App\Domain\Finance\PendapatanDiMuka\Services\PendapatanDiMukaService;
@@ -16,7 +17,8 @@ use Tests\TestCase;
  * untuk pola serupa di sisi AP). Skenario "lolos guard" tidak diuji di sini
  * karena langsung menyentuh DB::transaction() + lockForUpdate() yang butuh
  * skema tb_invoice ter-migrasi (lihat project_test_db_migrate_fresh_broken di
- * memory) — verifikasi jalur sukses dilakukan manual di DB dev.
+ * memory) — verifikasi jalur sukses dilakukan manual di DB dev, dan sekarang juga
+ * oleh PembayaranArMultiPaymentInvoiceUpdateTest (schema ad-hoc, DB nyata).
  */
 class PembayaranArServiceCreateMultiPaymentTest extends TestCase
 {
@@ -25,6 +27,7 @@ class PembayaranArServiceCreateMultiPaymentTest extends TestCase
         return new PembayaranArService(
             $this->createMock(InvoiceService::class),
             $this->createMock(PendapatanDiMukaService::class),
+            $this->createMock(EndingBalanceService::class),
         );
     }
 

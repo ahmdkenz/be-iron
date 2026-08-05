@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Domain\Finance\EndingBalance\Services\EndingBalanceService;
 use App\Domain\Finance\Invoice\Services\InvoiceService;
 use App\Domain\Finance\PendapatanDiMuka\Services\PendapatanDiMukaService;
 use App\Domain\Finance\PembayaranAr\Services\PembayaranArService;
@@ -29,6 +30,7 @@ class PembayaranArServiceBuktiPathTest extends TestCase
         $this->service = new PembayaranArService(
             $this->createMock(InvoiceService::class),
             $this->createMock(PendapatanDiMukaService::class),
+            $this->createMock(EndingBalanceService::class),
         );
 
         $this->ref = new \ReflectionClass($this->service);
