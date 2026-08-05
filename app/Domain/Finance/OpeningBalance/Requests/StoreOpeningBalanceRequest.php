@@ -36,10 +36,10 @@ class StoreOpeningBalanceRequest extends FormRequest
             'details.*.items'                       => ['nullable', 'array'],
             'details.*.items.*.barang_id'           => ['nullable', 'integer', 'exists:tb_barang,id'],
             'details.*.items.*.kode_barang'         => ['nullable', 'string', 'max:50'],
-            'details.*.items.*.nama_barang'         => ['required_with:details.*.items', 'string', 'max:255'],
-            'details.*.items.*.qty'                 => ['required_with:details.*.items', 'numeric', 'min:0.001'],
+            'details.*.items.*.nama_barang'         => ['nullable', 'string', 'max:255'],
+            'details.*.items.*.qty'                 => ['nullable', 'numeric', 'min:0'],
             'details.*.items.*.satuan'              => ['nullable', 'string', 'max:20'],
-            'details.*.items.*.harga_satuan'        => ['required_with:details.*.items', 'numeric', 'min:0'],
+            'details.*.items.*.harga_satuan'        => ['nullable', 'numeric', 'min:0'],
             'details.*.items.*.subtotal'            => ['required_with:details.*.items', 'numeric', 'min:0'],
             'details.*.items.*.keterangan'          => ['nullable', 'string', 'max:500'],
         ];

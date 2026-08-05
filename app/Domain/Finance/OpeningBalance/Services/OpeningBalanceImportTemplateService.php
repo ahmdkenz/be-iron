@@ -33,9 +33,12 @@ use PhpOffice\PhpSpreadsheet\Writer\Xlsx as XlsxWriter;
 class OpeningBalanceImportTemplateService
 {
     /** Header Sheet 1 "Data Opening Balance" (XLSX) — urutan & nama HARUS identik dengan OpeningBalanceImportService::parse(). */
-    private const OB_HEADERS = ['kode_klien', 'nama_klien (*)', 'tanggal (*)', 'saldo_awal (*)', 'keterangan', 'no_urut (*)'];
+    private const OB_HEADERS = [
+        'nama_klien (*)', 'kode_resto', 'nama_resto', 'tanggal (*)',
+        'saldo_awal (*)', 'keterangan', 'tipe_klien (*)', 'no_urut (*)',
+    ];
 
-    private const OB_WIDTHS = [16, 30, 14, 18, 32, 12];
+    private const OB_WIDTHS = [30, 14, 26, 14, 18, 32, 14, 12];
 
     /**
      * Header gabungan untuk CSV — 1 tabel flat, dibedakan kolom pertama `tipe_baris`
@@ -43,21 +46,22 @@ class OpeningBalanceImportTemplateService
      * OpeningBalanceImportService::parseCsv().
      */
     private const CSV_HEADERS = [
-        'tipe_baris (*)', 'no_urut (*)', 'kode_klien', 'nama_klien (*)', 'tanggal (*)', 'saldo_awal (*)',
-        'no_invoice_asal (*)', 'tanggal_invoice_asal (*)', 'deskripsi (*)', 'jumlah_tagihan_asal', 'sisa_tagihan_asal (*)',
-        'kode_barang', 'nama_barang (*)', 'qty (*)', 'satuan', 'harga_satuan (*)', 'subtotal', 'keterangan',
+        'tipe_baris (*)', 'no_urut (*)', 'nama_klien (*)', 'kode_resto', 'nama_resto',
+        'tanggal (*)', 'saldo_awal (*)', 'tipe_klien (*)',
+        'no_invoice_asal (*)', 'tanggal_invoice_asal (*)', 'deskripsi', 'jumlah_tagihan_asal', 'sisa_tagihan_asal (*)',
+        'kode_barang', 'nama_barang', 'qty', 'satuan', 'harga_satuan', 'subtotal', 'keterangan',
     ];
 
     private const DETAIL_HEADERS = [
         'no_urut_ob (*)', 'no_invoice_asal (*)', 'tanggal_invoice_asal (*)',
-        'deskripsi (*)', 'jumlah_tagihan_asal', 'sisa_tagihan_asal (*)', 'keterangan',
+        'deskripsi', 'jumlah_tagihan_asal', 'sisa_tagihan_asal (*)', 'keterangan',
     ];
 
     private const DETAIL_WIDTHS = [14, 24, 20, 32, 20, 20, 30];
 
     private const ITEM_HEADERS = [
-        'no_urut_ob (*)', 'no_invoice_asal (*)', 'kode_barang', 'nama_barang (*)',
-        'qty (*)', 'satuan', 'harga_satuan (*)', 'subtotal', 'keterangan',
+        'no_urut_ob (*)', 'no_invoice_asal (*)', 'kode_barang', 'nama_barang',
+        'qty', 'satuan', 'harga_satuan', 'subtotal', 'keterangan',
     ];
 
     private const ITEM_WIDTHS = [14, 24, 16, 30, 10, 12, 18, 18, 30];
@@ -71,19 +75,21 @@ class OpeningBalanceImportTemplateService
             ['# Kolom bertanda (*) wajib diisi HANYA untuk baris dengan tipe_baris yang bersangkutan — mis. nama_klien(*) cuma wajib untuk baris tipe_baris=OB, boleh kosong di baris RINCIAN/ITEM.'],
             ['# Baris RINCIAN & ITEM bersifat OPSIONAL secara keseluruhan — kalau OB Anda hanya saldo agregat tanpa rincian invoice historis, cukup jangan sertakan baris RINCIAN/ITEM sama sekali untuk no_urut itu.'],
             ['# Kolom no_urut dipakai ganda: pada baris OB = nomor unik OB tsb; pada baris RINCIAN/ITEM = referensi (no_urut_ob) ke OB terkait.'],
-            ['# Baris OB: kode_klien opsional tapi disarankan diisi (lebih stabil dari nama_klien yang bisa kembar). nama_klien wajib cocok Client AR aktif (case-insensitive jika kode_klien kosong). saldo_awal harus > 0 (kecuali diisi lewat baris RINCIAN, lihat baris berikut).'],
-            ['# Baris RINCIAN: no_invoice_asal, tanggal_invoice_asal, deskripsi, sisa_tagihan_asal wajib. Total sisa_tagihan_asal semua baris RINCIAN untuk 1 no_urut_ob harus SAMA PERSIS dengan saldo_awal OB terkait.'],
-            ['# Baris ITEM: no_invoice_asal harus cocok baris RINCIAN terkait. kode_barang opsional (dicari juga via nama_barang). subtotal opsional (otomatis = qty x harga_satuan jika kosong).'],
+            ['# Baris OB: tipe_klien wajib diisi PT/B2B atau RESTO/B2C (sinonim, boleh pilih salah satu istilah). PT/B2B = saldo konsolidasi (tanpa resto spesifik) — nama_klien wajib cocok Client AR PT aktif secara unik, kode_resto WAJIB DIKOSONGKAN. RESTO/B2C = saldo per outlet — kode_resto WAJIB diisi & divalidasi ke MASTER DATA (harus terdaftar & punya Client AR aktif tipe RESTO). saldo_awal harus > 0 (kecuali diisi lewat baris RINCIAN, lihat baris berikut).'],
+            ['# Baris RINCIAN: no_invoice_asal, tanggal_invoice_asal, sisa_tagihan_asal wajib. deskripsi opsional (boleh kosong untuk data lampau yang tidak diketahui deskripsinya). Total sisa_tagihan_asal semua baris RINCIAN untuk 1 no_urut_ob harus SAMA PERSIS dengan saldo_awal OB terkait.'],
+            ['# Baris ITEM: no_urut_ob & no_invoice_asal wajib (harus cocok baris RINCIAN terkait) — field lain (kode_barang, nama_barang, qty, satuan, harga_satuan) OPSIONAL, boleh dikosongkan untuk data lampau yang tidak diketahui detail itemnya. kode_barang opsional (dicari juga via nama_barang). subtotal opsional (otomatis = qty x harga_satuan jika kosong).'],
             ['# Format tanggal: DD-MM-YYYY. Upload hanya bisa dilakukan oleh role ADMIN, MANAGER, atau SUPERVISOR. Baris [CONTOH] & baris diawali "#" otomatis diabaikan saat import.'],
         ];
 
         $rows[] = self::CSV_HEADERS;
 
-        // 3 baris contoh berantai: 1 OB + 1 rincian + 1 item, saling terhubung via no_urut=1 —
-        // menunjukkan pola linking yang sama seperti no_urut/no_urut_ob di XLSX.
-        $rows[] = ['OB', '1', '[CONTOH] KLI-001', 'Nama Klien Contoh', '01-01-2023', '15000000', '', '', '', '', '', '', '', '', '', '', '', 'Saldo awal per Januari 2023'];
-        $rows[] = ['RINCIAN', '1', '', '', '', '', 'INV-LAMA-001', '15-01-2022', '[CONTOH] Tagihan pengiriman Januari 2022', '', '15000000', '', '', '', '', '', '', ''];
-        $rows[] = ['ITEM', '1', '', '', '', '', 'INV-LAMA-001', '', '', '', '', 'BRG-001', '[CONTOH] Nama Barang Contoh', '10', 'pcs', '1500000', '', ''];
+        // Baris contoh berantai: 1 OB tipe PT/B2B + 1 OB tipe RESTO/B2C + 1 rincian + 1 item
+        // (rincian/item terhubung ke OB no_urut=1) — menunjukkan pola linking yang sama
+        // seperti no_urut/no_urut_ob di XLSX, sekaligus contoh kedua tipe_klien.
+        $rows[] = ['OB', '1', '[CONTOH] Nama Klien PT Konsolidasi', '', '', '01-01-2023', '15000000', 'B2B', '', '', '', '', '', '', '', '', '', '', '', 'Saldo awal per Januari 2023 (PT, tanpa resto)'];
+        $rows[] = ['OB', '2', '[CONTOH] Nama Klien Outlet', 'KD-001', 'Nama Resto Contoh', '01-01-2023', '5000000', 'B2C', '', '', '', '', '', '', '', '', '', '', '', 'Saldo awal per resto'];
+        $rows[] = ['RINCIAN', '1', '', '', '', '', '', '', 'INV-LAMA-001', '15-01-2022', '[CONTOH] Tagihan pengiriman Januari 2022', '', '15000000', '', '', '', '', '', '', ''];
+        $rows[] = ['ITEM', '1', '', '', '', '', '', '', 'INV-LAMA-001', '', '', '', '', 'BRG-001', '[CONTOH] Nama Barang Contoh', '10', 'pcs', '1500000', '', ''];
 
         return $rows;
     }
@@ -116,10 +122,13 @@ class OpeningBalanceImportTemplateService
         $this->buildSheetSkeleton(
             $sheet,
             'TEMPLATE IMPORT MASTER OPENING BALANCE',
-            'Satu baris = 1 Opening Balance (saldo awal piutang klien). Kolom bertanda (*) wajib diisi. no_urut adalah nomor urut unik per baris — dipakai sebagai referensi oleh sheet "Rincian Invoice Asal" & "Item Invoice Asal" (kolom no_urut_ob). kode_klien opsional tapi disarankan diisi (lebih stabil dari nama_klien). Lihat sheet "Petunjuk Pengisian".',
+            'Satu baris = 1 Opening Balance (saldo awal piutang klien). Kolom bertanda (*) wajib diisi. no_urut adalah nomor urut unik per baris — dipakai sebagai referensi oleh sheet "Rincian Invoice Asal" & "Item Invoice Asal" (kolom no_urut_ob). tipe_klien menentukan cara resolusi: PT/B2B (kode_resto WAJIB DIKOSONGKAN, resolve via nama_klien unik) atau RESTO/B2C (kode_resto WAJIB diisi & divalidasi ke MASTER DATA). Lihat sheet "Petunjuk Pengisian".',
             self::OB_HEADERS,
             self::OB_WIDTHS,
-            ['[CONTOH] KLI-001', 'Nama Klien Contoh', '01-01-2023', '15000000', 'Saldo awal per Januari 2023', '1'],
+            [
+                ['[CONTOH] Nama Klien PT Konsolidasi', '', '', '01-01-2023', '15000000', 'Saldo awal per Januari 2023 (PT, tanpa resto)', 'B2B', '1'],
+                ['[CONTOH] Nama Klien Outlet', 'KD-001', 'Nama Resto Contoh', '01-01-2023', '5000000', 'Saldo awal per resto', 'B2C', '2'],
+            ],
             'FF1B5E20',
             'FF2E7D32',
             'FFF1F8E9',
@@ -135,7 +144,7 @@ class OpeningBalanceImportTemplateService
             'Opsional — isi HANYA jika Opening Balance ini punya rincian invoice historis. no_urut_ob harus cocok dengan kolom no_urut di sheet "Data Opening Balance". jumlah_tagihan_asal opsional (otomatis dihitung dari total item bila diisi di sheet "Item Invoice Asal"); sisa_tagihan_asal wajib, dan totalnya (semua baris untuk 1 no_urut_ob) harus sama dengan saldo_awal OB terkait.',
             self::DETAIL_HEADERS,
             self::DETAIL_WIDTHS,
-            ['1', 'INV-LAMA-001', '15-01-2022', '[CONTOH] Tagihan pengiriman Januari 2022', '', '15000000', ''],
+            [['1', 'INV-LAMA-001', '15-01-2022', '[CONTOH] Tagihan pengiriman Januari 2022', '', '15000000', '']],
             'FF6A1B9A',
             'FF8E24AA',
             'FFF3E5F5',
@@ -151,7 +160,7 @@ class OpeningBalanceImportTemplateService
             'Opsional — isi HANYA jika ingin merinci barang per invoice asal. no_urut_ob + no_invoice_asal harus cocok dengan baris di sheet "Rincian Invoice Asal". kode_barang opsional (dipakai mencari master barang; jika kosong dicari berdasarkan nama_barang). subtotal opsional (otomatis = qty x harga_satuan jika kosong).',
             self::ITEM_HEADERS,
             self::ITEM_WIDTHS,
-            ['1', 'INV-LAMA-001', 'BRG-001', '[CONTOH] Nama Barang Contoh', '10', 'pcs', '1500000', '', ''],
+            [['1', 'INV-LAMA-001', 'BRG-001', '[CONTOH] Nama Barang Contoh', '10', 'pcs', '1500000', '', '']],
             'FFE65100',
             'FFEF6C00',
             'FFFFF3E0',
@@ -161,7 +170,7 @@ class OpeningBalanceImportTemplateService
     /**
      * @param  array<int,string>  $headers
      * @param  array<int,int>  $widths
-     * @param  array<int,string>  $example
+     * @param  array<int,array<int,string>>  $examples  list of example rows
      */
     private function buildSheetSkeleton(
         Worksheet $sheet,
@@ -169,7 +178,7 @@ class OpeningBalanceImportTemplateService
         string $subtitle,
         array $headers,
         array $widths,
-        array $example,
+        array $examples,
         string $titleColor,
         string $headerColor,
         string $stripeColor,
@@ -212,18 +221,22 @@ class OpeningBalanceImportTemplateService
         ]);
         $sheet->getRowDimension(4)->setRowHeight(24);
 
-        foreach ($example as $i => $val) {
-            $sheet->getCell("{$colLetters[$i]}5")->setValueExplicit($val, DataType::TYPE_STRING);
+        foreach ($examples as $exIdx => $example) {
+            $row = 5 + $exIdx;
+            foreach ($example as $i => $val) {
+                $sheet->getCell("{$colLetters[$i]}{$row}")->setValueExplicit($val, DataType::TYPE_STRING);
+            }
+            $sheet->getStyle("A{$row}:{$lastCol}{$row}")->applyFromArray([
+                'font' => ['italic' => true, 'size' => 9, 'color' => ['argb' => 'FFE65100']],
+                'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFFFF9C4']],
+                'alignment' => ['vertical' => Alignment::VERTICAL_CENTER],
+                'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FFFFECB3']]],
+            ]);
+            $sheet->getRowDimension($row)->setRowHeight(20);
         }
-        $sheet->getStyle("A5:{$lastCol}5")->applyFromArray([
-            'font' => ['italic' => true, 'size' => 9, 'color' => ['argb' => 'FFE65100']],
-            'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFFFF9C4']],
-            'alignment' => ['vertical' => Alignment::VERTICAL_CENTER],
-            'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FFFFECB3']]],
-        ]);
-        $sheet->getRowDimension(5)->setRowHeight(20);
 
-        for ($row = 6; $row <= 205; $row++) {
+        $dataStart = 5 + count($examples);
+        for ($row = $dataStart; $row <= $dataStart + 199; $row++) {
             $bg = $row % 2 === 0 ? $stripeColor : 'FFFFFFFF';
             $sheet->getStyle("A{$row}:{$lastCol}{$row}")->applyFromArray([
                 'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => $bg]],
@@ -232,7 +245,7 @@ class OpeningBalanceImportTemplateService
             $sheet->getRowDimension($row)->setRowHeight(18);
         }
 
-        $sheet->freezePane('A5');
+        $sheet->freezePane("A{$dataStart}");
         $sheet->setAutoFilter("A4:{$lastCol}4");
     }
 
@@ -268,7 +281,7 @@ class OpeningBalanceImportTemplateService
 
         $steps = [
             '1. File ini berisi 4 sheet: "Data Opening Balance" (wajib), "Rincian Invoice Asal" (opsional), "Item Invoice Asal" (opsional), dan "Petunjuk Pengisian".',
-            '2. Sheet "Data Opening Balance": 1 baris = 1 Opening Balance. Kolom bertanda (*) wajib diisi. Isi kode_klien jika tersedia — lebih stabil daripada nama_klien untuk mencocokkan klien (nama_klien dicari case-insensitive dan DITOLAK jika cocok dengan lebih dari 1 klien aktif).',
+            '2. Sheet "Data Opening Balance": 1 baris = 1 Opening Balance. Kolom bertanda (*) wajib diisi. tipe_klien menerima PT atau B2B (sinonim, sama-sama berarti klien konsolidasi head office — kode_resto WAJIB DIKOSONGKAN, nama_klien dicari case-insensitive dan DITOLAK jika cocok dengan lebih dari 1 klien PT aktif) maupun RESTO atau B2C (sinonim, sama-sama berarti klien per outlet — kode_resto WAJIB diisi, dicocokkan ketat ke MASTER DATA).',
             '2b. PENTING soal tanda (*): kolom bertanda (*) wajib diisi HANYA untuk sheet/baris yang bersangkutan — mis. nama_klien(*) di sheet Data Opening Balance tidak berarti sheet Rincian Invoice Asal & Item Invoice Asal wajib diisi juga. Kedua sheet itu tetap boleh dikosongkan sepenuhnya (lihat poin 4).',
             '3. no_urut adalah nomor urut BEBAS tapi harus UNIK per baris (boleh 1, 2, 3, dst) — dipakai sebagai referensi oleh sheet "Rincian Invoice Asal" (kolom no_urut_ob).',
             '4. Sheet "Rincian Invoice Asal" & "Item Invoice Asal" bersifat OPSIONAL — kosongkan kedua sheet ini jika data Opening Balance Anda hanya berupa saldo agregat tanpa rincian invoice historis per baris (kasus paling umum untuk backfill data lama).',
@@ -296,20 +309,22 @@ class OpeningBalanceImportTemplateService
         $row++;
 
         $this->buildColumnDescriptionBlock($sheet, $row, 'DESKRIPSI KOLOM — Sheet "Data Opening Balance"', 'FF2E7D32', 'FF66BB6A', [
-            ['kode_klien',   'Kode Client AR (kunci pencarian klien paling stabil)', 'Opsional', 'KLI-001'],
-            ['nama_klien',   'Nama Client AR aktif (fallback jika kode_klien kosong, dicari case-insensitive, ditolak jika ambigu)', 'Ya', 'Nama Klien Contoh'],
+            ['nama_klien',   'Nama Client AR aktif. Untuk tipe_klien PT/B2B: dicocokkan case-insensitive, DITOLAK jika ambigu (cocok >1 klien PT). Untuk RESTO/B2C: harus sesuai MASTER DATA outlet tsb.', 'Ya', 'Nama Klien Contoh'],
+            ['kode_resto',   'Kode resto (tb_resto) — WAJIB untuk tipe_klien RESTO/B2C, WAJIB DIKOSONGKAN untuk PT/B2B. Divalidasi ketat ke MASTER DATA & harus punya Client AR aktif tipe RESTO.', 'RESTO/B2C saja', 'KD-001'],
+            ['nama_resto',   'Nama resto (informasi tambahan, tidak divalidasi ketat) — isi untuk baris RESTO/B2C.', 'Opsional', 'Nama Resto Contoh'],
             ['tanggal',      'Tanggal Opening Balance (format DD-MM-YYYY)', 'Ya', '01-01-2023'],
             ['saldo_awal',   'Nominal saldo awal piutang (harus lebih dari 0)', 'Ya', '15000000'],
             ['keterangan',   'Keterangan tambahan', 'Opsional', 'Saldo awal per Januari 2023'],
+            ['tipe_klien',   'PT atau B2B (saldo konsolidasi head office, TANPA resto spesifik) — atau RESTO atau B2C (saldo per outlet). Sinonim, bebas pilih salah satu istilah. Menentukan cara pencocokan klien & kewajiban kode_resto.', 'Ya', 'RESTO / B2C'],
             ['no_urut',      'Nomor urut unik per baris — referensi untuk sheet Rincian Invoice Asal (kolom no_urut_ob). Wajib jika Anda mengisi sheet Rincian Invoice Asal.', 'Ya (jika ada rincian)', '1'],
         ]);
-        $row += 8;
+        $row += 10;
 
         $this->buildColumnDescriptionBlock($sheet, $row, 'DESKRIPSI KOLOM — Sheet "Rincian Invoice Asal" (opsional)', 'FF6A1B9A', 'FFAB47BC', [
             ['no_urut_ob',           'Harus cocok dengan kolom no_urut di sheet Data Opening Balance', 'Ya', '1'],
             ['no_invoice_asal',      'Nomor invoice historis dari sistem lama (bebas format)', 'Ya', 'INV-LAMA-001'],
             ['tanggal_invoice_asal', 'Tanggal invoice asal (format DD-MM-YYYY)', 'Ya', '15-01-2022'],
-            ['deskripsi',            'Deskripsi singkat invoice asal', 'Ya', 'Tagihan pengiriman Januari 2022'],
+            ['deskripsi',            'Deskripsi singkat invoice asal', 'Opsional', 'Tagihan pengiriman Januari 2022'],
             ['jumlah_tagihan_asal',  'Nominal tagihan awal invoice asal (opsional — otomatis dihitung dari total item jika diisi)', 'Opsional', '15000000'],
             ['sisa_tagihan_asal',    'Sisa tagihan invoice asal — total semua baris untuk 1 no_urut_ob harus = saldo_awal OB terkait', 'Ya', '15000000'],
             ['keterangan',           'Keterangan tambahan', 'Opsional', '-'],
@@ -320,10 +335,10 @@ class OpeningBalanceImportTemplateService
             ['no_urut_ob',      'Harus cocok dengan kolom no_urut di sheet Data Opening Balance', 'Ya', '1'],
             ['no_invoice_asal', 'Harus cocok dengan no_invoice_asal di sheet Rincian Invoice Asal', 'Ya', 'INV-LAMA-001'],
             ['kode_barang',     'Kode master barang (dicari lebih dulu; jika kosong/tidak ketemu, dicari via nama_barang)', 'Opsional', 'BRG-001'],
-            ['nama_barang',     'Nama barang', 'Ya', 'Nama Barang Contoh'],
-            ['qty',             'Kuantitas barang', 'Ya', '10'],
+            ['nama_barang',     'Nama barang', 'Opsional', 'Nama Barang Contoh'],
+            ['qty',             'Kuantitas barang', 'Opsional', '10'],
             ['satuan',          'Satuan barang', 'Opsional', 'pcs'],
-            ['harga_satuan',    'Harga per satuan', 'Ya', '1500000'],
+            ['harga_satuan',    'Harga per satuan', 'Opsional', '1500000'],
             ['subtotal',        'Subtotal (opsional — otomatis = qty x harga_satuan jika kosong)', 'Opsional', '15000000'],
             ['keterangan',      'Keterangan tambahan', 'Opsional', '-'],
         ]);

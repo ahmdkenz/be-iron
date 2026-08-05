@@ -7,6 +7,7 @@ use App\Models\Barang;
 use App\Models\Invoice;
 use App\Models\KlienAr;
 use App\Models\OpeningBalanceImportBatch;
+use App\Models\Resto;
 use Illuminate\Support\Facades\Storage;
 use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
 use PhpOffice\PhpSpreadsheet\IOFactory;
@@ -67,12 +68,8 @@ class OpeningBalanceImportService
 
         $batch->update(['total_ob' => count($obRows)]);
 
-        $klienByKode = KlienAr::whereNotNull('kode_klien')
-            ->get(['id', 'kode_klien', 'nama_klien', 'perusahaan_id'])
-            ->keyBy(fn (KlienAr $k) => strtolower($k->kode_klien));
-
-        $namaGroups = KlienAr::all(['id', 'kode_klien', 'nama_klien', 'perusahaan_id'])
-            ->groupBy(fn (KlienAr $k) => strtolower(trim($k->nama_klien)));
+        [$ptNamaGroups, $restoMap] = $this->buildKlienMapsForOb();
+        $restoMasterMap = $this->buildRestoMasterMap();
 
         $barangByKode = Barang::whereNotNull('kode_barang')->get(['id', 'kode_barang'])
             ->keyBy(fn (Barang $b) => strtolower($b->kode_barang));
@@ -97,7 +94,15 @@ class OpeningBalanceImportService
                 ]);
             }
 
-            $resolved = $this->resolveKlien($row['kode_klien'], $row['nama_klien'], $klienByKode, $namaGroups);
+            $masterError = $this->validateRowAgainstMasterData($row['tipe_klien'], $row['kode_resto'], $restoMasterMap);
+            if ($masterError) {
+                $errors[] = ['sheet' => $row['sheet'], 'row' => $row['source_row'], 'message' => $masterError];
+                $failedOb++;
+
+                continue;
+            }
+
+            $resolved = $this->resolveKlienForOb($row['tipe_klien'], $row['nama_klien'], $row['kode_resto'], $ptNamaGroups, $restoMap);
             if (! $resolved['klien']) {
                 $errors[] = ['sheet' => $row['sheet'], 'row' => $row['source_row'], 'message' => $resolved['error']];
                 $failedOb++;
@@ -229,41 +234,163 @@ class OpeningBalanceImportService
     // ──────────────────────────────────────────────────────────────
 
     /**
-     * kode_klien (kalau diisi) selalu jadi kunci utama — paling stabil karena unique
-     * di DB. Fallback nama_klien: case-insensitive, dan DITOLAK eksplisit kalau
-     * cocok dengan lebih dari 1 klien (beda dari desain lama yang diam-diam memilih
-     * klien "terbaru" — silent wrong-match risk).
+     * Validasi 1 baris OB terhadap MASTER DATA — dipanggil SEBELUM resolveKlienForOb().
+     * PT: kode_resto wajib DIKOSONGKAN (saldo konsolidasi, tanpa resto spesifik).
+     * RESTO: kode_resto wajib diisi & harus konsisten dengan MASTER DATA (tb_resto +
+     * Client AR aktif tipe RESTO untuk outlet tsb) — persis pola
+     * InvoiceImportService::validateRowAgainstMasterData(), disesuaikan konteks OB
+     * (tidak ada cross-check nama_klien di sini karena PT tidak layak dicek by kode_resto,
+     * dan RESTO sudah pasti resolve exact by kode_resto tanpa perlu nama_klien cocok).
+     */
+    public function validateRowAgainstMasterData(string $tipeKlien, ?string $kodeResto, array $restoMasterMap): ?string
+    {
+        if ($tipeKlien === 'PT') {
+            return $kodeResto
+                ? 'kode_resto harus dikosongkan untuk baris tipe_klien=PT (saldo konsolidasi, tanpa resto spesifik).'
+                : null;
+        }
+
+        if (! $kodeResto) {
+            return 'kode_resto wajib diisi untuk baris tipe_klien=RESTO.';
+        }
+
+        $entry = $restoMasterMap[strtoupper($kodeResto)] ?? null;
+        if (! $entry) {
+            return "kode_resto '{$kodeResto}' tidak ditemukan di MASTER DATA (tb_resto) atau belum memiliki Client AR aktif.";
+        }
+
+        if ($entry['tipe_klien'] !== 'RESTO') {
+            return "kode_resto '{$kodeResto}' sudah terkonsolidasi ke Client AR PT '{$entry['nama_klien']}' di MASTER DATA — kirim baris ini dengan tipe_klien=PT tanpa kode_resto.";
+        }
+
+        return null;
+    }
+
+    /**
+     * PT: resolve via nama_klien unik (TANPA kode_klien sama sekali — dihapus dari
+     * template, mirip pola B2B di Import Invoice). RESTO: resolve STRICT via
+     * kode_resto — tanpa fallback ke nama, supaya salah ketik tidak nyasar ke outlet
+     * lain (persis komentar resolveKlienForRow() di Import Invoice).
      *
      * Mengembalikan hasil lewat return (bukan by-ref $errors) supaya method ini tetap
-     * pure/mudah diuji — pola sama seperti resolvePicRestoForRow() di MasterImportService.
+     * pure/mudah diuji.
      *
      * @return array{klien: ?KlienAr, error: ?string}
      */
-    private function resolveKlien(?string $kodeKlien, string $namaKlien, $klienByKode, $namaGroups): array
+    private function resolveKlienForOb(string $tipeKlien, string $namaKlien, ?string $kodeResto, $ptNamaGroups, $restoMap): array
     {
-        if ($kodeKlien) {
-            $klien = $klienByKode->get(strtolower($kodeKlien));
-            if (! $klien) {
-                return ['klien' => null, 'error' => "Client dengan kode_klien '{$kodeKlien}' tidak ditemukan."];
+        if ($tipeKlien === 'PT') {
+            $matches = $ptNamaGroups->get(strtolower(trim($namaKlien))) ?? collect();
+
+            if ($matches->isEmpty()) {
+                return ['klien' => null, 'error' => "Client PT '{$namaKlien}' tidak ditemukan di sistem."];
             }
 
-            return ['klien' => $klien, 'error' => null];
+            if ($matches->count() > 1) {
+                return [
+                    'klien' => null,
+                    'error' => "Nama klien PT '{$namaKlien}' cocok dengan {$matches->count()} klien berbeda — pastikan nama klien di sistem unik.",
+                ];
+            }
+
+            return ['klien' => $matches->first(), 'error' => null];
         }
 
-        $matches = $namaGroups->get(strtolower(trim($namaKlien))) ?? collect();
+        $klien = $restoMap->get(strtoupper($kodeResto ?? ''));
 
-        if ($matches->isEmpty()) {
-            return ['klien' => null, 'error' => "Client '{$namaKlien}' tidak ditemukan."];
+        return $klien
+            ? ['klien' => $klien, 'error' => null]
+            : ['klien' => null, 'error' => "kode_resto '{$kodeResto}' tidak ditemukan atau belum terhubung ke Client AR aktif tipe RESTO."];
+    }
+
+    /**
+     * Terima PT/RESTO (istilah tb_klien_ar.tipe_klien) maupun B2B/B2C (istilah familiar
+     * dari Import Invoice) sebagai sinonim — sama-sama valid, diterjemahkan ke PT/RESTO
+     * segera saat parsing supaya logic downstream (validateRowAgainstMasterData,
+     * resolveKlienForOb) tetap konsisten pakai istilah tb_klien_ar.
+     */
+    private function normalizeTipeKlien(string $raw): ?string
+    {
+        return match (strtoupper(trim($raw))) {
+            'PT', 'B2B' => 'PT',
+            'RESTO', 'B2C' => 'RESTO',
+            default => null,
+        };
+    }
+
+    /**
+     * @return array{0: \Illuminate\Support\Collection, 1: \Illuminate\Support\Collection}
+     *   [ptNamaGroups keyed by lower(nama_klien), restoMap keyed by upper(kode_resto)]
+     *   — hanya Client AR aktif.
+     */
+    private function buildKlienMapsForOb(): array
+    {
+        $ptNamaGroups = KlienAr::where('tipe_klien', 'PT')->where('status', true)->whereNotNull('nama_klien')
+            ->get(['id', 'nama_klien', 'perusahaan_id'])
+            ->groupBy(fn (KlienAr $k) => strtolower(trim($k->nama_klien)));
+
+        $restoMap = KlienAr::with('resto:id,kode_resto')->where('tipe_klien', 'RESTO')->where('status', true)
+            ->get(['id', 'nama_klien', 'resto_id', 'perusahaan_id'])
+            ->filter(fn (KlienAr $k) => filled($k->resto?->kode_resto))
+            ->keyBy(fn (KlienAr $k) => strtoupper($k->resto->kode_resto));
+
+        return [$ptNamaGroups, $restoMap];
+    }
+
+    /**
+     * Peta acuan MASTER DATA per kode_resto: segmen yang SEDANG AKTIF untuk tiap outlet.
+     * Duplikasi 1:1 dari InvoiceImportService::buildRestoMasterMap() — dipakai murni
+     * untuk validasi/pesan error (validateRowAgainstMasterData()), BUKAN untuk
+     * auto-attach klien PT ke baris RESTO.
+     *
+     * @return array<string, array{tipe_klien: string, nama_klien: string, klien_id: int}>
+     */
+    private function buildRestoMasterMap(): array
+    {
+        $map = [];
+        $restos = Resto::whereNotNull('kode_resto')
+            ->where('kode_resto', '!=', '')
+            ->get(['id', 'kode_resto', 'perusahaan_id']);
+
+        if ($restos->isEmpty()) {
+            return $map;
         }
 
-        if ($matches->count() > 1) {
-            return [
-                'klien' => null,
-                'error' => "Nama klien '{$namaKlien}' cocok dengan {$matches->count()} klien berbeda — isi kolom kode_klien untuk memastikan.",
-            ];
+        $restoKlienByRestoId = [];
+        foreach (
+            KlienAr::where('tipe_klien', 'RESTO')->where('status', true)
+                ->whereIn('resto_id', $restos->pluck('id'))
+                ->get(['id', 'resto_id', 'nama_klien']) as $klien
+        ) {
+            $restoKlienByRestoId[$klien->resto_id] ??= $klien;
         }
 
-        return ['klien' => $matches->first(), 'error' => null];
+        $ptKlienByPerusahaanId = [];
+        foreach (
+            KlienAr::where('tipe_klien', 'PT')->where('status', true)
+                ->whereIn('perusahaan_id', $restos->pluck('perusahaan_id')->filter()->unique())
+                ->get(['id', 'perusahaan_id', 'nama_klien']) as $klien
+        ) {
+            $ptKlienByPerusahaanId[$klien->perusahaan_id] ??= $klien;
+        }
+
+        foreach ($restos as $resto) {
+            $kodeKey = strtoupper($resto->kode_resto);
+
+            if (isset($restoKlienByRestoId[$resto->id])) {
+                $klien = $restoKlienByRestoId[$resto->id];
+                $map[$kodeKey] = ['tipe_klien' => 'RESTO', 'nama_klien' => $klien->nama_klien, 'klien_id' => $klien->id];
+
+                continue;
+            }
+
+            if ($resto->perusahaan_id && isset($ptKlienByPerusahaanId[$resto->perusahaan_id])) {
+                $klien = $ptKlienByPerusahaanId[$resto->perusahaan_id];
+                $map[$kodeKey] = ['tipe_klien' => 'PT', 'nama_klien' => $klien->nama_klien, 'klien_id' => $klien->id];
+            }
+        }
+
+        return $map;
     }
 
     private function resolveBarangId(?string $kodeBarang, string $namaBarang, $barangByKode, $barangByNama): ?int
@@ -290,37 +417,41 @@ class OpeningBalanceImportService
 
     private const CSV_COL_NO_URUT = 1;
 
-    private const CSV_COL_KODE_KLIEN = 2;
+    private const CSV_COL_NAMA_KLIEN = 2;
 
-    private const CSV_COL_NAMA_KLIEN = 3;
+    private const CSV_COL_KODE_RESTO = 3;
 
-    private const CSV_COL_TANGGAL = 4;
+    private const CSV_COL_NAMA_RESTO = 4;
 
-    private const CSV_COL_SALDO_AWAL = 5;
+    private const CSV_COL_TANGGAL = 5;
 
-    private const CSV_COL_NO_INVOICE_ASAL = 6;
+    private const CSV_COL_SALDO_AWAL = 6;
 
-    private const CSV_COL_TANGGAL_INVOICE_ASAL = 7;
+    private const CSV_COL_TIPE_KLIEN = 7;
 
-    private const CSV_COL_DESKRIPSI = 8;
+    private const CSV_COL_NO_INVOICE_ASAL = 8;
 
-    private const CSV_COL_JUMLAH_TAGIHAN_ASAL = 9;
+    private const CSV_COL_TANGGAL_INVOICE_ASAL = 9;
 
-    private const CSV_COL_SISA_TAGIHAN_ASAL = 10;
+    private const CSV_COL_DESKRIPSI = 10;
 
-    private const CSV_COL_KODE_BARANG = 11;
+    private const CSV_COL_JUMLAH_TAGIHAN_ASAL = 11;
 
-    private const CSV_COL_NAMA_BARANG = 12;
+    private const CSV_COL_SISA_TAGIHAN_ASAL = 12;
 
-    private const CSV_COL_QTY = 13;
+    private const CSV_COL_KODE_BARANG = 13;
 
-    private const CSV_COL_SATUAN = 14;
+    private const CSV_COL_NAMA_BARANG = 14;
 
-    private const CSV_COL_HARGA_SATUAN = 15;
+    private const CSV_COL_QTY = 15;
 
-    private const CSV_COL_SUBTOTAL = 16;
+    private const CSV_COL_SATUAN = 16;
 
-    private const CSV_COL_KETERANGAN = 17;
+    private const CSV_COL_HARGA_SATUAN = 17;
+
+    private const CSV_COL_SUBTOTAL = 18;
+
+    private const CSV_COL_KETERANGAN = 19;
 
     /** @return array{0: array<int|string, array>, 1: array<int|string, array>, 2: array} [obRows keyed by no_urut, detailsByOb keyed by no_urut, errors] */
     private function parseCsv(string $filePath): array
@@ -341,6 +472,12 @@ class OpeningBalanceImportService
 
             if (! $headerFound) {
                 if ($this->normalizeHeaderName((string) ($row[self::CSV_COL_TIPE_BARIS] ?? '')) === 'tipe_baris') {
+                    if ($this->normalizeHeaderName((string) ($row[self::CSV_COL_TIPE_KLIEN] ?? '')) !== 'tipe_klien') {
+                        fclose($handle);
+
+                        throw new \RuntimeException('Format CSV tidak sesuai template terbaru (kolom ke-8 harus "tipe_klien"). Download ulang Template CSV.');
+                    }
+
                     $headerFound = true;
                 }
 
@@ -357,15 +494,22 @@ class OpeningBalanceImportService
             $keterangan = $this->importValue($row[self::CSV_COL_KETERANGAN] ?? null);
 
             if ($tipe === self::CSV_TIPE_OB) {
-                $kodeKlienRaw = trim((string) ($row[self::CSV_COL_KODE_KLIEN] ?? ''));
-                if (str_starts_with($kodeKlienRaw, '[CONTOH]')) {
+                $namaKlien = trim((string) ($row[self::CSV_COL_NAMA_KLIEN] ?? ''));
+                if (str_starts_with($namaKlien, '[CONTOH]')) {
                     continue;
                 }
 
-                $namaKlien = trim((string) ($row[self::CSV_COL_NAMA_KLIEN] ?? ''));
+                $tipeKlienRaw = trim((string) ($row[self::CSV_COL_TIPE_KLIEN] ?? ''));
+                $tipeKlien = $this->normalizeTipeKlien($tipeKlienRaw);
+                $kodeResto = $this->importValue($row[self::CSV_COL_KODE_RESTO] ?? null);
 
                 if ($noUrut === '') {
                     $errors[] = ['sheet' => 'Data Opening Balance', 'row' => $lineNumber, 'message' => 'no_urut wajib diisi untuk baris tipe_baris=OB.'];
+
+                    continue;
+                }
+                if ($tipeKlien === null) {
+                    $errors[] = ['sheet' => 'Data Opening Balance', 'row' => $lineNumber, 'message' => "tipe_klien '{$tipeKlienRaw}' tidak valid. Harus PT/B2B atau RESTO/B2C."];
 
                     continue;
                 }
@@ -383,8 +527,10 @@ class OpeningBalanceImportService
                 $obRows[$noUrut] = [
                     'sheet' => 'Data Opening Balance',
                     'source_row' => $lineNumber,
-                    'kode_klien' => $this->importValue($kodeKlienRaw),
+                    'tipe_klien' => $tipeKlien,
                     'nama_klien' => $namaKlien,
+                    'kode_resto' => $kodeResto,
+                    'nama_resto' => $this->importValue($row[self::CSV_COL_NAMA_RESTO] ?? null),
                     'tanggal' => $this->importDate($row[self::CSV_COL_TANGGAL] ?? null),
                     'saldo_awal' => $this->importNum($row[self::CSV_COL_SALDO_AWAL] ?? null),
                     'keterangan' => $keterangan,
@@ -410,8 +556,8 @@ class OpeningBalanceImportService
                 $tanggalAsal = $this->importDate($row[self::CSV_COL_TANGGAL_INVOICE_ASAL] ?? null);
                 $sisaTagihan = $this->importNum($row[self::CSV_COL_SISA_TAGIHAN_ASAL] ?? null);
 
-                if (! $tanggalAsal || $deskripsi === '' || $sisaTagihan <= 0) {
-                    $errors[] = ['sheet' => 'Rincian Invoice Asal', 'row' => $lineNumber, 'message' => 'tanggal_invoice_asal, deskripsi wajib diisi, dan sisa_tagihan_asal harus lebih dari 0 untuk baris tipe_baris=RINCIAN.'];
+                if (! $tanggalAsal || $sisaTagihan <= 0) {
+                    $errors[] = ['sheet' => 'Rincian Invoice Asal', 'row' => $lineNumber, 'message' => 'tanggal_invoice_asal wajib diisi, dan sisa_tagihan_asal harus lebih dari 0 untuk baris tipe_baris=RINCIAN.'];
 
                     continue;
                 }
@@ -439,8 +585,8 @@ class OpeningBalanceImportService
                 $qty = $this->importNum($row[self::CSV_COL_QTY] ?? null);
                 $hargaSatuan = $this->importNum($row[self::CSV_COL_HARGA_SATUAN] ?? null);
 
-                if ($noUrut === '' || $noInvoiceAsal === '' || $namaBarang === '' || $qty <= 0) {
-                    $errors[] = ['sheet' => 'Item Invoice Asal', 'row' => $lineNumber, 'message' => 'no_urut, no_invoice_asal, nama_barang wajib diisi, dan qty harus lebih dari 0 untuk baris tipe_baris=ITEM.'];
+                if ($noUrut === '' || $noInvoiceAsal === '') {
+                    $errors[] = ['sheet' => 'Item Invoice Asal', 'row' => $lineNumber, 'message' => 'no_urut dan no_invoice_asal wajib diisi untuk baris tipe_baris=ITEM.'];
 
                     continue;
                 }
@@ -594,28 +740,34 @@ class OpeningBalanceImportService
         }
 
         $sheet = $spreadsheet->getSheet($sheetIndex);
-        $detected = $this->detectHeaderStart($sheet, 'kode_klien', 6);
+        $detected = $this->detectHeaderStart($sheet, 'nama_klien', 8);
         if (! $detected['found']) {
-            $errors[] = ['sheet' => 'Data Opening Balance', 'row' => 0, 'message' => 'Header "kode_klien" tidak ditemukan di sheet Data Opening Balance.'];
+            $errors[] = ['sheet' => 'Data Opening Balance', 'row' => 0, 'message' => 'Header "nama_klien" tidak ditemukan — pastikan menggunakan template terbaru (download ulang template).'];
 
             return [];
         }
 
         $obRows = [];
         $this->eachDataRow($sheet, $detected, function (array $row, int $lineNumber) use (&$obRows, &$errors) {
-            $kodeKlienRaw = trim($row[0] ?? '');
-            if (str_starts_with($kodeKlienRaw, '[CONTOH]') || str_starts_with($kodeKlienRaw, '#')) {
+            $namaKlien = trim($row[0] ?? '');
+            if (str_starts_with($namaKlien, '[CONTOH]') || str_starts_with($namaKlien, '#')) {
                 return;
             }
 
-            $namaKlien = trim($row[1] ?? '');
-            $noUrutRaw = trim($row[5] ?? '');
-            if ($kodeKlienRaw === '' && $namaKlien === '' && $noUrutRaw === '') {
+            $tipeKlienRaw = trim($row[6] ?? '');
+            $tipeKlien = $this->normalizeTipeKlien($tipeKlienRaw);
+            $noUrutRaw = trim($row[7] ?? '');
+            if ($tipeKlienRaw === '' && $namaKlien === '' && $noUrutRaw === '') {
                 return;
             } // baris kosong
 
             if ($noUrutRaw === '') {
                 $errors[] = ['sheet' => 'Data Opening Balance', 'row' => $lineNumber, 'message' => 'no_urut wajib diisi.'];
+
+                return;
+            }
+            if ($tipeKlien === null) {
+                $errors[] = ['sheet' => 'Data Opening Balance', 'row' => $lineNumber, 'message' => "tipe_klien '{$tipeKlienRaw}' tidak valid. Harus PT/B2B atau RESTO/B2C."];
 
                 return;
             }
@@ -633,11 +785,13 @@ class OpeningBalanceImportService
             $obRows[$noUrutRaw] = [
                 'sheet' => 'Data Opening Balance',
                 'source_row' => $lineNumber,
-                'kode_klien' => $this->importValue($kodeKlienRaw),
+                'tipe_klien' => $tipeKlien,
                 'nama_klien' => $namaKlien,
-                'tanggal' => $this->importDate($row[2] ?? null),
-                'saldo_awal' => $this->importNum($row[3] ?? null),
-                'keterangan' => $this->importValue($row[4] ?? null),
+                'kode_resto' => $this->importValue($row[1] ?? null),
+                'nama_resto' => $this->importValue($row[2] ?? null),
+                'tanggal' => $this->importDate($row[3] ?? null),
+                'saldo_awal' => $this->importNum($row[4] ?? null),
+                'keterangan' => $this->importValue($row[5] ?? null),
             ];
         });
 
@@ -679,8 +833,8 @@ class OpeningBalanceImportService
             $tanggalAsal = $this->importDate($row[2] ?? null);
             $sisaTagihan = $this->importNum($row[5] ?? null);
 
-            if (! $tanggalAsal || $deskripsi === '' || $sisaTagihan <= 0) {
-                $errors[] = ['sheet' => 'Rincian Invoice Asal', 'row' => $lineNumber, 'message' => 'tanggal_invoice_asal, deskripsi wajib diisi, dan sisa_tagihan_asal harus lebih dari 0.'];
+            if (! $tanggalAsal || $sisaTagihan <= 0) {
+                $errors[] = ['sheet' => 'Rincian Invoice Asal', 'row' => $lineNumber, 'message' => 'tanggal_invoice_asal wajib diisi, dan sisa_tagihan_asal harus lebih dari 0.'];
 
                 return;
             }
@@ -728,8 +882,8 @@ class OpeningBalanceImportService
             $qty = $this->importNum($row[4] ?? null);
             $hargaSatuan = $this->importNum($row[6] ?? null);
 
-            if ($noUrutOb === '' || $noInvoiceAsal === '' || $namaBarang === '' || $qty <= 0) {
-                $errors[] = ['sheet' => 'Item Invoice Asal', 'row' => $lineNumber, 'message' => 'no_urut_ob, no_invoice_asal, nama_barang wajib diisi, dan qty harus lebih dari 0.'];
+            if ($noUrutOb === '' || $noInvoiceAsal === '') {
+                $errors[] = ['sheet' => 'Item Invoice Asal', 'row' => $lineNumber, 'message' => 'no_urut_ob dan no_invoice_asal wajib diisi.'];
 
                 return;
             }
