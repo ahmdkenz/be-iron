@@ -5,8 +5,10 @@ namespace App\Domain\Finance\OpeningBalance\Controllers;
 use App\Domain\Finance\Invoice\Resources\InvoiceResource;
 use App\Domain\Finance\Invoice\Resources\OpeningBalanceDetailResource;
 use App\Domain\Finance\Invoice\Services\InvoiceService;
+use App\Domain\Finance\OpeningBalance\Jobs\ProcessOpeningBalanceBulkApproveJob;
 use App\Domain\Finance\OpeningBalance\Jobs\ProcessOpeningBalanceImportJob;
 use App\Domain\Finance\OpeningBalance\Requests\StoreOpeningBalanceRequest;
+use App\Domain\Finance\OpeningBalance\Services\OpeningBalanceBulkApproveCacheService;
 use App\Domain\Finance\OpeningBalance\Services\OpeningBalanceImportTemplateService;
 use App\Http\Controllers\Controller;
 use App\Models\Invoice;
@@ -34,7 +36,10 @@ class OpeningBalanceController extends Controller
 {
     use ApiResponse;
 
-    public function __construct(private readonly InvoiceService $service) {}
+    public function __construct(
+        private readonly InvoiceService $service,
+        private readonly OpeningBalanceBulkApproveCacheService $bulkApproveCache,
+    ) {}
 
     public function index(Request $request): JsonResponse
     {
@@ -136,30 +141,41 @@ class OpeningBalanceController extends Controller
             'note' => ['nullable', 'string'],
         ]);
 
-        $approvedIds = [];
-        $failed = [];
-
-        foreach ($payload['ids'] as $id) {
-            try {
-                $invoice = $this->findOpeningBalanceOrFail((int) $id);
-                $this->service->approveOpeningBalance($invoice, $payload['note'] ?? null);
-                $approvedIds[] = $id;
-            } catch (\Throwable $e) {
-                $failed[] = ['id' => $id, 'message' => $e->getMessage()];
-            }
+        if ($this->bulkApproveCache->activeBatchId(auth()->id())) {
+            return $this->errorResponse('Masih ada proses Approve Semua yang berjalan untuk Anda. Tunggu sampai selesai.', 409);
         }
 
-        Log::channel('security')->info('Bulk approve opening balance', [
-            'user_id' => auth()->id(),
-            'approved_ids' => $approvedIds,
-            'failed' => $failed,
-            'ip' => $request->ip(),
-        ]);
+        $batchId = $this->bulkApproveCache->startBatch(auth()->id(), count($payload['ids']));
 
-        return $this->successResponse(
-            ['approved' => count($approvedIds), 'total' => count($payload['ids']), 'failed' => $failed],
-            count($approvedIds) . ' dari ' . count($payload['ids']) . ' Opening Balance berhasil disetujui'
-        );
+        ProcessOpeningBalanceBulkApproveJob::dispatch($batchId, $payload['ids'], $payload['note'] ?? null, auth()->id());
+
+        return $this->successResponse([
+            'batch_id' => $batchId,
+            'status' => 'queued',
+            'total' => count($payload['ids']),
+        ], 'Permintaan approve semua diterima. Sedang diproses di latar belakang.', 202);
+    }
+
+    public function bulkApproveActive(): JsonResponse
+    {
+        $batchId = $this->bulkApproveCache->activeBatchId(auth()->id());
+
+        return $this->successResponse($batchId ? $this->bulkApproveCache->progress($batchId) : null);
+    }
+
+    public function bulkApproveStatus(string $batch): JsonResponse
+    {
+        $progress = $this->bulkApproveCache->progress($batch);
+        if (! $progress) {
+            return $this->notFoundResponse('Batch approve semua tidak ditemukan atau sudah kedaluwarsa');
+        }
+
+        $user = auth()->user();
+        if ((int) $progress['user_id'] !== $user->id && ! RoleHelper::hasAnyRole($user, ['ADMIN', 'MANAGER', 'SUPERVISOR'])) {
+            return $this->unauthorizedResponse();
+        }
+
+        return $this->successResponse($progress);
     }
 
     public function reject(Request $request, int $id): JsonResponse
@@ -713,14 +729,7 @@ class OpeningBalanceController extends Controller
 
     private function findOpeningBalanceOrFail(int $id): Invoice
     {
-        $invoice = $this->service->findOrFail($id);
-        abort_if(! $invoice->is_opening_balance, 404, 'Opening balance tidak ditemukan');
-
-        if ($invoice->klien_ar_id) {
-            $this->authorizeKlienArOwnership($invoice->klien_ar_id);
-        }
-
-        return $invoice;
+        return $this->service->resolveOpeningBalanceForActor($id);
     }
 
     /**

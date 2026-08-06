@@ -78,6 +78,33 @@ class InvoiceService
         return $invoice;
     }
 
+    /**
+     * Ambil opening balance untuk actor auth() saat ini, dengan validasi tipe +
+     * ownership Client (PIC AR hanya boleh akses klien yang ditugaskan padanya).
+     * Dipakai controller (single-approve/reject/dst) maupun job background
+     * (ProcessOpeningBalanceBulkApproveJob) agar perilakunya konsisten.
+     */
+    public function resolveOpeningBalanceForActor(int $id): Invoice
+    {
+        $invoice = $this->findOrFail($id);
+        abort_if(! $invoice->is_opening_balance, 404, 'Opening balance tidak ditemukan');
+
+        if ($invoice->klien_ar_id) {
+            $picArKaryawanId = RoleHelper::picArKaryawanIdFor(auth()->user());
+            if ($picArKaryawanId !== null) {
+                $klien = KlienAr::withTrashed()->find($invoice->klien_ar_id);
+
+                abort_if(
+                    ! $klien || (int) $klien->karyawan_ar_id !== $picArKaryawanId,
+                    403,
+                    'Anda hanya dapat mengelola opening balance untuk Client yang ditugaskan kepada Anda'
+                );
+            }
+        }
+
+        return $invoice;
+    }
+
     public function findHeaderOrFail(int $id): Invoice
     {
         $invoice = $this->repository->findHeaderById($id);

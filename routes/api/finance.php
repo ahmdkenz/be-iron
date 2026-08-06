@@ -198,6 +198,8 @@ Route::prefix('opening-balance')->group(function () {
     Route::put('/{invoice}', [OpeningBalanceController::class, 'update']);
     Route::get('/{invoice}/details', [OpeningBalanceController::class, 'details']);
     Route::patch('/bulk-approve', [OpeningBalanceController::class, 'bulkApprove'])->middleware('role:MANAGER|SUPERVISOR');
+    Route::get('/bulk-approve/active', [OpeningBalanceController::class, 'bulkApproveActive'])->middleware('role:MANAGER|SUPERVISOR');
+    Route::get('/bulk-approve/{batch}/status', [OpeningBalanceController::class, 'bulkApproveStatus'])->middleware('role:MANAGER|SUPERVISOR');
     Route::patch('/{invoice}/approve', [OpeningBalanceController::class, 'approve'])->middleware('role:MANAGER|SUPERVISOR');
     Route::patch('/{invoice}/reject', [OpeningBalanceController::class, 'reject'])->middleware('role:MANAGER|SUPERVISOR');
     Route::patch('/{invoice}/resubmit', [OpeningBalanceController::class, 'resubmit']);
