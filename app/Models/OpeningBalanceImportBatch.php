@@ -21,6 +21,7 @@ class OpeningBalanceImportBatch extends Model
         'original_filename',
         'file_path',
         'is_csv',
+        'cutover_date',
         'status',
         'total_ob',
         'processed_ob',
@@ -37,6 +38,7 @@ class OpeningBalanceImportBatch extends Model
 
     protected $casts = [
         'is_csv' => 'boolean',
+        'cutover_date' => 'date',
         'total_ob' => 'integer',
         'processed_ob' => 'integer',
         'inserted_ob' => 'integer',

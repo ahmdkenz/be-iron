@@ -18,6 +18,8 @@ class OpeningBalanceDetailResource extends JsonResource
             'jumlah_tagihan_asal'  => (float) $this->jumlah_tagihan_asal,
             'sisa_tagihan_asal'    => (float) $this->sisa_tagihan_asal,
             'keterangan'           => $this->keterangan,
+            'kode_resto'           => $this->kode_resto,
+            'nama_resto'           => $this->nama_resto,
             'items'                => $this->whenLoaded('items', fn() =>
                 OpeningBalanceDetailItemResource::collection($this->items)
             ),

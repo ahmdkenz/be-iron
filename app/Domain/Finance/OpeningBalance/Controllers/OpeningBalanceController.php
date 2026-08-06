@@ -126,6 +126,42 @@ class OpeningBalanceController extends Controller
         );
     }
 
+    public function bulkApprove(Request $request): JsonResponse
+    {
+        $this->authorizeApproveOpeningBalance();
+
+        $payload = $request->validate([
+            'ids' => ['required', 'array', 'min:1'],
+            'ids.*' => ['integer'],
+            'note' => ['nullable', 'string'],
+        ]);
+
+        $approvedIds = [];
+        $failed = [];
+
+        foreach ($payload['ids'] as $id) {
+            try {
+                $invoice = $this->findOpeningBalanceOrFail((int) $id);
+                $this->service->approveOpeningBalance($invoice, $payload['note'] ?? null);
+                $approvedIds[] = $id;
+            } catch (\Throwable $e) {
+                $failed[] = ['id' => $id, 'message' => $e->getMessage()];
+            }
+        }
+
+        Log::channel('security')->info('Bulk approve opening balance', [
+            'user_id' => auth()->id(),
+            'approved_ids' => $approvedIds,
+            'failed' => $failed,
+            'ip' => $request->ip(),
+        ]);
+
+        return $this->successResponse(
+            ['approved' => count($approvedIds), 'total' => count($payload['ids']), 'failed' => $failed],
+            count($approvedIds) . ' dari ' . count($payload['ids']) . ' Opening Balance berhasil disetujui'
+        );
+    }
+
     public function reject(Request $request, int $id): JsonResponse
     {
         $this->authorizeApproveOpeningBalance();
@@ -220,6 +256,7 @@ class OpeningBalanceController extends Controller
 
         $request->validate([
             'file' => ['required', 'file', 'mimes:csv,txt,xlsx,xls', 'max:10240'],
+            'cutover_date' => ['required', 'date'],
         ]);
 
         OpeningBalanceImportBatch::failStale();
@@ -237,6 +274,7 @@ class OpeningBalanceController extends Controller
             'original_filename' => $file->getClientOriginalName(),
             'file_path' => $path,
             'is_csv' => ! in_array($ext, ['xlsx', 'xls'], true),
+            'cutover_date' => $request->input('cutover_date'),
             'status' => 'queued',
         ]);
 
@@ -281,6 +319,7 @@ class OpeningBalanceController extends Controller
         return [
             'batch_id' => $batch->id,
             'status' => $batch->status,
+            'cutover_date' => $batch->cutover_date?->format('Y-m-d'),
             'total_ob' => $batch->total_ob,
             'processed_ob' => $batch->processed_ob,
             'inserted_ob' => $batch->inserted_ob,
@@ -470,9 +509,11 @@ class OpeningBalanceController extends Controller
             'E' => ['Jumlah Tagihan Asal',  20],
             'F' => ['Sisa Tagihan Asal',    20],
             'G' => ['Keterangan',           30],
-            'H' => ['Jumlah Item',          14],
+            'H' => ['Kode Resto',           16],
+            'I' => ['Nama Resto',           24],
+            'J' => ['Jumlah Item',          14],
         ];
-        $lastCol = 'H';
+        $lastCol = 'J';
 
         $sheet->mergeCells("A1:{$lastCol}1");
         $sheet->setCellValue('A1', 'RINCIAN INVOICE ASAL');
@@ -511,7 +552,9 @@ class OpeningBalanceController extends Controller
                     'E' => [(float) $detail->jumlah_tagihan_asal,                                                     DataType::TYPE_NUMERIC],
                     'F' => [(float) $detail->sisa_tagihan_asal,                                                       DataType::TYPE_NUMERIC],
                     'G' => [$detail->keterangan ?? '-',                                                               DataType::TYPE_STRING],
-                    'H' => [$detail->items->count(),                                                                  DataType::TYPE_NUMERIC],
+                    'H' => [$detail->kode_resto ?? '-',                                                               DataType::TYPE_STRING],
+                    'I' => [$detail->nama_resto ?? '-',                                                               DataType::TYPE_STRING],
+                    'J' => [$detail->items->count(),                                                                  DataType::TYPE_NUMERIC],
                 ];
 
                 foreach ($rowData as $col => [$val, $type]) {

@@ -10,10 +10,16 @@ use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use Tests\TestCase;
 
 /**
- * Unit test untuk logic parsing & resolusi di OpeningBalanceImportService.
+ * Unit test untuk logic parsing, agregasi & resolusi di OpeningBalanceImportService.
  * Menggunakan reflection agar private method bisa diakses tanpa mengubah visibility
  * (pola sama seperti MasterImportServiceTest — lihat memory project_test_db_migrate_fresh_broken:
  * migrate:fresh rusak di proyek ini, jadi test murni logic tanpa DB writes).
+ *
+ * Desain FLAT & AUTO-GROUP: `no_urut` adalah KUNCI GRUP (boleh berulang di banyak baris),
+ * bukan ID unik per baris. Tes di sini fokus memverifikasi: (1) baris dengan no_urut sama
+ * digabung jadi 1 grup alih-alih ditolak sebagai duplikat, (2) identitas klien hanya
+ * diambil dari baris pertama tiap grup, (3) aturan agregasi buildDetailsForGroup() —
+ * lump sum 1 baris vs rincian multi-baris, termasuk kegagalan parsial per baris.
  */
 class OpeningBalanceImportServiceTest extends TestCase
 {
@@ -40,6 +46,15 @@ class OpeningBalanceImportServiceTest extends TestCase
         return $m->invoke($this->service, ...$args);
     }
 
+    /** Untuk method dengan parameter by-reference (&$errors, &$rawItems) — invoke() dengan variadic spread tidak mempertahankan referensi. */
+    private function invokeRef(string $method, array $args): mixed
+    {
+        $m = $this->ref->getMethod($method);
+        $m->setAccessible(true);
+
+        return $m->invokeArgs($this->service, $args);
+    }
+
     private function makeKlien(int $id, string $namaKlien, string $tipeKlien): KlienAr
     {
         $k = new KlienAr;
@@ -56,6 +71,24 @@ class OpeningBalanceImportServiceTest extends TestCase
         return $b;
     }
 
+    private function groupRow(array $overrides = []): array
+    {
+        return array_merge([
+            'sheet' => 'Data Opening Balance',
+            'source_row' => 5,
+            'no_urut' => '1',
+            'tipe_klien' => 'PT',
+            'nama_klien' => 'Klien A',
+            'kode_resto' => null,
+            'nama_resto' => null,
+            'no_invoice_asal' => null,
+            'tanggal_invoice_asal' => null,
+            'sisa_tagihan_asal' => 1000000.0,
+            'deskripsi' => '',
+            'keterangan' => null,
+        ], $overrides);
+    }
+
     // ──────────────────────────────────────────────────────────────
     //  validateRowAgainstMasterData
     // ──────────────────────────────────────────────────────────────
@@ -65,12 +98,14 @@ class OpeningBalanceImportServiceTest extends TestCase
         $this->assertNull($this->service->validateRowAgainstMasterData('PT', null, []));
     }
 
-    public function test_validasi_pt_menolak_kode_resto_terisi(): void
+    /**
+     * Sejak fix multi-resto (data nyata B2B: 100% baris punya kode_resto terisi, per
+     * resto asal sebelum konsolidasi ke PT) — kode_resto untuk PT/B2B jadi opsional &
+     * freeform, TIDAK divalidasi & TIDAK memengaruhi resolusi klien.
+     */
+    public function test_validasi_pt_meloloskan_kode_resto_terisi(): void
     {
-        $error = $this->service->validateRowAgainstMasterData('PT', 'KD-001', []);
-
-        $this->assertStringContainsString('harus dikosongkan', $error);
-        $this->assertStringContainsString('PT', $error);
+        $this->assertNull($this->service->validateRowAgainstMasterData('PT', 'KD-001', []));
     }
 
     public function test_validasi_resto_wajib_kode_resto(): void
@@ -268,148 +303,6 @@ class OpeningBalanceImportServiceTest extends TestCase
     }
 
     // ──────────────────────────────────────────────────────────────
-    //  detectHeaderStart
-    // ──────────────────────────────────────────────────────────────
-
-    public function test_detect_header_start_finds_header_after_title_rows(): void
-    {
-        $spreadsheet = new Spreadsheet;
-        $sheet = $spreadsheet->getActiveSheet();
-        $sheet->setCellValue('A1', 'TEMPLATE IMPORT MASTER OPENING BALANCE');
-        $sheet->setCellValue('A2', 'Subtitle...');
-        $sheet->setCellValue('A4', 'nama_klien (*)');
-        $sheet->setCellValue('B4', 'kode_resto');
-        $sheet->setCellValue('A5', 'Nama Klien Contoh');
-        $sheet->setCellValue('B5', 'KD-001');
-
-        $detected = $this->invoke('detectHeaderStart', $sheet, 'nama_klien', 8);
-
-        $this->assertTrue($detected['found']);
-        $this->assertSame(5, $detected['dataStart']);
-    }
-
-    public function test_detect_header_start_not_found_when_header_missing(): void
-    {
-        $spreadsheet = new Spreadsheet;
-        $spreadsheet->getActiveSheet()->setCellValue('A1', 'Bukan template sama sekali');
-
-        $detected = $this->invoke('detectHeaderStart', $spreadsheet->getActiveSheet(), 'nama_klien', 8);
-
-        $this->assertFalse($detected['found']);
-    }
-
-    // ──────────────────────────────────────────────────────────────
-    //  parseCsv — 1 tabel flat dibedakan kolom tipe_baris (OB/RINCIAN/ITEM)
-    // ──────────────────────────────────────────────────────────────
-
-    private const CSV_HEADER = 'tipe_baris;no_urut;nama_klien (*);kode_resto;nama_resto;tanggal (*);saldo_awal (*);tipe_klien;no_invoice_asal (*);tanggal_invoice_asal (*);deskripsi;jumlah_tagihan_asal;sisa_tagihan_asal (*);kode_barang;nama_barang;qty;satuan;harga_satuan;subtotal;keterangan';
-
-    private function writeTempCsv(array $lines): string
-    {
-        $path = tempnam(sys_get_temp_dir(), 'ob_import_test_').'.csv';
-        file_put_contents($path, implode("\n", $lines));
-
-        return $path;
-    }
-
-    /** Susun 1 baris CSV dari kolom bernama (indeks sesuai CSV_COL_* di service) — kolom yang tidak diisi otomatis kosong. */
-    private function csvRow(array $cols): string
-    {
-        $order = ['tipe_baris', 'no_urut', 'nama_klien', 'kode_resto', 'nama_resto', 'tanggal', 'saldo_awal', 'tipe_klien', 'no_invoice_asal', 'tanggal_invoice_asal', 'deskripsi', 'jumlah_tagihan_asal', 'sisa_tagihan_asal', 'kode_barang', 'nama_barang', 'qty', 'satuan', 'harga_satuan', 'subtotal', 'keterangan'];
-
-        return implode(';', array_map(fn ($key) => $cols[$key] ?? '', $order));
-    }
-
-    public function test_parse_csv_skips_comments_examples_and_blank_rows(): void
-    {
-        $path = $this->writeTempCsv([
-            '# TEMPLATE IMPORT MASTER OPENING BALANCE (CSV)',
-            '# beberapa baris instruksi lain',
-            self::CSV_HEADER,
-            $this->csvRow(['tipe_baris' => 'OB', 'no_urut' => '1', 'tipe_klien' => 'PT', 'nama_klien' => '[CONTOH] Nama Klien Contoh', 'tanggal' => '01-01-2023', 'saldo_awal' => '15000000']),
-            ';;;;;;;;;;;;;;;;;;;',
-            $this->csvRow(['tipe_baris' => 'OB', 'no_urut' => '2', 'tipe_klien' => 'PT', 'nama_klien' => 'Klien Nyata', 'tanggal' => '15-02-2023', 'saldo_awal' => '5000000', 'keterangan' => 'Keterangan asli']),
-        ]);
-
-        try {
-            [$obRows, $detailsByOb, $errors] = $this->invoke('parseCsv', $path);
-
-            $this->assertEmpty($errors);
-            $this->assertEmpty($detailsByOb, 'Tidak ada baris RINCIAN pada file ini.');
-            $this->assertCount(1, $obRows, 'Baris [CONTOH] dan baris kosong harus dilewati.');
-
-            $row = array_values($obRows)[0];
-            $this->assertSame('PT', $row['tipe_klien']);
-            $this->assertSame('Klien Nyata', $row['nama_klien']);
-            $this->assertSame('2023-02-15', $row['tanggal']);
-            $this->assertSame(5000000.0, $row['saldo_awal']);
-            $this->assertSame('Keterangan asli', $row['keterangan']);
-        } finally {
-            @unlink($path);
-        }
-    }
-
-    public function test_parse_csv_captures_tipe_klien_dan_kode_resto(): void
-    {
-        $path = $this->writeTempCsv([
-            self::CSV_HEADER,
-            $this->csvRow(['tipe_baris' => 'OB', 'no_urut' => '1', 'tipe_klien' => 'RESTO', 'nama_klien' => 'Klien Outlet', 'kode_resto' => 'kd-001', 'nama_resto' => 'Resto Contoh', 'tanggal' => '01-03-2023', 'saldo_awal' => '1000000']),
-        ]);
-
-        try {
-            [$obRows, , $errors] = $this->invoke('parseCsv', $path);
-
-            $this->assertEmpty($errors);
-            $this->assertCount(1, $obRows);
-            $row = array_values($obRows)[0];
-            $this->assertSame('RESTO', $row['tipe_klien']);
-            $this->assertSame('kd-001', $row['kode_resto']);
-            $this->assertSame('Resto Contoh', $row['nama_resto']);
-            $this->assertSame('Klien Outlet', $row['nama_klien']);
-        } finally {
-            @unlink($path);
-        }
-    }
-
-    public function test_parse_csv_tipe_klien_invalid_reports_error(): void
-    {
-        $path = $this->writeTempCsv([
-            self::CSV_HEADER,
-            $this->csvRow(['tipe_baris' => 'OB', 'no_urut' => '1', 'tipe_klien' => 'BUKAN_VALID', 'nama_klien' => 'Klien X', 'tanggal' => '01-03-2023', 'saldo_awal' => '1000000']),
-        ]);
-
-        try {
-            [$obRows, , $errors] = $this->invoke('parseCsv', $path);
-
-            $this->assertEmpty($obRows);
-            $this->assertCount(1, $errors);
-            $this->assertStringContainsString('tipe_klien', $errors[0]['message']);
-        } finally {
-            @unlink($path);
-        }
-    }
-
-    public function test_parse_csv_tipe_klien_b2b_b2c_diterjemahkan_ke_pt_resto(): void
-    {
-        $path = $this->writeTempCsv([
-            self::CSV_HEADER,
-            $this->csvRow(['tipe_baris' => 'OB', 'no_urut' => '1', 'tipe_klien' => 'b2b', 'nama_klien' => 'Klien Konsolidasi', 'tanggal' => '01-03-2023', 'saldo_awal' => '1000000']),
-            $this->csvRow(['tipe_baris' => 'OB', 'no_urut' => '2', 'tipe_klien' => 'B2C', 'nama_klien' => 'Klien Outlet', 'kode_resto' => 'KD-002', 'tanggal' => '01-03-2023', 'saldo_awal' => '2000000']),
-        ]);
-
-        try {
-            [$obRows, , $errors] = $this->invoke('parseCsv', $path);
-
-            $this->assertEmpty($errors);
-            $this->assertCount(2, $obRows);
-            $this->assertSame('PT', $obRows['1']['tipe_klien']);
-            $this->assertSame('RESTO', $obRows['2']['tipe_klien']);
-        } finally {
-            @unlink($path);
-        }
-    }
-
-    // ──────────────────────────────────────────────────────────────
     //  normalizeTipeKlien
     // ──────────────────────────────────────────────────────────────
 
@@ -429,11 +322,488 @@ class OpeningBalanceImportServiceTest extends TestCase
         $this->assertNull($this->invoke('normalizeTipeKlien', ''));
     }
 
+    // ──────────────────────────────────────────────────────────────
+    //  detectHeaderStart
+    // ──────────────────────────────────────────────────────────────
+
+    public function test_detect_header_start_finds_header_after_title_rows(): void
+    {
+        $spreadsheet = new Spreadsheet;
+        $sheet = $spreadsheet->getActiveSheet();
+        $sheet->setCellValue('A1', 'TEMPLATE IMPORT MASTER OPENING BALANCE');
+        $sheet->setCellValue('A2', 'Subtitle...');
+        $sheet->setCellValue('A4', 'nama_klien (*)');
+        $sheet->setCellValue('B4', 'kode_resto');
+        $sheet->setCellValue('A5', 'Nama Klien Contoh');
+        $sheet->setCellValue('B5', 'KD-001');
+
+        $detected = $this->invoke('detectHeaderStart', $sheet, 'nama_klien', 10);
+
+        $this->assertTrue($detected['found']);
+        $this->assertSame(5, $detected['dataStart']);
+    }
+
+    public function test_detect_header_start_not_found_when_header_missing(): void
+    {
+        $spreadsheet = new Spreadsheet;
+        $spreadsheet->getActiveSheet()->setCellValue('A1', 'Bukan template sama sekali');
+
+        $detected = $this->invoke('detectHeaderStart', $spreadsheet->getActiveSheet(), 'nama_klien', 10);
+
+        $this->assertFalse($detected['found']);
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    //  buildDetailsForGroup — aturan agregasi 1 grup no_urut -> 1 Opening Balance
+    // ──────────────────────────────────────────────────────────────
+
+    public function test_build_details_for_group_1_baris_no_invoice_asal_kosong_jadi_lump_sum(): void
+    {
+        $rawItems = [];
+        $errors = [];
+        $result = $this->invokeRef('buildDetailsForGroup', [
+            [$this->groupRow(['sisa_tagihan_asal' => 15000000.0, 'keterangan' => 'Saldo awal'])], &$rawItems, collect(), collect(), &$errors,
+        ]);
+
+        $this->assertNotNull($result);
+        $this->assertEmpty($result['details']);
+        $this->assertSame(15000000.0, $result['saldo_awal']);
+        $this->assertSame('Saldo awal', $result['keterangan']);
+        $this->assertEmpty($errors);
+    }
+
+    public function test_build_details_for_group_multi_baris_jadi_rincian_dan_saldo_sum(): void
+    {
+        $groupRows = [
+            $this->groupRow(['source_row' => 5, 'no_invoice_asal' => 'INV-001', 'tanggal_invoice_asal' => '2023-01-15', 'sisa_tagihan_asal' => 2000000.0, 'deskripsi' => 'Invoice 1']),
+            $this->groupRow(['source_row' => 6, 'tipe_klien' => null, 'nama_klien' => null, 'no_invoice_asal' => 'INV-002', 'tanggal_invoice_asal' => '2023-02-20', 'sisa_tagihan_asal' => 1500000.0, 'deskripsi' => 'Invoice 2']),
+        ];
+        $rawItems = [];
+        $errors = [];
+        $result = $this->invokeRef('buildDetailsForGroup', [$groupRows, &$rawItems, collect(), collect(), &$errors]);
+
+        $this->assertNotNull($result);
+        $this->assertCount(2, $result['details']);
+        $this->assertSame(3500000.0, $result['saldo_awal']);
+        $this->assertSame('INV-001', $result['details'][0]['no_invoice_asal']);
+        $this->assertSame('INV-002', $result['details'][1]['no_invoice_asal']);
+        $this->assertEmpty($errors);
+    }
+
+    public function test_build_details_for_group_1_baris_dengan_no_invoice_asal_tanpa_tanggal_gagal(): void
+    {
+        $rawItems = [];
+        $errors = [];
+        $result = $this->invokeRef('buildDetailsForGroup', [
+            [$this->groupRow(['no_invoice_asal' => 'INV-001', 'tanggal_invoice_asal' => null])], &$rawItems, collect(), collect(), &$errors,
+        ]);
+
+        $this->assertNull($result);
+        $this->assertCount(1, $errors);
+        $this->assertStringContainsString('tanggal_invoice_asal', $errors[0]['message']);
+    }
+
+    public function test_build_details_for_group_baris_invalid_tidak_menggagalkan_baris_lain_dalam_grup(): void
+    {
+        $groupRows = [
+            $this->groupRow(['source_row' => 5, 'no_invoice_asal' => 'INV-001', 'tanggal_invoice_asal' => '2023-01-15', 'sisa_tagihan_asal' => 1000000.0]),
+            $this->groupRow(['source_row' => 6, 'tipe_klien' => null, 'nama_klien' => null, 'sisa_tagihan_asal' => 500000.0]), // no_invoice_asal & tanggal kosong
+        ];
+        $rawItems = [];
+        $errors = [];
+        $result = $this->invokeRef('buildDetailsForGroup', [$groupRows, &$rawItems, collect(), collect(), &$errors]);
+
+        $this->assertNotNull($result, 'Grup masih valid karena masih ada 1 baris yang lolos.');
+        $this->assertCount(1, $result['details']);
+        $this->assertSame(1000000.0, $result['saldo_awal']);
+        $this->assertCount(1, $errors);
+        $this->assertSame(6, $errors[0]['row']);
+    }
+
+    public function test_build_details_for_group_semua_baris_invalid_mengembalikan_null(): void
+    {
+        $groupRows = [
+            $this->groupRow(['source_row' => 5, 'no_invoice_asal' => 'INV-001', 'tanggal_invoice_asal' => null]),
+            $this->groupRow(['source_row' => 6, 'tipe_klien' => null, 'nama_klien' => null]),
+        ];
+        $rawItems = [];
+        $errors = [];
+        $result = $this->invokeRef('buildDetailsForGroup', [$groupRows, &$rawItems, collect(), collect(), &$errors]);
+
+        $this->assertNull($result);
+        $this->assertCount(2, $errors);
+    }
+
+    public function test_build_details_for_group_melampirkan_item_dan_menghitung_jumlah_tagihan(): void
+    {
+        $groupRows = [$this->groupRow(['no_invoice_asal' => 'INV-001', 'tanggal_invoice_asal' => '2023-01-15', 'sisa_tagihan_asal' => 1000000.0])];
+        $rawItems = [
+            '1|inv-001' => [['source_row' => 10, 'kode_barang' => 'BRG-001', 'nama_barang' => 'Barang A', 'qty' => 2.0, 'satuan' => 'pcs', 'harga_satuan' => 300000.0, 'subtotal' => 0.0, 'keterangan' => null]],
+            '2|inv-lain' => [['source_row' => 11, 'kode_barang' => null, 'nama_barang' => 'Barang Lain', 'qty' => 1.0, 'satuan' => 'pcs', 'harga_satuan' => 100000.0, 'subtotal' => 0.0, 'keterangan' => null]],
+        ];
+        $errors = [];
+        $result = $this->invokeRef('buildDetailsForGroup', [$groupRows, &$rawItems, collect(), collect(), &$errors]);
+
+        $this->assertNotNull($result);
+        $this->assertCount(1, $result['details'][0]['items']);
+        $this->assertSame(600000.0, $result['details'][0]['jumlah_tagihan_asal']); // 2 x 300000
+        $this->assertArrayNotHasKey('1|inv-001', $rawItems, 'Item yang cocok harus dikonsumsi (key dihapus).');
+        $this->assertArrayHasKey('2|inv-lain', $rawItems, 'Item milik grup lain tidak boleh ikut terkonsumsi.');
+    }
+
+    /**
+     * Regresi kunci fix multi-resto: $groupRows di sini merepresentasikan hasil GABUNGAN
+     * dari 2 no_urut ASAL berbeda (mis. no_urut=3 & no_urut=4, dua-duanya resolve ke klien
+     * PT yang sama — lihat process() pass 1 bucketing by klien_id). Tiap row tetap membawa
+     * no_urut asalnya sendiri, dipakai untuk item-key — pastikan item tidak tertukar antar
+     * baris meski sudah digabung ke 1 grup, dan kode_resto/nama_resto per baris terbawa ke
+     * detail (info asal resto, sesuai permintaan user).
+     */
+    public function test_build_details_for_group_rows_gabungan_dari_no_urut_berbeda_link_item_dengan_benar(): void
+    {
+        $groupRows = [
+            $this->groupRow(['source_row' => 5, 'no_urut' => '3', 'no_invoice_asal' => 'SI-A-001', 'tanggal_invoice_asal' => '2023-01-01', 'sisa_tagihan_asal' => 3000000.0, 'kode_resto' => 'KD-010', 'nama_resto' => 'Resto A']),
+            $this->groupRow(['source_row' => 6, 'tipe_klien' => null, 'nama_klien' => null, 'no_urut' => '4', 'no_invoice_asal' => 'SI-B-001', 'tanggal_invoice_asal' => '2023-01-05', 'sisa_tagihan_asal' => 2500000.0, 'kode_resto' => 'KD-020', 'nama_resto' => 'Resto B']),
+        ];
+        $rawItems = [
+            '3|si-a-001' => [['source_row' => 10, 'kode_barang' => 'BRG-A', 'nama_barang' => 'Barang A', 'qty' => 1.0, 'satuan' => 'pcs', 'harga_satuan' => 3000000.0, 'subtotal' => 0.0, 'keterangan' => null]],
+            '4|si-b-001' => [['source_row' => 11, 'kode_barang' => 'BRG-B', 'nama_barang' => 'Barang B', 'qty' => 1.0, 'satuan' => 'pcs', 'harga_satuan' => 2500000.0, 'subtotal' => 0.0, 'keterangan' => null]],
+        ];
+        $errors = [];
+        $result = $this->invokeRef('buildDetailsForGroup', [$groupRows, &$rawItems, collect(), collect(), &$errors]);
+
+        $this->assertNotNull($result);
+        $this->assertCount(2, $result['details']);
+        $this->assertSame(5500000.0, $result['saldo_awal']); // 3.000.000 + 2.500.000, dari 2 no_urut asal berbeda
+        $this->assertSame('KD-010', $result['details'][0]['kode_resto']);
+        $this->assertSame('Resto A', $result['details'][0]['nama_resto']);
+        $this->assertSame('KD-020', $result['details'][1]['kode_resto']);
+        $this->assertSame('Resto B', $result['details'][1]['nama_resto']);
+        $this->assertCount(1, $result['details'][0]['items'], 'Item milik no_urut=3 harus link ke rincian no_urut=3, bukan tertukar.');
+        $this->assertSame('Barang A', $result['details'][0]['items'][0]['nama_barang']);
+        $this->assertCount(1, $result['details'][1]['items']);
+        $this->assertSame('Barang B', $result['details'][1]['items'][0]['nama_barang']);
+        $this->assertEmpty($errors);
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    //  resolveKlienForOb — regresi multi-resto: no_urut per (PT+resto) tetap harus
+    //  resolve ke KLIEN yang sama supaya process() bisa menggabungkannya jadi 1 OB.
+    // ──────────────────────────────────────────────────────────────
+
+    public function test_resolve_pt_kode_resto_berbeda_tetap_resolve_ke_klien_yang_sama(): void
+    {
+        $ptNamaGroups = collect([$this->makeKlien(7, 'PT Multi Resto', 'PT')])->groupBy(fn ($k) => strtolower(trim($k->nama_klien)));
+
+        $result1 = $this->invoke('resolveKlienForOb', 'PT', 'PT Multi Resto', 'KD-010', $ptNamaGroups, collect());
+        $result2 = $this->invoke('resolveKlienForOb', 'PT', 'PT Multi Resto', 'KD-020', $ptNamaGroups, collect());
+
+        $this->assertSame(7, $result1['klien']->id);
+        $this->assertSame(7, $result2['klien']->id, 'kode_resto berbeda TIDAK boleh memengaruhi resolusi klien PT — keduanya harus resolve ke klien yang sama supaya bisa digabung.');
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    //  parseObSheet (XLSX) — 1 baris = 1 invoice historis, no_urut = kunci grup
+    // ──────────────────────────────────────────────────────────────
+
+    private function fillObSheet(Spreadsheet $spreadsheet, array $rows): void
+    {
+        $sheet = $spreadsheet->getActiveSheet();
+        $sheet->setTitle('Data Opening Balance');
+        // tipe_klien & no_urut sengaja paling kanan (setelah keterangan) — lihat OB_HEADERS.
+        $headers = ['nama_klien (*)', 'kode_resto', 'nama_resto', 'no_invoice_asal', 'tanggal_invoice_asal', 'sisa_tagihan_asal (*)', 'deskripsi', 'keterangan', 'tipe_klien (*)', 'no_urut (*)'];
+        $cols = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J'];
+        foreach ($headers as $i => $h) {
+            $sheet->setCellValue("{$cols[$i]}4", $h);
+        }
+        foreach ($rows as $r => $vals) {
+            foreach ($vals as $i => $v) {
+                $sheet->setCellValue("{$cols[$i]}".(5 + $r), $v);
+            }
+        }
+    }
+
+    public function test_parse_ob_sheet_membaca_urutan_kolom_baru(): void
+    {
+        $spreadsheet = new Spreadsheet;
+        $this->fillObSheet($spreadsheet, [
+            ['Klien Outlet', 'KD-001', 'Resto Contoh', 'INV-001', '15-01-2023', '5000000', 'Deskripsi invoice', 'Keterangan baris', 'B2C', '1'],
+        ]);
+
+        $errors = [];
+        $obRows = $this->invokeRef('parseObSheet', [$spreadsheet, &$errors]);
+
+        $this->assertEmpty($errors);
+        $this->assertCount(1, $obRows);
+        $row = $obRows['1'][0];
+        $this->assertSame('RESTO', $row['tipe_klien']);
+        $this->assertSame('Klien Outlet', $row['nama_klien']);
+        $this->assertSame('KD-001', $row['kode_resto']);
+        $this->assertSame('Resto Contoh', $row['nama_resto']);
+        $this->assertSame('INV-001', $row['no_invoice_asal']);
+        $this->assertSame('2023-01-15', $row['tanggal_invoice_asal']);
+        $this->assertSame(5000000.0, $row['sisa_tagihan_asal']);
+        $this->assertSame('Deskripsi invoice', $row['deskripsi']);
+        $this->assertSame('Keterangan baris', $row['keterangan']);
+    }
+
+    public function test_parse_ob_sheet_baris_dengan_no_urut_sama_digabung_jadi_1_grup(): void
+    {
+        $spreadsheet = new Spreadsheet;
+        $this->fillObSheet($spreadsheet, [
+            ['Klien Outlet', 'KD-001', 'Resto Contoh', 'INV-001', '15-01-2023', '2000000', '', '', 'B2C', '1'],
+            ['', '', '', 'INV-002', '20-02-2023', '1500000', '', '', '', '1'],
+        ]);
+
+        $errors = [];
+        $obRows = $this->invokeRef('parseObSheet', [$spreadsheet, &$errors]);
+
+        $this->assertEmpty($errors, 'no_urut sama TIDAK boleh dianggap error duplikat lagi.');
+        $this->assertCount(1, $obRows, 'no_urut sama harus jadi 1 grup.');
+        $this->assertCount(2, $obRows['1']);
+        $this->assertSame('Klien Outlet', $obRows['1'][0]['nama_klien']);
+        $this->assertNull($obRows['1'][1]['nama_klien'], 'Baris kedua tidak wajib isi identitas — tidak diambil/divalidasi.');
+        $this->assertSame('INV-001', $obRows['1'][0]['no_invoice_asal']);
+        $this->assertSame('INV-002', $obRows['1'][1]['no_invoice_asal']);
+        $this->assertSame('1', $obRows['1'][0]['no_urut']);
+        $this->assertSame('1', $obRows['1'][1]['no_urut']);
+    }
+
+    /**
+     * Regresi fix multi-resto: kode_resto/nama_resto TIDAK lagi dibatasi ke baris pertama
+     * saja — setiap baris B2B boleh punya kode_resto sendiri (info asal resto per invoice),
+     * tidak dibuang seperti nama_klien/tipe_klien pada baris kedua dst.
+     */
+    public function test_parse_ob_sheet_kode_resto_direkam_di_setiap_baris_bukan_cuma_pertama(): void
+    {
+        $spreadsheet = new Spreadsheet;
+        $this->fillObSheet($spreadsheet, [
+            ['PT Multi Resto', 'KD-010', 'Resto A', 'SI-A-001', '01-01-2023', '3000000', '', '', 'B2B', '3'],
+            ['', 'KD-020', 'Resto B', 'SI-B-001', '05-01-2023', '2500000', '', '', '', '3'],
+        ]);
+
+        $errors = [];
+        $obRows = $this->invokeRef('parseObSheet', [$spreadsheet, &$errors]);
+
+        $this->assertEmpty($errors);
+        $this->assertSame('KD-010', $obRows['3'][0]['kode_resto']);
+        $this->assertSame('KD-020', $obRows['3'][1]['kode_resto'], 'kode_resto baris kedua harus tetap terekam, bukan null.');
+        $this->assertSame('Resto B', $obRows['3'][1]['nama_resto']);
+    }
+
+    /**
+     * Regresi: baris kelanjutan contoh (baris ke-2 dst dari 1 grup no_urut contoh) sengaja
+     * mengosongkan nama_klien — penanda "[CONTOH]" cuma ada di kolom deskripsi. Baris ini
+     * HARUS tetap diabaikan (bukan diproses sebagai data sungguhan dengan tipe_klien kosong,
+     * yang akan memicu error palsu kalau user membiarkan baris contoh di file).
+     */
+    public function test_parse_ob_sheet_baris_kelanjutan_contoh_diabaikan_via_deskripsi(): void
+    {
+        $spreadsheet = new Spreadsheet;
+        $this->fillObSheet($spreadsheet, [
+            ['[CONTOH] Nama Klien Outlet', 'KD-001', 'Nama Resto Contoh', 'INV-LAMA-001', '15-01-2022', '9000000', '[CONTOH] Tagihan pengiriman Januari 2022', '', 'B2C', '2'],
+            ['', '', '', 'INV-LAMA-002', '20-02-2022', '6000000', '[CONTOH] Tagihan pengiriman Februari 2022', '', '', '2'],
+        ]);
+
+        $errors = [];
+        $obRows = $this->invokeRef('parseObSheet', [$spreadsheet, &$errors]);
+
+        $this->assertEmpty($errors, 'Baris kelanjutan contoh tidak boleh menghasilkan error palsu.');
+        $this->assertEmpty($obRows, 'Kedua baris contoh (baris pertama & kelanjutannya) harus diabaikan.');
+    }
+
+    public function test_parse_ob_sheet_sisa_tagihan_asal_wajib_lebih_dari_nol(): void
+    {
+        $spreadsheet = new Spreadsheet;
+        $this->fillObSheet($spreadsheet, [
+            ['Klien A', '', '', '', '', '0', '', '', 'B2B', '1'],
+        ]);
+
+        $errors = [];
+        $obRows = $this->invokeRef('parseObSheet', [$spreadsheet, &$errors]);
+
+        $this->assertEmpty($obRows);
+        $this->assertCount(1, $errors);
+        $this->assertStringContainsString('sisa_tagihan_asal', $errors[0]['message']);
+    }
+
+    public function test_parse_ob_sheet_header_format_lama_tipe_klien_di_kolom_d_ditolak_jelas(): void
+    {
+        // Format sebelum tipe_klien/no_urut dipindah ke paling kanan: tipe_klien masih di
+        // kolom D (bukan I). Kolom A tetap "nama_klien" di semua versi, jadi ini menguji
+        // guard tambahan di parseObSheet() yang secara eksplisit memverifikasi kolom I —
+        // bukan cuma cek header nama_klien.
+        $spreadsheet = new Spreadsheet;
+        $sheet = $spreadsheet->getActiveSheet();
+        $sheet->setTitle('Data Opening Balance');
+        $oldHeaders = ['nama_klien (*)', 'kode_resto', 'nama_resto', 'tipe_klien (*)', 'no_urut (*)', 'no_invoice_asal', 'tanggal_invoice_asal', 'sisa_tagihan_asal (*)', 'deskripsi', 'keterangan'];
+        $cols = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J'];
+        foreach ($oldHeaders as $i => $h) {
+            $sheet->setCellValue("{$cols[$i]}4", $h);
+        }
+        $sheet->setCellValue('A5', 'Klien Lama');
+        $sheet->setCellValue('D5', 'PT');
+        $sheet->setCellValue('E5', '1');
+        $sheet->setCellValue('H5', '1000000');
+
+        $errors = [];
+        $obRows = $this->invokeRef('parseObSheet', [$spreadsheet, &$errors]);
+
+        $this->assertEmpty($obRows, 'Tidak boleh mencoba parse baris data dari file format lama.');
+        $this->assertCount(1, $errors, 'Harus 1 error jelas, bukan error per-baris yang membingungkan.');
+        $this->assertStringContainsString('Download ulang Template XLSX', $errors[0]['message']);
+    }
+
+    public function test_parse_ob_sheet_baris_pertama_grup_wajib_tipe_klien_valid(): void
+    {
+        $spreadsheet = new Spreadsheet;
+        $this->fillObSheet($spreadsheet, [
+            ['Klien A', '', '', '', '', '1000000', '', '', 'BUKAN_VALID', '1'],
+        ]);
+
+        $errors = [];
+        $obRows = $this->invokeRef('parseObSheet', [$spreadsheet, &$errors]);
+
+        $this->assertEmpty($obRows);
+        $this->assertCount(1, $errors);
+        $this->assertStringContainsString('tipe_klien', $errors[0]['message']);
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    //  parseCsv — 1 tabel flat dibedakan kolom tipe_baris (OB/ITEM)
+    // ──────────────────────────────────────────────────────────────
+
+    private const CSV_HEADER = 'tipe_baris;no_urut;nama_klien;kode_resto;nama_resto;tipe_klien;no_invoice_asal;tanggal_invoice_asal;sisa_tagihan_asal (*);deskripsi;keterangan;kode_barang;nama_barang;qty;satuan;harga_satuan;subtotal';
+
+    private function writeTempCsv(array $lines): string
+    {
+        $path = tempnam(sys_get_temp_dir(), 'ob_import_test_').'.csv';
+        file_put_contents($path, implode("\n", $lines));
+
+        return $path;
+    }
+
+    /** Susun 1 baris CSV dari kolom bernama (indeks sesuai CSV_COL_* di service) — kolom yang tidak diisi otomatis kosong. */
+    private function csvRow(array $cols): string
+    {
+        $order = ['tipe_baris', 'no_urut', 'nama_klien', 'kode_resto', 'nama_resto', 'tipe_klien', 'no_invoice_asal', 'tanggal_invoice_asal', 'sisa_tagihan_asal', 'deskripsi', 'keterangan', 'kode_barang', 'nama_barang', 'qty', 'satuan', 'harga_satuan', 'subtotal'];
+
+        return implode(';', array_map(fn ($key) => $cols[$key] ?? '', $order));
+    }
+
+    public function test_parse_csv_skips_comments_examples_and_blank_rows(): void
+    {
+        $path = $this->writeTempCsv([
+            '# TEMPLATE IMPORT MASTER OPENING BALANCE (CSV)',
+            '# beberapa baris instruksi lain',
+            self::CSV_HEADER,
+            $this->csvRow(['tipe_baris' => 'OB', 'no_urut' => '1', 'tipe_klien' => 'PT', 'nama_klien' => '[CONTOH] Nama Klien Contoh', 'sisa_tagihan_asal' => '15000000']),
+            str_repeat(';', 16),
+            $this->csvRow(['tipe_baris' => 'OB', 'no_urut' => '2', 'tipe_klien' => 'PT', 'nama_klien' => 'Klien Nyata', 'sisa_tagihan_asal' => '5000000', 'keterangan' => 'Keterangan asli']),
+        ]);
+
+        try {
+            [$obRows, $rawItems, $errors] = $this->invoke('parseCsv', $path);
+
+            $this->assertEmpty($errors);
+            $this->assertEmpty($rawItems);
+            $this->assertCount(1, $obRows, 'Baris [CONTOH] dan baris kosong harus dilewati.');
+
+            $group = array_values($obRows)[0];
+            $this->assertCount(1, $group);
+            $row = $group[0];
+            $this->assertSame('PT', $row['tipe_klien']);
+            $this->assertSame('Klien Nyata', $row['nama_klien']);
+            $this->assertSame(5000000.0, $row['sisa_tagihan_asal']);
+            $this->assertSame('Keterangan asli', $row['keterangan']);
+        } finally {
+            @unlink($path);
+        }
+    }
+
+    public function test_parse_csv_captures_tipe_klien_dan_kode_resto(): void
+    {
+        $path = $this->writeTempCsv([
+            self::CSV_HEADER,
+            $this->csvRow(['tipe_baris' => 'OB', 'no_urut' => '1', 'tipe_klien' => 'RESTO', 'nama_klien' => 'Klien Outlet', 'kode_resto' => 'kd-001', 'nama_resto' => 'Resto Contoh', 'sisa_tagihan_asal' => '1000000']),
+        ]);
+
+        try {
+            [$obRows, , $errors] = $this->invoke('parseCsv', $path);
+
+            $this->assertEmpty($errors);
+            $this->assertCount(1, $obRows);
+            $row = array_values($obRows)[0][0];
+            $this->assertSame('RESTO', $row['tipe_klien']);
+            $this->assertSame('kd-001', $row['kode_resto']);
+            $this->assertSame('Resto Contoh', $row['nama_resto']);
+            $this->assertSame('Klien Outlet', $row['nama_klien']);
+        } finally {
+            @unlink($path);
+        }
+    }
+
+    public function test_parse_csv_baris_kelanjutan_contoh_diabaikan_via_deskripsi(): void
+    {
+        $path = $this->writeTempCsv([
+            self::CSV_HEADER,
+            $this->csvRow(['tipe_baris' => 'OB', 'no_urut' => '2', 'tipe_klien' => 'B2C', 'nama_klien' => '[CONTOH] Nama Klien Outlet', 'kode_resto' => 'KD-001', 'no_invoice_asal' => 'INV-LAMA-001', 'tanggal_invoice_asal' => '15-01-2022', 'sisa_tagihan_asal' => '9000000', 'deskripsi' => '[CONTOH] Tagihan pengiriman Januari 2022']),
+            $this->csvRow(['tipe_baris' => 'OB', 'no_urut' => '2', 'no_invoice_asal' => 'INV-LAMA-002', 'tanggal_invoice_asal' => '20-02-2022', 'sisa_tagihan_asal' => '6000000', 'deskripsi' => '[CONTOH] Tagihan pengiriman Februari 2022']),
+        ]);
+
+        try {
+            [$obRows, , $errors] = $this->invoke('parseCsv', $path);
+
+            $this->assertEmpty($errors, 'Baris kelanjutan contoh tidak boleh menghasilkan error palsu.');
+            $this->assertEmpty($obRows, 'Kedua baris contoh (baris pertama & kelanjutannya) harus diabaikan.');
+        } finally {
+            @unlink($path);
+        }
+    }
+
+    public function test_parse_csv_tipe_klien_invalid_reports_error(): void
+    {
+        $path = $this->writeTempCsv([
+            self::CSV_HEADER,
+            $this->csvRow(['tipe_baris' => 'OB', 'no_urut' => '1', 'tipe_klien' => 'BUKAN_VALID', 'nama_klien' => 'Klien X', 'sisa_tagihan_asal' => '1000000']),
+        ]);
+
+        try {
+            [$obRows, , $errors] = $this->invoke('parseCsv', $path);
+
+            $this->assertEmpty($obRows);
+            $this->assertCount(1, $errors);
+            $this->assertStringContainsString('tipe_klien', $errors[0]['message']);
+        } finally {
+            @unlink($path);
+        }
+    }
+
+    public function test_parse_csv_tipe_klien_b2b_b2c_diterjemahkan_ke_pt_resto(): void
+    {
+        $path = $this->writeTempCsv([
+            self::CSV_HEADER,
+            $this->csvRow(['tipe_baris' => 'OB', 'no_urut' => '1', 'tipe_klien' => 'b2b', 'nama_klien' => 'Klien Konsolidasi', 'sisa_tagihan_asal' => '1000000']),
+            $this->csvRow(['tipe_baris' => 'OB', 'no_urut' => '2', 'tipe_klien' => 'B2C', 'nama_klien' => 'Klien Outlet', 'kode_resto' => 'KD-002', 'sisa_tagihan_asal' => '2000000']),
+        ]);
+
+        try {
+            [$obRows, , $errors] = $this->invoke('parseCsv', $path);
+
+            $this->assertEmpty($errors);
+            $this->assertCount(2, $obRows);
+            $this->assertSame('PT', $obRows['1'][0]['tipe_klien']);
+            $this->assertSame('RESTO', $obRows['2'][0]['tipe_klien']);
+        } finally {
+            @unlink($path);
+        }
+    }
+
     public function test_parse_csv_missing_nama_klien_reports_error(): void
     {
         $path = $this->writeTempCsv([
             self::CSV_HEADER,
-            $this->csvRow(['tipe_baris' => 'OB', 'no_urut' => '1', 'tipe_klien' => 'PT', 'tanggal' => '01-03-2023', 'saldo_awal' => '1000000']),
+            $this->csvRow(['tipe_baris' => 'OB', 'no_urut' => '1', 'tipe_klien' => 'PT', 'sisa_tagihan_asal' => '1000000']),
         ]);
 
         try {
@@ -447,32 +817,74 @@ class OpeningBalanceImportServiceTest extends TestCase
         }
     }
 
-    public function test_parse_csv_header_lama_tanpa_tipe_klien_ditolak_jelas(): void
+    public function test_parse_csv_sisa_tagihan_asal_wajib_lebih_dari_nol(): void
     {
-        // Format ancient (pre kode_resto) — kode_klien, tanpa tipe_klien sama sekali.
-        $ancientHeader = 'tipe_baris;no_urut;kode_klien;nama_klien (*);tanggal (*);saldo_awal (*);no_invoice_asal (*);tanggal_invoice_asal (*);deskripsi;jumlah_tagihan_asal;sisa_tagihan_asal (*);kode_barang;nama_barang;qty;satuan;harga_satuan;subtotal;keterangan';
         $path = $this->writeTempCsv([
-            $ancientHeader,
-            'OB;1;KLI-001;Nama Klien Contoh;01-01-2023;15000000;;;;;;;;;;;;',
+            self::CSV_HEADER,
+            $this->csvRow(['tipe_baris' => 'OB', 'no_urut' => '1', 'tipe_klien' => 'PT', 'nama_klien' => 'Klien A', 'sisa_tagihan_asal' => '0']),
         ]);
 
         try {
-            $this->expectException(\RuntimeException::class);
-            $this->expectExceptionMessage('Download ulang Template CSV');
-            $this->invoke('parseCsv', $path);
+            [$obRows, , $errors] = $this->invoke('parseCsv', $path);
+
+            $this->assertEmpty($obRows);
+            $this->assertCount(1, $errors);
+            $this->assertStringContainsString('sisa_tagihan_asal', $errors[0]['message']);
         } finally {
             @unlink($path);
         }
     }
 
-    public function test_parse_csv_header_sesi_sebelumnya_tipe_klien_di_indeks_lama_ditolak_jelas(): void
+    public function test_parse_csv_baris_ob_dengan_no_urut_sama_digabung_jadi_1_grup(): void
     {
-        // Format dari refactor sesi sebelumnya — tipe_klien ada tapi di indeks 2 (sebelum
-        // direorder ke indeks 7 setelah saldo_awal).
-        $prevHeader = 'tipe_baris;no_urut;tipe_klien;nama_klien (*);kode_resto;nama_resto;tanggal (*);saldo_awal (*);no_invoice_asal (*);tanggal_invoice_asal (*);deskripsi;jumlah_tagihan_asal;sisa_tagihan_asal (*);kode_barang;nama_barang;qty;satuan;harga_satuan;subtotal;keterangan';
         $path = $this->writeTempCsv([
-            $prevHeader,
-            'OB;1;RESTO;Nama Klien Contoh;KD-001;Resto Contoh;01-01-2023;15000000;;;;;;;;;;;;',
+            self::CSV_HEADER,
+            $this->csvRow(['tipe_baris' => 'OB', 'no_urut' => '1', 'tipe_klien' => 'RESTO', 'nama_klien' => 'Klien Outlet', 'kode_resto' => 'KD-001', 'no_invoice_asal' => 'INV-001', 'tanggal_invoice_asal' => '15-01-2023', 'sisa_tagihan_asal' => '2000000']),
+            $this->csvRow(['tipe_baris' => 'OB', 'no_urut' => '1', 'no_invoice_asal' => 'INV-002', 'tanggal_invoice_asal' => '20-02-2023', 'sisa_tagihan_asal' => '1500000']),
+        ]);
+
+        try {
+            [$obRows, , $errors] = $this->invoke('parseCsv', $path);
+
+            $this->assertEmpty($errors, 'no_urut sama TIDAK boleh dianggap error duplikat lagi.');
+            $this->assertCount(1, $obRows);
+            $this->assertCount(2, $obRows['1']);
+            $this->assertSame('Klien Outlet', $obRows['1'][0]['nama_klien']);
+            $this->assertNull($obRows['1'][1]['nama_klien'], 'Baris kedua tidak wajib isi identitas.');
+            $this->assertSame('1', $obRows['1'][0]['no_urut']);
+        } finally {
+            @unlink($path);
+        }
+    }
+
+    public function test_parse_csv_kode_resto_direkam_di_setiap_baris_bukan_cuma_pertama(): void
+    {
+        $path = $this->writeTempCsv([
+            self::CSV_HEADER,
+            $this->csvRow(['tipe_baris' => 'OB', 'no_urut' => '3', 'tipe_klien' => 'B2B', 'nama_klien' => 'PT Multi Resto', 'kode_resto' => 'KD-010', 'nama_resto' => 'Resto A', 'no_invoice_asal' => 'SI-A-001', 'tanggal_invoice_asal' => '01-01-2023', 'sisa_tagihan_asal' => '3000000']),
+            $this->csvRow(['tipe_baris' => 'OB', 'no_urut' => '3', 'kode_resto' => 'KD-020', 'nama_resto' => 'Resto B', 'no_invoice_asal' => 'SI-B-001', 'tanggal_invoice_asal' => '05-01-2023', 'sisa_tagihan_asal' => '2500000']),
+        ]);
+
+        try {
+            [$obRows, , $errors] = $this->invoke('parseCsv', $path);
+
+            $this->assertEmpty($errors);
+            $this->assertSame('KD-010', $obRows['3'][0]['kode_resto']);
+            $this->assertSame('KD-020', $obRows['3'][1]['kode_resto'], 'kode_resto baris kedua harus tetap terekam, bukan null.');
+            $this->assertSame('Resto B', $obRows['3'][1]['nama_resto']);
+        } finally {
+            @unlink($path);
+        }
+    }
+
+    public function test_parse_csv_header_format_lama_ditolak_jelas(): void
+    {
+        // Format sesi sebelumnya: tipe_baris, no_urut, nama_klien, kode_resto, nama_resto,
+        // tanggal, saldo_awal, tipe_klien (indeks 7) — tipe_klien TIDAK lagi di indeks 5.
+        $oldHeader = 'tipe_baris;no_urut;nama_klien (*);kode_resto;nama_resto;tanggal (*);saldo_awal (*);tipe_klien;no_invoice_asal (*);tanggal_invoice_asal (*);deskripsi;jumlah_tagihan_asal;sisa_tagihan_asal (*);kode_barang;nama_barang;qty;satuan;harga_satuan;subtotal;keterangan';
+        $path = $this->writeTempCsv([
+            $oldHeader,
+            'OB;1;Nama Klien Contoh;;;01-01-2023;15000000;PT;;;;;;;;;;;;',
         ]);
 
         try {
@@ -501,32 +913,21 @@ class OpeningBalanceImportServiceTest extends TestCase
         }
     }
 
-    public function test_parse_csv_rincian_and_item_rows_linked_to_ob_via_no_urut(): void
+    public function test_parse_csv_item_row_masuk_ke_raw_items_keyed_by_no_urut_dan_no_invoice_asal(): void
     {
         $path = $this->writeTempCsv([
             self::CSV_HEADER,
-            $this->csvRow(['tipe_baris' => 'OB', 'no_urut' => '1', 'tipe_klien' => 'PT', 'nama_klien' => 'Klien Rincian', 'tanggal' => '01-01-2023', 'saldo_awal' => '2000000']),
-            $this->csvRow(['tipe_baris' => 'RINCIAN', 'no_urut' => '1', 'no_invoice_asal' => 'INV-ASAL-001', 'tanggal_invoice_asal' => '15-01-2022', 'deskripsi' => 'Tagihan lama', 'sisa_tagihan_asal' => '2000000']),
             $this->csvRow(['tipe_baris' => 'ITEM', 'no_urut' => '1', 'no_invoice_asal' => 'INV-ASAL-001', 'kode_barang' => 'BRG-001', 'nama_barang' => 'Barang Contoh', 'qty' => '4', 'satuan' => 'pcs', 'harga_satuan' => '500000']),
         ]);
 
         try {
-            [$obRows, $detailsByOb, $errors] = $this->invoke('parseCsv', $path);
+            [$obRows, $rawItems, $errors] = $this->invoke('parseCsv', $path);
 
             $this->assertEmpty($errors);
-            $this->assertCount(1, $obRows);
-            $this->assertArrayHasKey('1', $detailsByOb);
-            $this->assertCount(1, $detailsByOb['1']);
-
-            $detail = $detailsByOb['1'][0];
-            $this->assertSame('INV-ASAL-001', $detail['no_invoice_asal']);
-            $this->assertSame('2022-01-15', $detail['tanggal_invoice_asal']);
-            $this->assertSame(2000000.0, $detail['sisa_tagihan_asal']);
-            $this->assertCount(1, $detail['items']);
-
-            $item = $detail['items'][0];
+            $this->assertEmpty($obRows);
+            $this->assertArrayHasKey('1|inv-asal-001', $rawItems);
+            $item = $rawItems['1|inv-asal-001'][0];
             $this->assertSame('BRG-001', $item['kode_barang']);
-            $this->assertSame('Barang Contoh', $item['nama_barang']);
             $this->assertSame(4.0, $item['qty']);
             $this->assertSame(500000.0, $item['harga_satuan']);
         } finally {
@@ -534,134 +935,21 @@ class OpeningBalanceImportServiceTest extends TestCase
         }
     }
 
-    public function test_parse_csv_orphan_rincian_row_reports_error(): void
+    public function test_parse_csv_item_missing_no_urut_or_no_invoice_asal_reports_error(): void
     {
         $path = $this->writeTempCsv([
             self::CSV_HEADER,
-            // no_urut=99 tidak cocok baris OB manapun
-            $this->csvRow(['tipe_baris' => 'RINCIAN', 'no_urut' => '99', 'no_invoice_asal' => 'INV-X', 'tanggal_invoice_asal' => '01-01-2022', 'deskripsi' => 'Tagihan yatim', 'sisa_tagihan_asal' => '1000000']),
+            $this->csvRow(['tipe_baris' => 'ITEM', 'no_urut' => '', 'no_invoice_asal' => '', 'nama_barang' => 'Barang X']),
         ]);
 
         try {
-            [$obRows, $detailsByOb, $errors] = $this->invoke('parseCsv', $path);
+            [, , $errors] = $this->invoke('parseCsv', $path);
 
-            $this->assertEmpty($obRows);
-            $this->assertEmpty($detailsByOb, 'Detail orphan harus dibuang, bukan ikut dikembalikan.');
             $this->assertCount(1, $errors);
-            $this->assertStringContainsString('99', $errors[0]['message']);
+            $this->assertStringContainsString('no_urut dan no_invoice_asal wajib diisi', $errors[0]['message']);
         } finally {
             @unlink($path);
         }
-    }
-
-    public function test_parse_csv_orphan_item_row_reports_error(): void
-    {
-        $path = $this->writeTempCsv([
-            self::CSV_HEADER,
-            $this->csvRow(['tipe_baris' => 'OB', 'no_urut' => '1', 'tipe_klien' => 'PT', 'nama_klien' => 'Klien Item Yatim', 'tanggal' => '01-01-2023', 'saldo_awal' => '1000000']),
-            $this->csvRow(['tipe_baris' => 'RINCIAN', 'no_urut' => '1', 'no_invoice_asal' => 'INV-ASAL-001', 'tanggal_invoice_asal' => '01-01-2022', 'deskripsi' => 'Tagihan', 'sisa_tagihan_asal' => '1000000']),
-            // no_invoice_asal berbeda dari baris RINCIAN di atas — tidak match
-            $this->csvRow(['tipe_baris' => 'ITEM', 'no_urut' => '1', 'no_invoice_asal' => 'INV-BEDA', 'nama_barang' => 'Barang Yatim', 'qty' => '1', 'harga_satuan' => '1000000']),
-        ]);
-
-        try {
-            [$obRows, $detailsByOb, $errors] = $this->invoke('parseCsv', $path);
-
-            $this->assertCount(1, $obRows);
-            $this->assertCount(1, $errors);
-            $this->assertStringContainsString('Rincian Invoice Asal', $errors[0]['message']);
-            $this->assertEmpty($detailsByOb['1'][0]['items'], 'Item yatim tidak boleh nyasar ke detail yang ada.');
-        } finally {
-            @unlink($path);
-        }
-    }
-
-    // ──────────────────────────────────────────────────────────────
-    //  parseObSheet (XLSX) — urutan kolom baru: nama_klien, kode_resto, nama_resto,
-    //  tanggal, saldo_awal, keterangan, tipe_klien, no_urut
-    // ──────────────────────────────────────────────────────────────
-
-    public function test_parse_ob_sheet_membaca_urutan_kolom_baru(): void
-    {
-        $spreadsheet = new Spreadsheet;
-        $sheet = $spreadsheet->getActiveSheet();
-        $sheet->setTitle('Data Opening Balance');
-        $sheet->setCellValue('A4', 'nama_klien (*)');
-        $sheet->setCellValue('B4', 'kode_resto');
-        $sheet->setCellValue('C4', 'nama_resto');
-        $sheet->setCellValue('D4', 'tanggal (*)');
-        $sheet->setCellValue('E4', 'saldo_awal (*)');
-        $sheet->setCellValue('F4', 'keterangan');
-        $sheet->setCellValue('G4', 'tipe_klien (*)');
-        $sheet->setCellValue('H4', 'no_urut (*)');
-
-        $sheet->setCellValue('A5', 'Klien Outlet');
-        $sheet->setCellValue('B5', 'KD-001');
-        $sheet->setCellValue('C5', 'Resto Contoh');
-        $sheet->setCellValue('D5', '01-01-2023');
-        $sheet->setCellValue('E5', '5000000');
-        $sheet->setCellValue('F5', 'Keterangan baris');
-        $sheet->setCellValue('G5', 'B2C');
-        $sheet->setCellValue('H5', '1');
-
-        $m = $this->ref->getMethod('parseObSheet');
-        $m->setAccessible(true);
-        $errors = [];
-        $obRows = $m->invokeArgs($this->service, [$spreadsheet, &$errors]);
-
-        $this->assertEmpty($errors);
-        $this->assertCount(1, $obRows);
-        $row = $obRows['1'];
-        $this->assertSame('RESTO', $row['tipe_klien']);
-        $this->assertSame('Klien Outlet', $row['nama_klien']);
-        $this->assertSame('KD-001', $row['kode_resto']);
-        $this->assertSame('Resto Contoh', $row['nama_resto']);
-        $this->assertSame('2023-01-01', $row['tanggal']);
-        $this->assertSame(5000000.0, $row['saldo_awal']);
-        $this->assertSame('Keterangan baris', $row['keterangan']);
-    }
-
-    // ──────────────────────────────────────────────────────────────
-    //  linkDetailsAndItems — logic bersama antara parseCsv() & parseXlsx()
-    // ──────────────────────────────────────────────────────────────
-
-    public function test_link_details_and_items_attaches_matching_items(): void
-    {
-        $obRows = ['1' => ['nama_klien' => 'Klien A']];
-        $rawDetails = ['1' => [['source_row' => 2, 'no_invoice_asal' => 'INV-001', 'sisa_tagihan_asal' => 100.0]]];
-        $rawItems = ['1|inv-001' => [['source_row' => 3, 'nama_barang' => 'Barang A']]];
-
-        $result = $this->invoke('linkDetailsAndItems', $obRows, $rawDetails, $rawItems);
-
-        $this->assertEmpty($result['errors']);
-        $this->assertCount(1, $result['detailsByOb']['1'][0]['items']);
-        $this->assertSame('Barang A', $result['detailsByOb']['1'][0]['items'][0]['nama_barang']);
-    }
-
-    public function test_link_details_and_items_detects_orphan_item(): void
-    {
-        $obRows = ['1' => ['nama_klien' => 'Klien A']];
-        $rawDetails = ['1' => [['source_row' => 2, 'no_invoice_asal' => 'INV-001', 'sisa_tagihan_asal' => 100.0]]];
-        $rawItems = ['1|inv-lain' => [['source_row' => 3, 'nama_barang' => 'Barang Yatim']]];
-
-        $result = $this->invoke('linkDetailsAndItems', $obRows, $rawDetails, $rawItems);
-
-        $this->assertEmpty($result['detailsByOb']['1'][0]['items']);
-        $this->assertCount(1, $result['errors']);
-        $this->assertSame('Item Invoice Asal', $result['errors'][0]['sheet']);
-    }
-
-    public function test_link_details_and_items_detects_orphan_detail(): void
-    {
-        $obRows = []; // tidak ada OB dengan no_urut '1'
-        $rawDetails = ['1' => [['source_row' => 2, 'no_invoice_asal' => 'INV-001', 'sisa_tagihan_asal' => 100.0]]];
-        $rawItems = [];
-
-        $result = $this->invoke('linkDetailsAndItems', $obRows, $rawDetails, $rawItems);
-
-        $this->assertArrayNotHasKey('1', $result['detailsByOb'], 'Detail orphan harus dibuang dari hasil.');
-        $this->assertCount(1, $result['errors']);
-        $this->assertSame('Rincian Invoice Asal', $result['errors'][0]['sheet']);
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -677,7 +965,7 @@ class OpeningBalanceImportServiceTest extends TestCase
         foreach ($codes as $code) {
             $row = ['Klien A', '', $code, '', '', '', '', ''];
 
-            $message = $this->invoke('detectFormulaError', $row, 'Rincian Invoice Asal', 12);
+            $message = $this->invoke('detectFormulaError', $row, 'Data Opening Balance', 12);
 
             $this->assertNotNull($message, "Kode error {$code} harus terdeteksi.");
             $this->assertStringContainsString('Baris 12', $message);
@@ -687,9 +975,9 @@ class OpeningBalanceImportServiceTest extends TestCase
 
     public function test_detect_formula_error_null_untuk_baris_normal(): void
     {
-        $row = ['Klien A', 'RESTO01', '01-06-2026', 'Deskripsi', '100000', '50000', 'Keterangan'];
+        $row = ['Klien A', 'RESTO01', 'RESTO01', 'B2C', '1', 'INV-001', '01-06-2026', '100000', 'Deskripsi', 'Keterangan'];
 
-        $this->assertNull($this->invoke('detectFormulaError', $row, 'Rincian Invoice Asal', 12));
+        $this->assertNull($this->invoke('detectFormulaError', $row, 'Data Opening Balance', 12));
     }
 
     public function test_detect_formula_error_menyertakan_nama_sheet_yang_benar_untuk_multi_sheet(): void
@@ -698,7 +986,7 @@ class OpeningBalanceImportServiceTest extends TestCase
 
         $message = $this->invoke('detectFormulaError', $row, 'Item Invoice Asal', 8);
 
-        $this->assertStringContainsString("sheet 'Item Invoice Asal'", $message, 'Pesan harus menyebut nama sheet yang benar supaya baris 8 tidak ambigu antar 3 sheet OB.');
+        $this->assertStringContainsString("sheet 'Item Invoice Asal'", $message, 'Pesan harus menyebut nama sheet yang benar supaya baris 8 tidak ambigu antar sheet.');
     }
 
     public function test_detect_formula_error_melaporkan_huruf_kolom_yang_akurat(): void

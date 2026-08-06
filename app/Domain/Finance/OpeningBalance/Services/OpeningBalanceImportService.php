@@ -20,24 +20,35 @@ use Throwable;
  * Memproses import Opening Balance AR dari file CSV/XLSX yang diupload lewat tab
  * "Import Master Opening Balance" (halaman Import Master Data).
  *
- * Kedua format sama-sama mendukung Rincian Invoice Asal & Item Invoice Asal secara
- * OPSIONAL (boleh dikosongkan sepenuhnya untuk OB yang hanya berupa saldo agregat):
- *   - XLSX: 3 sheet terpisah (Data Opening Balance + Rincian Invoice Asal + Item
- *     Invoice Asal), kapasitas realistis lebih kecil karena styling & 3 sheet data.
- *   - CSV: 1 tabel flat dengan kolom penanda `tipe_baris` (OB/RINCIAN/ITEM) — setiap
- *     baris "berperan" sebagai salah satu dari 3 entitas, memakai subset kolom header
- *     gabungan yang relevan (lihat OpeningBalanceImportTemplateService). Mendukung
- *     volume jauh lebih besar dari XLSX, cocok untuk backfill data historis (mis. s/d
- *     3 tahun ke belakang), baik dengan maupun tanpa rincian.
+ * Desain FLAT & AUTO-GROUP (meniru pola Import Master Invoice) — 1 baris = 1 invoice
+ * historis. `no_urut` adalah KUNCI GRUP (boleh berulang di banyak baris untuk klien yang
+ * sama, TIDAK unik per baris): semua baris dengan `no_urut` sama digabung jadi 1 Opening
+ * Balance. Identitas klien (nama_klien/kode_resto/nama_resto/tipe_klien) hanya diambil
+ * dari baris PERTAMA tiap grup — baris berikutnya boleh mengosongkan/mengulang kolom itu,
+ * tidak divalidasi silang (tahan typo, lihat buildDetailsForGroup()).
  *
- * Kedua jalur parsing menghasilkan struktur data identik ($obRows + $detailsByOb
- * bersarang) lewat linkDetailsAndItems() bersama, supaya logic linking/orphan-
- * detection tidak dobel dan hasil akhirnya konsisten apa pun format filenya.
+ * Aturan agregasi per grup (didorong oleh constraint DB tb_opening_balance_detail:
+ * no_invoice_asal & tanggal_invoice_asal NOT NULL):
+ *   - 1 baris & no_invoice_asal kosong -> lump sum TANPA rincian (details=[]), perilaku
+ *     lama dipertahankan persis untuk backfill saldo agregat.
+ *   - selain itu (>1 baris, atau 1 baris dengan no_invoice_asal terisi) -> setiap baris
+ *     WAJIB no_invoice_asal + tanggal_invoice_asal, masing-masing jadi 1 detail record.
+ *     Baris yang gagal syarat itu dilaporkan sbg error baris (bukan menggagalkan grup).
  *
- * Partial-write (BEDA dari desain lama yang all-or-nothing): setiap baris OB
- * memanggil InvoiceService::createOpeningBalance() satu per satu — method itu
- * membungkus transaksinya sendiri, jadi baris yang gagal dicatat sebagai error dan
- * dilewati, baris lain tetap diproses.
+ * Tanggal header OB (tanggal_invoice) TIDAK lagi dibaca dari file — diambil dari
+ * `$batch->cutover_date` (diisi user 1x di form upload, seragam untuk seluruh batch).
+ * Rasional: baris-baris dalam 1 grup punya tanggal_invoice_asal yang bisa berbeda jauh
+ * (lintas tahun), jadi tidak representatif dipakai sebagai "tanggal saldo dicatat".
+ *
+ * Kedua jalur parsing (parseCsv/parseXlsx) menghasilkan struktur identik
+ * ($obRows keyed by no_urut -> list baris, $rawItems keyed by "no_urut|lower(no_invoice_asal)")
+ * supaya logic agregasi (buildDetailsForGroup) tidak dobel dan hasil akhirnya konsisten
+ * apa pun format filenya.
+ *
+ * Partial-write (BEDA dari desain lama yang all-or-nothing): setiap grup OB memanggil
+ * InvoiceService::createOpeningBalance() satu per satu — method itu membungkus
+ * transaksinya sendiri, jadi grup yang gagal dicatat sebagai error dan dilewati, grup
+ * lain tetap diproses.
  */
 class OpeningBalanceImportService
 {
@@ -64,8 +75,6 @@ class OpeningBalanceImportService
 
     private const CSV_TIPE_OB = 'OB';
 
-    private const CSV_TIPE_RINCIAN = 'RINCIAN';
-
     private const CSV_TIPE_ITEM = 'ITEM';
 
     public function __construct(private readonly InvoiceService $invoiceService) {}
@@ -77,13 +86,16 @@ class OpeningBalanceImportService
             throw new \RuntimeException("File import tidak ditemukan: {$batch->file_path}");
         }
 
+        abort_if(! $batch->cutover_date, 422, 'Batch import tidak memiliki tanggal cutover.');
+        $cutoverDate = $batch->cutover_date->format('Y-m-d');
+
         $batch->update(['status' => 'processing']);
 
         $filePath = $disk->path($batch->file_path);
         $ext = strtolower(pathinfo($batch->original_filename ?: $batch->file_path, PATHINFO_EXTENSION));
         $isCsv = ! in_array($ext, ['xlsx', 'xls'], true);
 
-        [$obRows, $detailsByOb, $errors] = $isCsv ? $this->parseCsv($filePath) : $this->parseXlsx($filePath);
+        [$obRows, $rawItems, $errors] = $isCsv ? $this->parseCsv($filePath) : $this->parseXlsx($filePath);
 
         $batch->update(['total_ob' => count($obRows)]);
 
@@ -95,52 +107,64 @@ class OpeningBalanceImportService
         $barangByNama = Barang::all(['id', 'nama_barang'])
             ->keyBy(fn (Barang $b) => strtolower(trim($b->nama_barang)));
 
-        $insertedOb = $skippedOb = $failedOb = 0;
-        $totalDetail = $insertedDetail = 0;
-        $totalItem = $insertedItem = 0;
+        $failedOb = 0;
         $processed = 0;
 
-        foreach ($obRows as $noUrut => $row) {
+        // Pass 1 — resolve identitas PER GRUP no_urut, lalu kumpulkan rows ke bucket per
+        // klien_id HASIL RESOLUSI (bukan per no_urut). Ini krusial untuk PT/B2B: data nyata
+        // memberi no_urut per (PT + resto) — puluhan/ratusan no_urut bisa resolve ke klien PT
+        // yang SAMA. Kalau langsung build+create per no_urut seperti sebelumnya, cuma grup
+        // PERTAMA yang berhasil (grup berikutnya kena "duplikat klien+tanggal" dan di-skip
+        // diam-diam — datanya hilang, bukan cuma kehilangan info resto).
+        $buckets = [];
+        foreach ($obRows as $noUrut => $groupRows) {
             $processed++;
             if ($processed % 50 === 0) {
-                $batch->update([
-                    'processed_ob' => $processed,
-                    'inserted_ob' => $insertedOb,
-                    'skipped_ob' => $skippedOb,
-                    'failed_ob' => $failedOb,
-                    'inserted_detail' => $insertedDetail,
-                    'inserted_item' => $insertedItem,
-                ]);
+                $batch->update(['processed_ob' => $processed, 'failed_ob' => $failedOb]);
             }
 
-            $masterError = $this->validateRowAgainstMasterData($row['tipe_klien'], $row['kode_resto'], $restoMasterMap);
+            $identity = $groupRows[0];
+
+            $masterError = $this->validateRowAgainstMasterData($identity['tipe_klien'], $identity['kode_resto'], $restoMasterMap);
             if ($masterError) {
-                $errors[] = ['sheet' => $row['sheet'], 'row' => $row['source_row'], 'message' => $masterError];
+                $errors[] = ['sheet' => $identity['sheet'], 'row' => $identity['source_row'], 'message' => $masterError];
                 $failedOb++;
 
                 continue;
             }
 
-            $resolved = $this->resolveKlienForOb($row['tipe_klien'], $row['nama_klien'], $row['kode_resto'], $ptNamaGroups, $restoMap);
+            $resolved = $this->resolveKlienForOb($identity['tipe_klien'], $identity['nama_klien'], $identity['kode_resto'], $ptNamaGroups, $restoMap);
             if (! $resolved['klien']) {
-                $errors[] = ['sheet' => $row['sheet'], 'row' => $row['source_row'], 'message' => $resolved['error']];
+                $errors[] = ['sheet' => $identity['sheet'], 'row' => $identity['source_row'], 'message' => $resolved['error']];
                 $failedOb++;
 
                 continue;
             }
             $klien = $resolved['klien'];
 
-            if (! $row['tanggal']) {
-                $errors[] = ['sheet' => $row['sheet'], 'row' => $row['source_row'], 'message' => 'Tanggal Opening Balance tidak valid.'];
-                $failedOb++;
+            $buckets[$klien->id] ??= ['klien' => $klien, 'sheet' => $identity['sheet'], 'source_row' => $identity['source_row'], 'rows' => []];
+            $buckets[$klien->id]['rows'] = [...$buckets[$klien->id]['rows'], ...$groupRows];
+        }
 
-                continue;
-            }
+        $batch->update(['processed_ob' => count($obRows), 'failed_ob' => $failedOb]);
 
-            $rowDetails = $detailsByOb[$noUrut] ?? [];
+        // Pass 2 — 1 Opening Balance per klien (bucket), dari rows gabungan semua no_urut
+        // asalnya. inserted_ob/skipped_ob sekarang dihitung di level klien final — jumlahnya
+        // BISA lebih kecil dari jumlah no_urut mentah kalau banyak no_urut resolve ke klien
+        // yang sama (itu benar, bukan bug).
+        $insertedOb = $skippedOb = 0;
+        $insertedDetail = $insertedItem = 0;
 
-            if ($row['saldo_awal'] <= 0 && empty($rowDetails)) {
-                $errors[] = ['sheet' => $row['sheet'], 'row' => $row['source_row'], 'message' => 'saldo_awal harus lebih dari 0.'];
+        foreach ($buckets as $bucket) {
+            $klien = $bucket['klien'];
+
+            $built = $this->buildDetailsForGroup($bucket['rows'], $rawItems, $barangByKode, $barangByNama, $errors);
+            if ($built === null) {
+                $errors[] = [
+                    'sheet' => $bucket['sheet'],
+                    'row' => $bucket['source_row'],
+                    'message' => "Klien '{$klien->nama_klien}': tidak ada baris valid untuk membentuk Opening Balance (semua baris gagal validasi no_invoice_asal/tanggal_invoice_asal).",
+                ];
                 $failedOb++;
 
                 continue;
@@ -148,7 +172,7 @@ class OpeningBalanceImportService
 
             $exists = Invoice::where('klien_ar_id', $klien->id)
                 ->where('is_opening_balance', true)
-                ->whereDate('tanggal_invoice', $row['tanggal'])
+                ->whereDate('tanggal_invoice', $cutoverDate)
                 ->exists();
             if ($exists) {
                 $skippedOb++;
@@ -156,73 +180,34 @@ class OpeningBalanceImportService
                 continue;
             }
 
-            $details = [];
-            $sisaSum = 0.0;
-
-            foreach ($rowDetails as $d) {
-                $items = [];
-                foreach ($d['items'] as $it) {
-                    $barangId = $this->resolveBarangId($it['kode_barang'], $it['nama_barang'], $barangByKode, $barangByNama);
-                    $subtotal = $it['subtotal'] > 0 ? $it['subtotal'] : round($it['qty'] * $it['harga_satuan'], 2);
-                    $items[] = [
-                        'barang_id' => $barangId,
-                        'kode_barang' => $it['kode_barang'],
-                        'nama_barang' => $it['nama_barang'],
-                        'qty' => $it['qty'],
-                        'satuan' => $it['satuan'],
-                        'harga_satuan' => $it['harga_satuan'],
-                        'subtotal' => $subtotal,
-                        'keterangan' => $it['keterangan'],
-                    ];
-                    $totalItem++;
-                }
-
-                $details[] = [
-                    'no_invoice_asal' => $d['no_invoice_asal'],
-                    'tanggal_invoice_asal' => $d['tanggal_invoice_asal'],
-                    'deskripsi' => $d['deskripsi'],
-                    'jumlah_tagihan_asal' => $d['jumlah_tagihan_asal'],
-                    'sisa_tagihan_asal' => $d['sisa_tagihan_asal'],
-                    'keterangan' => $d['keterangan'],
-                    'items' => $items,
-                ];
-                $sisaSum += $d['sisa_tagihan_asal'];
-                $totalDetail++;
-            }
-
-            if (! empty($details) && abs($sisaSum - $row['saldo_awal']) > 0.01) {
-                $errors[] = [
-                    'sheet' => 'Rincian Invoice Asal',
-                    'row' => $row['source_row'],
-                    'message' => sprintf(
-                        'Total sisa_tagihan_asal (%s) tidak sama dengan saldo_awal (%s) untuk no_urut %s.',
-                        number_format($sisaSum, 2), number_format($row['saldo_awal'], 2), $noUrut,
-                    ),
-                ];
-                $failedOb++;
-
-                continue;
-            }
-
-            $saldoAwal = ! empty($details) ? $sisaSum : $row['saldo_awal'];
-
             try {
                 $data = [
-                    'no_invoice' => $this->invoiceService->generateOpeningBalanceNoInvoice($klien, $row['tanggal']),
-                    'tanggal' => $row['tanggal'],
+                    'no_invoice' => $this->invoiceService->generateOpeningBalanceNoInvoice($klien, $cutoverDate),
+                    'tanggal' => $cutoverDate,
                     'klien_ar_id' => $klien->id,
-                    'saldo_awal' => $saldoAwal,
-                    'keterangan' => $row['keterangan'] ?: 'Opening Balance (Import)',
-                    'details' => $details,
+                    'saldo_awal' => $built['saldo_awal'],
+                    'keterangan' => $built['keterangan'] ?: 'Opening Balance (Import)',
+                    'details' => $built['details'],
                 ];
 
                 $this->invoiceService->createOpeningBalance($data, notify: false);
                 $insertedOb++;
-                $insertedDetail += count($details);
-                $insertedItem += array_sum(array_map(fn ($d) => count($d['items']), $details));
+                $insertedDetail += count($built['details']);
+                $insertedItem += array_sum(array_map(fn ($d) => count($d['items']), $built['details']));
             } catch (Throwable $e) {
-                $errors[] = ['sheet' => $row['sheet'], 'row' => $row['source_row'], 'message' => 'Gagal menyimpan: '.$e->getMessage()];
+                $errors[] = ['sheet' => $bucket['sheet'], 'row' => $bucket['source_row'], 'message' => 'Gagal menyimpan: '.$e->getMessage()];
                 $failedOb++;
+            }
+        }
+
+        // Item yang no_urut+no_invoice_asal tidak cocok baris manapun (di grup manapun) → orphan.
+        foreach ($rawItems as $orphanItems) {
+            foreach ($orphanItems as $it) {
+                $errors[] = [
+                    'sheet' => 'Item Invoice Asal',
+                    'row' => $it['source_row'],
+                    'message' => 'no_urut + no_invoice_asal tidak cocok dengan baris manapun di Data Opening Balance.',
+                ];
             }
         }
 
@@ -235,9 +220,9 @@ class OpeningBalanceImportService
             'inserted_ob' => $insertedOb,
             'skipped_ob' => $skippedOb,
             'failed_ob' => $failedOb,
-            'total_detail' => $totalDetail,
+            'total_detail' => $insertedDetail,
             'inserted_detail' => $insertedDetail,
-            'total_item' => $totalItem,
+            'total_item' => $insertedItem,
             'inserted_item' => $insertedItem,
             'errors' => $errors,
             'status' => 'completed',
@@ -249,24 +234,105 @@ class OpeningBalanceImportService
     }
 
     // ──────────────────────────────────────────────────────────────
+    //  Agregasi 1 grup no_urut -> 1 Opening Balance (+ rincian opsional)
+    // ──────────────────────────────────────────────────────────────
+
+    /**
+     * Terapkan aturan agregasi (lihat docblock kelas). $rawItems dikonsumsi (key dihapus)
+     * saat item berhasil dilampirkan ke detail terkait — sisa $rawItems setelah SEMUA grup
+     * diproses oleh caller = item orphan.
+     *
+     * $groupRows di sini adalah rows GABUNGAN dari semua no_urut yang resolve ke klien yang
+     * sama (lihat process()) — tiap row tetap membawa `no_urut` ASAL-nya sendiri (dipakai
+     * untuk item-key), karena item di sheet "Item Invoice Asal" merujuk ke no_urut asal,
+     * bukan ke klien hasil merge.
+     *
+     * @param  array<int,array>  $groupRows
+     * @param  array<string,array>  $rawItems  keyed by "no_urut|lower(no_invoice_asal)", by-ref (dikonsumsi)
+     * @return array{details: array, saldo_awal: float, keterangan: ?string}|null null kalau tidak ada baris valid sama sekali
+     */
+    private function buildDetailsForGroup(array $groupRows, array &$rawItems, $barangByKode, $barangByNama, array &$errors): ?array
+    {
+        if (count($groupRows) === 1 && empty($groupRows[0]['no_invoice_asal'])) {
+            $row = $groupRows[0];
+
+            return ['details' => [], 'saldo_awal' => $row['sisa_tagihan_asal'], 'keterangan' => $row['keterangan']];
+        }
+
+        $details = [];
+        $saldoAwal = 0.0;
+
+        foreach ($groupRows as $row) {
+            if (empty($row['no_invoice_asal']) || ! $row['tanggal_invoice_asal']) {
+                $errors[] = [
+                    'sheet' => $row['sheet'],
+                    'row' => $row['source_row'],
+                    'message' => 'no_invoice_asal dan tanggal_invoice_asal wajib diisi untuk baris ini (no_urut ini punya lebih dari 1 baris, atau baris tunggal dengan no_invoice_asal terisi).',
+                ];
+
+                continue;
+            }
+
+            $itemKey = $row['no_urut'].'|'.strtolower(trim($row['no_invoice_asal']));
+            $items = [];
+            $jumlahTagihanAsal = 0.0;
+            foreach ($rawItems[$itemKey] ?? [] as $it) {
+                $barangId = $this->resolveBarangId($it['kode_barang'], $it['nama_barang'], $barangByKode, $barangByNama);
+                $subtotal = $it['subtotal'] > 0 ? $it['subtotal'] : round($it['qty'] * $it['harga_satuan'], 2);
+                $items[] = [
+                    'barang_id' => $barangId,
+                    'kode_barang' => $it['kode_barang'],
+                    'nama_barang' => $it['nama_barang'],
+                    'qty' => $it['qty'],
+                    'satuan' => $it['satuan'],
+                    'harga_satuan' => $it['harga_satuan'],
+                    'subtotal' => $subtotal,
+                    'keterangan' => $it['keterangan'],
+                ];
+                $jumlahTagihanAsal += $subtotal;
+            }
+            unset($rawItems[$itemKey]);
+
+            $details[] = [
+                'no_invoice_asal' => $row['no_invoice_asal'],
+                'tanggal_invoice_asal' => $row['tanggal_invoice_asal'],
+                'deskripsi' => $row['deskripsi'] ?? '',
+                'jumlah_tagihan_asal' => $jumlahTagihanAsal > 0 ? $jumlahTagihanAsal : $row['sisa_tagihan_asal'],
+                'sisa_tagihan_asal' => $row['sisa_tagihan_asal'],
+                'keterangan' => $row['keterangan'],
+                'kode_resto' => $row['kode_resto'] ?? null,
+                'nama_resto' => $row['nama_resto'] ?? null,
+                'items' => $items,
+            ];
+            $saldoAwal += $row['sisa_tagihan_asal'];
+        }
+
+        if (empty($details)) {
+            return null;
+        }
+
+        return ['details' => $details, 'saldo_awal' => $saldoAwal, 'keterangan' => null];
+    }
+
+    // ──────────────────────────────────────────────────────────────
     //  Resolusi Client AR & Barang
     // ──────────────────────────────────────────────────────────────
 
     /**
-     * Validasi 1 baris OB terhadap MASTER DATA — dipanggil SEBELUM resolveKlienForOb().
-     * PT: kode_resto wajib DIKOSONGKAN (saldo konsolidasi, tanpa resto spesifik).
+     * Validasi 1 grup OB terhadap MASTER DATA — dipanggil SEBELUM resolveKlienForOb().
+     * PT: kode_resto BOLEH diisi (opsional, freeform) — dipakai murni sebagai info asal
+     * resto per rincian invoice (lihat buildDetailsForGroup()), TIDAK divalidasi ke
+     * MASTER DATA dan TIDAK memengaruhi resolusi klien (tetap resolve via nama_klien saja).
+     * Ini konsisten dengan pola tb_invoice_item, di mana kode_resto/nama_resto per item
+     * B2B juga bebas/tidak divalidasi (lihat memory project_ob_ar_import_flat_autogroup_redesign).
      * RESTO: kode_resto wajib diisi & harus konsisten dengan MASTER DATA (tb_resto +
      * Client AR aktif tipe RESTO untuk outlet tsb) — persis pola
-     * InvoiceImportService::validateRowAgainstMasterData(), disesuaikan konteks OB
-     * (tidak ada cross-check nama_klien di sini karena PT tidak layak dicek by kode_resto,
-     * dan RESTO sudah pasti resolve exact by kode_resto tanpa perlu nama_klien cocok).
+     * InvoiceImportService::validateRowAgainstMasterData().
      */
     public function validateRowAgainstMasterData(string $tipeKlien, ?string $kodeResto, array $restoMasterMap): ?string
     {
         if ($tipeKlien === 'PT') {
-            return $kodeResto
-                ? 'kode_resto harus dikosongkan untuk baris tipe_klien=PT (saldo konsolidasi, tanpa resto spesifik).'
-                : null;
+            return null;
         }
 
         if (! $kodeResto) {
@@ -425,7 +491,7 @@ class OpeningBalanceImportService
     }
 
     // ──────────────────────────────────────────────────────────────
-    //  CSV — 1 tabel flat, dibedakan kolom `tipe_baris` (OB/RINCIAN/ITEM)
+    //  CSV — 1 tabel flat, dibedakan kolom `tipe_baris` (OB/ITEM)
     // ──────────────────────────────────────────────────────────────
 
     /**
@@ -442,42 +508,35 @@ class OpeningBalanceImportService
 
     private const CSV_COL_NAMA_RESTO = 4;
 
-    private const CSV_COL_TANGGAL = 5;
+    private const CSV_COL_TIPE_KLIEN = 5;
 
-    private const CSV_COL_SALDO_AWAL = 6;
+    private const CSV_COL_NO_INVOICE_ASAL = 6;
 
-    private const CSV_COL_TIPE_KLIEN = 7;
+    private const CSV_COL_TANGGAL_INVOICE_ASAL = 7;
 
-    private const CSV_COL_NO_INVOICE_ASAL = 8;
+    private const CSV_COL_SISA_TAGIHAN_ASAL = 8;
 
-    private const CSV_COL_TANGGAL_INVOICE_ASAL = 9;
+    private const CSV_COL_DESKRIPSI = 9;
 
-    private const CSV_COL_DESKRIPSI = 10;
+    private const CSV_COL_KETERANGAN = 10;
 
-    private const CSV_COL_JUMLAH_TAGIHAN_ASAL = 11;
+    private const CSV_COL_KODE_BARANG = 11;
 
-    private const CSV_COL_SISA_TAGIHAN_ASAL = 12;
+    private const CSV_COL_NAMA_BARANG = 12;
 
-    private const CSV_COL_KODE_BARANG = 13;
+    private const CSV_COL_QTY = 13;
 
-    private const CSV_COL_NAMA_BARANG = 14;
+    private const CSV_COL_SATUAN = 14;
 
-    private const CSV_COL_QTY = 15;
+    private const CSV_COL_HARGA_SATUAN = 15;
 
-    private const CSV_COL_SATUAN = 16;
+    private const CSV_COL_SUBTOTAL = 16;
 
-    private const CSV_COL_HARGA_SATUAN = 17;
-
-    private const CSV_COL_SUBTOTAL = 18;
-
-    private const CSV_COL_KETERANGAN = 19;
-
-    /** @return array{0: array<int|string, array>, 1: array<int|string, array>, 2: array} [obRows keyed by no_urut, detailsByOb keyed by no_urut, errors] */
+    /** @return array{0: array<int|string, array>, 1: array<string, array>, 2: array} [obRows keyed by no_urut -> list baris, rawItems keyed by "no_urut|lower(no_invoice_asal)", errors] */
     private function parseCsv(string $filePath): array
     {
         $errors = [];
         $obRows = [];
-        $rawDetails = [];
         $rawItems = [];
 
         $delimiter = $this->detectCsvDelimiter($filePath);
@@ -494,7 +553,7 @@ class OpeningBalanceImportService
                     if ($this->normalizeHeaderName((string) ($row[self::CSV_COL_TIPE_KLIEN] ?? '')) !== 'tipe_klien') {
                         fclose($handle);
 
-                        throw new \RuntimeException('Format CSV tidak sesuai template terbaru (kolom ke-8 harus "tipe_klien"). Download ulang Template CSV.');
+                        throw new \RuntimeException('Format CSV tidak sesuai template terbaru (kolom ke-6 harus "tipe_klien"). Download ulang Template CSV.');
                     }
 
                     $headerFound = true;
@@ -514,80 +573,54 @@ class OpeningBalanceImportService
 
             if ($tipe === self::CSV_TIPE_OB) {
                 $namaKlien = trim((string) ($row[self::CSV_COL_NAMA_KLIEN] ?? ''));
-                if (str_starts_with($namaKlien, '[CONTOH]')) {
+                $deskripsiRaw = trim((string) ($row[self::CSV_COL_DESKRIPSI] ?? ''));
+                // Baris kelanjutan contoh (nama_klien kosong, penanda "[CONTOH]" cuma di deskripsi).
+                if (str_starts_with($namaKlien, '[CONTOH]') || str_starts_with($deskripsiRaw, '[CONTOH]')) {
                     continue;
                 }
-
-                $tipeKlienRaw = trim((string) ($row[self::CSV_COL_TIPE_KLIEN] ?? ''));
-                $tipeKlien = $this->normalizeTipeKlien($tipeKlienRaw);
-                $kodeResto = $this->importValue($row[self::CSV_COL_KODE_RESTO] ?? null);
 
                 if ($noUrut === '') {
                     $errors[] = ['sheet' => 'Data Opening Balance', 'row' => $lineNumber, 'message' => 'no_urut wajib diisi untuk baris tipe_baris=OB.'];
 
                     continue;
                 }
-                if ($tipeKlien === null) {
-                    $errors[] = ['sheet' => 'Data Opening Balance', 'row' => $lineNumber, 'message' => "tipe_klien '{$tipeKlienRaw}' tidak valid. Harus PT/B2B atau RESTO/B2C."];
 
-                    continue;
-                }
-                if ($namaKlien === '') {
-                    $errors[] = ['sheet' => 'Data Opening Balance', 'row' => $lineNumber, 'message' => 'nama_klien wajib diisi untuk baris tipe_baris=OB.'];
-
-                    continue;
-                }
-                if (isset($obRows[$noUrut])) {
-                    $errors[] = ['sheet' => 'Data Opening Balance', 'row' => $lineNumber, 'message' => "no_urut '{$noUrut}' duplikat (sudah dipakai baris OB lain)."];
+                $sisaTagihanAsal = $this->importNum($row[self::CSV_COL_SISA_TAGIHAN_ASAL] ?? null);
+                if ($sisaTagihanAsal <= 0) {
+                    $errors[] = ['sheet' => 'Data Opening Balance', 'row' => $lineNumber, 'message' => 'sisa_tagihan_asal harus lebih dari 0.'];
 
                     continue;
                 }
 
-                $obRows[$noUrut] = [
+                $isFirstInGroup = ! isset($obRows[$noUrut]);
+                $tipeKlienRaw = trim((string) ($row[self::CSV_COL_TIPE_KLIEN] ?? ''));
+                $tipeKlien = $this->normalizeTipeKlien($tipeKlienRaw);
+
+                if ($isFirstInGroup) {
+                    if ($tipeKlien === null) {
+                        $errors[] = ['sheet' => 'Data Opening Balance', 'row' => $lineNumber, 'message' => "tipe_klien '{$tipeKlienRaw}' tidak valid. Harus PT/B2B atau RESTO/B2C."];
+
+                        continue;
+                    }
+                    if ($namaKlien === '') {
+                        $errors[] = ['sheet' => 'Data Opening Balance', 'row' => $lineNumber, 'message' => 'nama_klien wajib diisi (baris pertama untuk no_urut ini).'];
+
+                        continue;
+                    }
+                }
+
+                $obRows[$noUrut][] = [
                     'sheet' => 'Data Opening Balance',
                     'source_row' => $lineNumber,
-                    'tipe_klien' => $tipeKlien,
-                    'nama_klien' => $namaKlien,
-                    'kode_resto' => $kodeResto,
+                    'no_urut' => $noUrut,
+                    'tipe_klien' => $isFirstInGroup ? $tipeKlien : null,
+                    'nama_klien' => $isFirstInGroup ? $namaKlien : null,
+                    'kode_resto' => $this->importValue($row[self::CSV_COL_KODE_RESTO] ?? null),
                     'nama_resto' => $this->importValue($row[self::CSV_COL_NAMA_RESTO] ?? null),
-                    'tanggal' => $this->importDate($row[self::CSV_COL_TANGGAL] ?? null),
-                    'saldo_awal' => $this->importNum($row[self::CSV_COL_SALDO_AWAL] ?? null),
-                    'keterangan' => $keterangan,
-                ];
-
-                continue;
-            }
-
-            if ($tipe === self::CSV_TIPE_RINCIAN) {
-                $deskripsi = trim((string) ($row[self::CSV_COL_DESKRIPSI] ?? ''));
-                if (str_starts_with($deskripsi, '[CONTOH]')) {
-                    continue;
-                }
-
-                $noInvoiceAsal = trim((string) ($row[self::CSV_COL_NO_INVOICE_ASAL] ?? ''));
-
-                if ($noUrut === '' || $noInvoiceAsal === '') {
-                    $errors[] = ['sheet' => 'Rincian Invoice Asal', 'row' => $lineNumber, 'message' => 'no_urut dan no_invoice_asal wajib diisi untuk baris tipe_baris=RINCIAN.'];
-
-                    continue;
-                }
-
-                $tanggalAsal = $this->importDate($row[self::CSV_COL_TANGGAL_INVOICE_ASAL] ?? null);
-                $sisaTagihan = $this->importNum($row[self::CSV_COL_SISA_TAGIHAN_ASAL] ?? null);
-
-                if (! $tanggalAsal || $sisaTagihan <= 0) {
-                    $errors[] = ['sheet' => 'Rincian Invoice Asal', 'row' => $lineNumber, 'message' => 'tanggal_invoice_asal wajib diisi, dan sisa_tagihan_asal harus lebih dari 0 untuk baris tipe_baris=RINCIAN.'];
-
-                    continue;
-                }
-
-                $rawDetails[$noUrut][] = [
-                    'source_row' => $lineNumber,
-                    'no_invoice_asal' => $noInvoiceAsal,
-                    'tanggal_invoice_asal' => $tanggalAsal,
-                    'deskripsi' => $deskripsi,
-                    'jumlah_tagihan_asal' => $this->importNum($row[self::CSV_COL_JUMLAH_TAGIHAN_ASAL] ?? null),
-                    'sisa_tagihan_asal' => $sisaTagihan,
+                    'no_invoice_asal' => $this->importValue($row[self::CSV_COL_NO_INVOICE_ASAL] ?? null),
+                    'tanggal_invoice_asal' => $this->importDate($row[self::CSV_COL_TANGGAL_INVOICE_ASAL] ?? null),
+                    'sisa_tagihan_asal' => $sisaTagihanAsal,
+                    'deskripsi' => $this->importValue($row[self::CSV_COL_DESKRIPSI] ?? null) ?? '',
                     'keterangan' => $keterangan,
                 ];
 
@@ -625,14 +658,11 @@ class OpeningBalanceImportService
                 continue;
             }
 
-            $errors[] = ['sheet' => 'CSV', 'row' => $lineNumber, 'message' => "tipe_baris '{$tipeRaw}' tidak dikenali — harus OB, RINCIAN, atau ITEM."];
+            $errors[] = ['sheet' => 'CSV', 'row' => $lineNumber, 'message' => "tipe_baris '{$tipeRaw}' tidak dikenali — harus OB atau ITEM."];
         }
         fclose($handle);
 
-        $linked = $this->linkDetailsAndItems($obRows, $rawDetails, $rawItems);
-        $errors = [...$errors, ...$linked['errors']];
-
-        return [$obRows, $linked['detailsByOb'], $errors];
+        return [$obRows, $rawItems, $errors];
     }
 
     private function openCsvHandle(string $filePath)
@@ -664,10 +694,10 @@ class OpeningBalanceImportService
     }
 
     // ──────────────────────────────────────────────────────────────
-    //  XLSX — 3 sheet (Data Opening Balance + Rincian Invoice Asal + Item Invoice Asal)
+    //  XLSX — 2 sheet data (Data Opening Balance + Item Invoice Asal)
     // ──────────────────────────────────────────────────────────────
 
-    /** @return array{0: array<int|string, array>, 1: array<int|string, array>, 2: array} [obRows keyed by no_urut, detailsByOb keyed by no_urut, errors] */
+    /** @return array{0: array<int|string, array>, 1: array<string, array>, 2: array} [obRows keyed by no_urut -> list baris, rawItems keyed by "no_urut|lower(no_invoice_asal)", errors] */
     private function parseXlsx(string $filePath): array
     {
         $errors = [];
@@ -678,77 +708,16 @@ class OpeningBalanceImportService
 
         try {
             $obRows = $this->parseObSheet($spreadsheet, $errors);
-            $rawDetails = $this->parseDetailSheet($spreadsheet, $errors);
             $rawItems = $this->parseItemSheet($spreadsheet, $errors);
 
-            $linked = $this->linkDetailsAndItems($obRows, $rawDetails, $rawItems);
-            $errors = [...$errors, ...$linked['errors']];
-
-            return [$obRows, $linked['detailsByOb'], $errors];
+            return [$obRows, $rawItems, $errors];
         } finally {
             $spreadsheet->disconnectWorksheets();
             unset($spreadsheet);
         }
     }
 
-    /**
-     * Lampirkan item ke detail terkait (kunci gabungan no_urut_ob + no_invoice_asal,
-     * case-insensitive), lalu deteksi baris "orphan" — detail/item yang referensinya
-     * (no_urut_ob / no_invoice_asal) tidak cocok dengan baris manapun di level atasnya
-     * — dan laporkan sebagai error alih-alih diam-diam diabaikan. Dipakai bersama oleh
-     * parseCsv() dan parseXlsx() supaya logic linking tidak dobel dan hasilnya konsisten
-     * apa pun format file sumbernya.
-     *
-     * Error dikembalikan lewat return (bukan by-ref) supaya method ini tetap pure/mudah
-     * diuji — pola sama seperti resolveKlien().
-     *
-     * @param  array<int|string, array>  $obRows
-     * @param  array<int|string, array>  $rawDetails  keyed by no_urut_ob, list detail (belum berisi 'items')
-     * @param  array<string, array>  $rawItems  keyed by "no_urut_ob|lower(no_invoice_asal)", list item
-     * @return array{detailsByOb: array<int|string, array>, errors: array} detailsByOb keyed by no_urut, tiap detail sudah berisi 'items'
-     */
-    private function linkDetailsAndItems(array $obRows, array $rawDetails, array $rawItems): array
-    {
-        $errors = [];
-
-        foreach ($rawDetails as $noUrut => $details) {
-            foreach ($details as $idx => $detail) {
-                $key = $noUrut.'|'.strtolower(trim($detail['no_invoice_asal']));
-                $rawDetails[$noUrut][$idx]['items'] = $rawItems[$key] ?? [];
-                unset($rawItems[$key]);
-            }
-        }
-
-        // Sisa $rawItems setelah dilampirkan = item yang no_urut_ob/no_invoice_asal-nya tidak
-        // cocok dengan baris manapun di Rincian Invoice Asal — laporkan sbg error baris.
-        foreach ($rawItems as $orphanItems) {
-            foreach ($orphanItems as $it) {
-                $errors[] = [
-                    'sheet' => 'Item Invoice Asal',
-                    'row' => $it['source_row'],
-                    'message' => 'no_urut_ob + no_invoice_asal tidak cocok dengan baris manapun di Rincian Invoice Asal.',
-                ];
-            }
-        }
-
-        // Detail yang no_urut_ob-nya tidak cocok OB manapun → orphan, laporkan & buang.
-        foreach ($rawDetails as $noUrut => $details) {
-            if (! isset($obRows[$noUrut])) {
-                foreach ($details as $d) {
-                    $errors[] = [
-                        'sheet' => 'Rincian Invoice Asal',
-                        'row' => $d['source_row'],
-                        'message' => "no_urut_ob {$noUrut} tidak cocok dengan baris manapun di Data Opening Balance.",
-                    ];
-                }
-                unset($rawDetails[$noUrut]);
-            }
-        }
-
-        return ['detailsByOb' => $rawDetails, 'errors' => $errors];
-    }
-
-    /** @return array<int|string, array> keyed by no_urut */
+    /** @return array<int|string, array> keyed by no_urut -> list baris (grup) */
     private function parseObSheet(Spreadsheet $spreadsheet, array &$errors): array
     {
         $sheetIndex = $this->findSheetIndex($spreadsheet, 'Data Opening Balance');
@@ -759,9 +728,27 @@ class OpeningBalanceImportService
         }
 
         $sheet = $spreadsheet->getSheet($sheetIndex);
-        $detected = $this->detectHeaderStart($sheet, 'nama_klien', 8);
+        $detected = $this->detectHeaderStart($sheet, 'nama_klien', 10);
         if (! $detected['found']) {
             $errors[] = ['sheet' => 'Data Opening Balance', 'row' => 0, 'message' => 'Header "nama_klien" tidak ditemukan — pastikan menggunakan template terbaru (download ulang template).'];
+
+            return [];
+        }
+
+        // Guard format lama: versi template sebelumnya taruh tipe_klien di kolom D (dan versi
+        // sebelum itu lagi taruh "tanggal" di situ). Kolom A tetap "nama_klien" di semua versi,
+        // jadi detectHeaderStart() di atas tidak cukup untuk menangkap file stale — tanpa guard
+        // ini, kolom I file lama akan diam-diam dibaca sebagai tipe_klien dan gagal validasi
+        // untuk SEMUA baris dengan pesan yang membingungkan (bukan mengarah ke akar masalah:
+        // file salah versi/urutan kolom).
+        $headerRow = $detected['dataStart'] - 1;
+        $tipeKlienHeader = $this->normalizeHeaderName($this->cellToString($sheet->getCell("I{$headerRow}")->getValue()));
+        if ($tipeKlienHeader !== 'tipe_klien') {
+            $errors[] = [
+                'sheet' => 'Data Opening Balance',
+                'row' => 0,
+                'message' => 'Format file tidak sesuai template terbaru (kolom I harus "tipe_klien") — urutan kolom template sudah berubah (tipe_klien & no_urut sekarang di paling kanan). Download ulang Template XLSX.',
+            ];
 
             return [];
         }
@@ -769,14 +756,19 @@ class OpeningBalanceImportService
         $obRows = [];
         $this->eachDataRow($sheet, $detected, function (array $row, int $lineNumber) use (&$obRows, &$errors) {
             $namaKlien = trim($row[0] ?? '');
-            if (str_starts_with($namaKlien, '[CONTOH]') || str_starts_with($namaKlien, '#')) {
+            $tipeKlienRaw = trim($row[8] ?? '');
+            $noUrutRaw = trim($row[9] ?? '');
+            $deskripsiRaw = trim($row[6] ?? '');
+
+            // Baris kelanjutan contoh (baris ke-2 dst dari 1 grup no_urut contoh) sengaja
+            // mengosongkan nama_klien — penanda "[CONTOH]"-nya cuma ada di kolom deskripsi.
+            // Cek deskripsi juga supaya baris ini tetap diabaikan (bukan diproses sebagai
+            // data sungguhan dengan tipe_klien kosong).
+            if (str_starts_with($namaKlien, '[CONTOH]') || str_starts_with($namaKlien, '#')
+                || str_starts_with($deskripsiRaw, '[CONTOH]')) {
                 return;
             }
-
-            $tipeKlienRaw = trim($row[6] ?? '');
-            $tipeKlien = $this->normalizeTipeKlien($tipeKlienRaw);
-            $noUrutRaw = trim($row[7] ?? '');
-            if ($tipeKlienRaw === '' && $namaKlien === '' && $noUrutRaw === '') {
+            if ($namaKlien === '' && $tipeKlienRaw === '' && $noUrutRaw === '') {
                 return;
             } // baris kosong
 
@@ -791,100 +783,50 @@ class OpeningBalanceImportService
 
                 return;
             }
-            if ($tipeKlien === null) {
-                $errors[] = ['sheet' => 'Data Opening Balance', 'row' => $lineNumber, 'message' => "tipe_klien '{$tipeKlienRaw}' tidak valid. Harus PT/B2B atau RESTO/B2C."];
 
-                return;
-            }
-            if ($namaKlien === '') {
-                $errors[] = ['sheet' => 'Data Opening Balance', 'row' => $lineNumber, 'message' => 'nama_klien wajib diisi.'];
-
-                return;
-            }
-            if (isset($obRows[$noUrutRaw])) {
-                $errors[] = ['sheet' => 'Data Opening Balance', 'row' => $lineNumber, 'message' => "no_urut '{$noUrutRaw}' duplikat (sudah dipakai baris lain)."];
+            $sisaTagihanAsal = $this->importNum($row[5] ?? null);
+            if ($sisaTagihanAsal <= 0) {
+                $errors[] = ['sheet' => 'Data Opening Balance', 'row' => $lineNumber, 'message' => 'sisa_tagihan_asal harus lebih dari 0.'];
 
                 return;
             }
 
-            $obRows[$noUrutRaw] = [
+            $isFirstInGroup = ! isset($obRows[$noUrutRaw]);
+            $tipeKlien = $this->normalizeTipeKlien($tipeKlienRaw);
+
+            if ($isFirstInGroup) {
+                if ($tipeKlien === null) {
+                    $errors[] = ['sheet' => 'Data Opening Balance', 'row' => $lineNumber, 'message' => "tipe_klien '{$tipeKlienRaw}' tidak valid. Harus PT/B2B atau RESTO/B2C."];
+
+                    return;
+                }
+                if ($namaKlien === '') {
+                    $errors[] = ['sheet' => 'Data Opening Balance', 'row' => $lineNumber, 'message' => 'nama_klien wajib diisi (baris pertama untuk no_urut ini).'];
+
+                    return;
+                }
+            }
+
+            $obRows[$noUrutRaw][] = [
                 'sheet' => 'Data Opening Balance',
                 'source_row' => $lineNumber,
-                'tipe_klien' => $tipeKlien,
-                'nama_klien' => $namaKlien,
+                'no_urut' => $noUrutRaw,
+                'tipe_klien' => $isFirstInGroup ? $tipeKlien : null,
+                'nama_klien' => $isFirstInGroup ? $namaKlien : null,
                 'kode_resto' => $this->importValue($row[1] ?? null),
                 'nama_resto' => $this->importValue($row[2] ?? null),
-                'tanggal' => $this->importDate($row[3] ?? null),
-                'saldo_awal' => $this->importNum($row[4] ?? null),
-                'keterangan' => $this->importValue($row[5] ?? null),
+                'no_invoice_asal' => $this->importValue($row[3] ?? null),
+                'tanggal_invoice_asal' => $this->importDate($row[4] ?? null),
+                'sisa_tagihan_asal' => $sisaTagihanAsal,
+                'deskripsi' => $this->importValue($row[6] ?? null) ?? '',
+                'keterangan' => $this->importValue($row[7] ?? null),
             ];
         });
 
         return $obRows;
     }
 
-    /** @return array<int|string, array> keyed by no_urut_ob, list of detail rows (belum berisi 'items') */
-    private function parseDetailSheet(Spreadsheet $spreadsheet, array &$errors): array
-    {
-        $sheetIndex = $this->findSheetIndex($spreadsheet, 'Rincian Invoice Asal');
-        if ($sheetIndex === null) {
-            return [];
-        }
-
-        $sheet = $spreadsheet->getSheet($sheetIndex);
-        $detected = $this->detectHeaderStart($sheet, 'no_urut_ob', 7);
-        if (! $detected['found']) {
-            return [];
-        }
-
-        $details = [];
-        $this->eachDataRow($sheet, $detected, function (array $row, int $lineNumber) use (&$details, &$errors) {
-            $noUrutOb = trim($row[0] ?? '');
-            $deskripsi = trim($row[3] ?? '');
-            if (str_starts_with($deskripsi, '[CONTOH]')) {
-                return;
-            }
-            if ($noUrutOb === '' && trim($row[1] ?? '') === '') {
-                return;
-            } // baris kosong
-
-            if ($formulaError = $this->detectFormulaError($row, 'Rincian Invoice Asal', $lineNumber)) {
-                $errors[] = ['sheet' => 'Rincian Invoice Asal', 'row' => $lineNumber, 'message' => $formulaError];
-
-                return;
-            }
-
-            $noInvoiceAsal = trim($row[1] ?? '');
-            if ($noUrutOb === '' || $noInvoiceAsal === '') {
-                $errors[] = ['sheet' => 'Rincian Invoice Asal', 'row' => $lineNumber, 'message' => 'no_urut_ob dan no_invoice_asal wajib diisi.'];
-
-                return;
-            }
-
-            $tanggalAsal = $this->importDate($row[2] ?? null);
-            $sisaTagihan = $this->importNum($row[5] ?? null);
-
-            if (! $tanggalAsal || $sisaTagihan <= 0) {
-                $errors[] = ['sheet' => 'Rincian Invoice Asal', 'row' => $lineNumber, 'message' => 'tanggal_invoice_asal wajib diisi, dan sisa_tagihan_asal harus lebih dari 0.'];
-
-                return;
-            }
-
-            $details[$noUrutOb][] = [
-                'source_row' => $lineNumber,
-                'no_invoice_asal' => $noInvoiceAsal,
-                'tanggal_invoice_asal' => $tanggalAsal,
-                'deskripsi' => $deskripsi,
-                'jumlah_tagihan_asal' => $this->importNum($row[4] ?? null),
-                'sisa_tagihan_asal' => $sisaTagihan,
-                'keterangan' => $this->importValue($row[6] ?? null),
-            ];
-        });
-
-        return $details;
-    }
-
-    /** @return array<string, array> keyed by "no_urut_ob|lower(no_invoice_asal)", list of item rows */
+    /** @return array<string, array> keyed by "no_urut|lower(no_invoice_asal)", list of item rows */
     private function parseItemSheet(Spreadsheet $spreadsheet, array &$errors): array
     {
         $sheetIndex = $this->findSheetIndex($spreadsheet, 'Item Invoice Asal');

@@ -16,6 +16,8 @@ class OpeningBalanceDetail extends Model
         'jumlah_tagihan_asal',
         'sisa_tagihan_asal',
         'keterangan',
+        'kode_resto',
+        'nama_resto',
         'created_by',
         'updated_by',
     ];

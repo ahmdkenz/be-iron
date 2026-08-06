@@ -404,6 +404,8 @@ class InvoiceService
                 'jumlah_tagihan_asal' => $jumlahTagihan,
                 'sisa_tagihan_asal' => $detail['sisa_tagihan_asal'],
                 'keterangan' => $detail['keterangan'] ?? null,
+                'kode_resto' => $detail['kode_resto'] ?? null,
+                'nama_resto' => $detail['nama_resto'] ?? null,
                 'created_by' => auth()->id(),
             ]);
 
