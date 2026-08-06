@@ -45,7 +45,7 @@ class InvoiceImportTemplateService
         '# Kolom bertanda (*) wajib diisi di SETIAP baris, termasuk kode_resto.',
         '# kode_resto wajib diisi di setiap baris (B2B maupun B2C) - dipakai memvalidasi baris terhadap MASTER DATA & menentukan outlet tujuan.',
         '# tipe_invoice wajib konsisten dengan segmen outlet di MASTER DATA: outlet PT -> B2B, outlet RESTO -> B2C. Kalau tidak cocok, baris DITOLAK.',
-        '# nama_klien wajib sama persis dengan nama Client AR aktif untuk kode_resto tersebut. Format tanggal: DD-MM-YYYY. qty harus lebih dari 0.',
+        '# nama_klien wajib sama persis dengan nama Client AR aktif untuk kode_resto tersebut. Format tanggal: DD-MM-YYYY (disarankan) — juga menerima DD/MM/YYYY, DD.MM.YYYY, tahun 2 digit, atau nama/singkatan bulan Indonesia (mis. 1 Juni 2026, 1-Jun-26). qty harus lebih dari 0.',
         '# PENTING: import ini TIDAK menimpa invoice yang sudah dibayar / sudah cocok rekening koran / periodenya terkunci - perubahan seperti itu ditampilkan sebagai kandidat Credit Note / Debit Note untuk ditinjau dulu.',
         '# Upload hanya bisa dilakukan oleh role ADMIN, MANAGER, atau SUPERVISOR. Baris [CONTOH] & baris diawali "#" otomatis diabaikan saat import.',
     ];
@@ -229,7 +229,7 @@ class InvoiceImportTemplateService
             '3. kode_resto WAJIB diisi di setiap baris (B2B maupun B2C) — dipakai memvalidasi baris terhadap MASTER DATA & menentukan outlet tujuan.',
             '4. tipe_invoice wajib konsisten dengan segmen outlet di MASTER DATA: outlet PT → B2B, outlet RESTO → B2C. Kalau tidak cocok, baris DITOLAK.',
             '5. nama_klien wajib sama persis dengan nama Client AR aktif untuk kode_resto tersebut.',
-            '6. Format tanggal: DD-MM-YYYY. qty harus > 0.',
+            '6. Format tanggal: DD-MM-YYYY (disarankan) — sistem juga menerima DD/MM/YYYY, DD.MM.YYYY, tahun 2 digit (01-06-26), atau nama/singkatan bulan Indonesia (mis. 1 Juni 2026, 1-Jun-26). qty harus > 0.',
             '7. Baris [CONTOH] dan baris diawali "#" otomatis diabaikan.',
             '8. Upload hanya bisa dilakukan oleh role ADMIN, MANAGER, atau SUPERVISOR.',
         ]);
@@ -258,8 +258,8 @@ class InvoiceImportTemplateService
 
         $invoiceCols = [
             ['nama_klien',          'Nama Client AR aktif yang sudah ada di sistem. Harus sama dengan MASTER DATA untuk kode_resto ini.', 'Ya',       'PT Maju Bersama'],
-            ['tanggal_invoice',     'Tanggal invoice (DD-MM-YYYY). 1 klien hanya boleh punya 1 invoice per hari.',                         'Ya',       '01-06-2026'],
-            ['tanggal_jatuh_tempo', 'Tanggal jatuh tempo pembayaran (DD-MM-YYYY).',                                                        'Opsional', '30-06-2026'],
+            ['tanggal_invoice',     'Tanggal invoice (DD-MM-YYYY disarankan; juga terima DD/MM/YYYY atau nama/singkatan bulan Indonesia). 1 klien hanya boleh punya 1 invoice per hari.', 'Ya', '01-06-2026'],
+            ['tanggal_jatuh_tempo', 'Tanggal jatuh tempo pembayaran (DD-MM-YYYY disarankan; juga terima DD/MM/YYYY atau nama/singkatan bulan Indonesia).', 'Opsional', '30-06-2026'],
             ['no_surat_jalan',      'Nomor surat jalan.',                                                                                  'Opsional', 'SJ-001'],
             ['keterangan_invoice',  'Keterangan invoice.',                                                                                 'Opsional', 'Pengiriman minggu 1'],
             ['no_invoice_resto',    'Nomor invoice/referensi asal dari resto. Wajib untuk B2B; opsional untuk B2C.',                        'B2B',      'SI-RESTO-0001'],

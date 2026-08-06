@@ -194,6 +194,7 @@ Route::prefix('opening-balance')->group(function () {
     Route::get('/', [OpeningBalanceController::class, 'index']);
     Route::get('/summary', [OpeningBalanceController::class, 'summary']);
     Route::get('/export', [OpeningBalanceController::class, 'export']);
+    Route::get('/export-count', [OpeningBalanceController::class, 'exportRowCount']);
     Route::post('/', [OpeningBalanceController::class, 'store']);
     Route::put('/{invoice}', [OpeningBalanceController::class, 'update']);
     Route::get('/{invoice}/details', [OpeningBalanceController::class, 'details']);

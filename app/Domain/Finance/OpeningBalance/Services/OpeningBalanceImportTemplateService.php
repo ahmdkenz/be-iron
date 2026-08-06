@@ -8,6 +8,7 @@ use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
 use PhpOffice\PhpSpreadsheet\Style\Border;
 use PhpOffice\PhpSpreadsheet\Style\Fill;
+use PhpOffice\PhpSpreadsheet\Style\NumberFormat;
 use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx as XlsxWriter;
 
@@ -78,7 +79,7 @@ class OpeningBalanceImportTemplateService
             ['# PT/B2B multi-resto: kalau 1 klien PT punya banyak no_urut berbeda (1 per resto asalnya, sebelum konsolidasi), TIDAK masalah — sistem otomatis menggabungkan SEMUA no_urut yang resolve ke klien PT yang sama jadi 1 Opening Balance gabungan, tiap invoice tetap membawa kode_resto/nama_resto asalnya sendiri.'],
             ['# PENTING: tanggal Opening Balance (kapan saldo ini dicatat) TIDAK diisi di file ini — diisi 1x di form upload ("Tanggal Saldo Awal / Cutover"), berlaku sama untuk SEMUA baris OB dalam file ini. tanggal_invoice_asal per baris tetap tanggal invoice historisnya masing-masing, boleh berbeda jauh antar baris.'],
             ['# Baris ITEM: no_urut & no_invoice_asal wajib (harus cocok baris OB terkait) — field lain (kode_barang, nama_barang, qty, satuan, harga_satuan) OPSIONAL, boleh dikosongkan untuk data lampau yang tidak diketahui detail itemnya. kode_barang opsional (dicari juga via nama_barang). subtotal opsional (otomatis = qty x harga_satuan jika kosong).'],
-            ['# Format tanggal: DD-MM-YYYY, atau nama bulan Indonesia (mis. 1 Januari 2023). Upload hanya bisa dilakukan oleh role ADMIN, MANAGER, atau SUPERVISOR. Baris [CONTOH] & baris diawali "#" otomatis diabaikan saat import.'],
+            ['# Format tanggal: DD-MM-YYYY (disarankan, mis. 15-01-2023) — juga menerima DD/MM/YYYY, DD.MM.YYYY, tahun 2 digit, atau nama/singkatan bulan Indonesia (mis. 1 Januari 2023, 1-Jan-23). Upload hanya bisa dilakukan oleh role ADMIN, MANAGER, atau SUPERVISOR. Baris [CONTOH] & baris diawali "#" otomatis diabaikan saat import.'],
         ];
 
         $rows[] = self::CSV_HEADERS;
@@ -139,6 +140,7 @@ class OpeningBalanceImportTemplateService
             'FF1B5E20',
             'FF2E7D32',
             'FFF1F8E9',
+            ['E'],
         );
     }
 
@@ -162,6 +164,8 @@ class OpeningBalanceImportTemplateService
      * @param  array<int,string>  $headers
      * @param  array<int,int>  $widths
      * @param  array<int,array<int,string>>  $examples  list of example rows
+     * @param  array<int,string>  $dateColumns  kolom (huruf) yang dipaksa FORMAT_TEXT supaya
+     *   Excel tidak otomatis mengubah tanggal yang diketik user (mis. "15-01-2022") jadi serial.
      */
     private function buildSheetSkeleton(
         Worksheet $sheet,
@@ -173,6 +177,7 @@ class OpeningBalanceImportTemplateService
         string $titleColor,
         string $headerColor,
         string $stripeColor,
+        array $dateColumns = [],
     ): void {
         $colLetters = array_map(
             fn ($i) => Coordinate::stringFromColumnIndex($i + 1),
@@ -233,6 +238,9 @@ class OpeningBalanceImportTemplateService
                 'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => $bg]],
                 'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_HAIR, 'color' => ['argb' => 'FFE0E0E0']]],
             ]);
+            foreach ($dateColumns as $col) {
+                $sheet->getStyle("{$col}{$row}")->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
+            }
             $sheet->getRowDimension($row)->setRowHeight(18);
         }
 
@@ -283,7 +291,7 @@ class OpeningBalanceImportTemplateService
             '9. Baris/grup yang gagal (klien tidak ditemukan/ambigu, data tidak valid, dsb) TIDAK menggagalkan baris/grup lain — hasil akhir menampilkan rincian baris mana yang gagal dan alasannya.',
             '10. Semua Opening Balance hasil import berstatus DRAFT dan tetap harus disetujui (approve) oleh Manager/Supervisor di halaman Opening Balance — sama seperti input manual.',
             '11. Hapus baris [CONTOH] sebelum upload atau biarkan (sistem otomatis mengabaikan baris berawalan "[CONTOH]" atau "#").',
-            '12. Format tanggal: DD-MM-YYYY (mis. 01-01-2023), atau nama bulan Indonesia (mis. 1 Januari 2023).',
+            '12. Format tanggal: DD-MM-YYYY (disarankan, mis. 01-01-2023) — sistem juga menerima DD/MM/YYYY, DD.MM.YYYY, tahun 2 digit (01-01-23), atau nama/singkatan bulan Indonesia (mis. 1 Januari 2023, 1-Jan-23).',
             '13. Upload hanya bisa dilakukan oleh role ADMIN, MANAGER, atau SUPERVISOR, lewat halaman "Import Master Data" — tab "Import Master Opening Balance". Tanggal cutover wajib dipilih di form sebelum upload bisa dimulai.',
             '14. Untuk data dalam jumlah sangat besar (mis. backfill saldo historis bertahunan), gunakan Template CSV — mendukung volume jauh lebih besar dari XLSX, dengan kolom tipe_baris (OB/ITEM) menggantikan sheet terpisah. Lihat petunjuk di dalam file CSV-nya.',
         ];
@@ -306,7 +314,7 @@ class OpeningBalanceImportTemplateService
             ['kode_resto',            'RESTO/B2C: WAJIB di baris pertama grup, divalidasi ketat ke MASTER DATA & menentukan resolusi klien. PT/B2B: OPSIONAL & freeform (TIDAK divalidasi, TIDAK memengaruhi resolusi klien) — boleh diisi di SETIAP baris kalau tiap invoice historisnya berasal dari resto berbeda, tersimpan sebagai info asal resto di Rincian Invoice Asal.', 'RESTO/B2C wajib, PT/B2B opsional', 'KD-001'],
             ['nama_resto',            'Nama resto (informasi tambahan, tidak divalidasi ketat). Untuk PT/B2B boleh diisi di setiap baris, mengikuti kode_resto pada baris yang sama.', 'Opsional', 'Nama Resto Contoh'],
             ['no_invoice_asal',       'Nomor invoice historis dari sistem lama (bebas format). Wajib kalau grup >1 baris, atau grup 1 baris tapi ingin dicatat sebagai rincian (bukan lump sum).', 'Kondisional (lihat poin 5)', 'INV-LAMA-001'],
-            ['tanggal_invoice_asal',  'Tanggal invoice historis ini diterbitkan (format DD-MM-YYYY atau nama bulan Indonesia) — boleh berbeda jauh antar baris dalam 1 grup. Wajib jika no_invoice_asal diisi.', 'Kondisional (lihat poin 5)', '15-01-2022'],
+            ['tanggal_invoice_asal',  'Tanggal invoice historis ini diterbitkan (DD-MM-YYYY disarankan; juga terima DD/MM/YYYY atau nama/singkatan bulan Indonesia) — boleh berbeda jauh antar baris dalam 1 grup. Wajib jika no_invoice_asal diisi.', 'Kondisional (lihat poin 5)', '15-01-2022'],
             ['sisa_tagihan_asal',     'Nominal sisa tagihan baris ini. Untuk grup lump sum (1 baris, no_invoice_asal kosong) = saldo_awal Opening Balance langsung. Untuk grup dengan rincian, dijumlahkan (SUM) jadi saldo_awal Opening Balance.', 'Ya', '15000000'],
             ['deskripsi',             'Deskripsi singkat invoice historis ini (dipakai kalau baris ini jadi rincian).', 'Opsional', 'Tagihan pengiriman Januari 2022'],
             ['keterangan',            'Keterangan tambahan. Untuk grup lump sum, dipakai sebagai keterangan Opening Balance. Untuk grup dengan rincian, dipakai sebagai keterangan per rincian invoice ini.', 'Opsional', '-'],

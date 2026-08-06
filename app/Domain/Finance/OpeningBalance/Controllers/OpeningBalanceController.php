@@ -13,6 +13,7 @@ use App\Domain\Finance\OpeningBalance\Services\OpeningBalanceImportTemplateServi
 use App\Http\Controllers\Controller;
 use App\Models\Invoice;
 use App\Models\KlienAr;
+use App\Models\OpeningBalanceDetailItem;
 use App\Models\OpeningBalanceImportBatch;
 use App\Support\Helpers\ArFilterScope;
 use App\Support\Helpers\RoleHelper;
@@ -352,22 +353,69 @@ class OpeningBalanceController extends Controller
 
     // ─── Export ───────────────────────────────────────────────────────────────
 
-    public function export(Request $request): BinaryFileResponse|JsonResponse
+    /**
+     * Filter export Opening Balance, sudah termasuk scoping role via ArFilterScope —
+     * dipakai bersama oleh streamXlsxExport(), streamCsvExport(), dan exportRowCount()
+     * supaya definisi filter tidak terduplikasi.
+     */
+    private function resolveExportFilters(Request $request): array
     {
-        $this->authorizeViewOpeningBalance();
-
-        if (! class_exists('ZipArchive')) {
-            return $this->errorResponse('Ekstensi PHP "zip" tidak aktif. Aktifkan extension=zip pada php.ini lalu restart server.', 500);
-        }
-
-        $user = auth()->user();
         $filters = $request->only([
             'search', 'status', 'klien_ar_id', 'karyawan_id',
             'tanggal_dari', 'tanggal_sampai', 'approval_status',
         ]);
         $filters['is_opening_balance'] = true;
-        ArFilterScope::apply($filters, $user);
+        ArFilterScope::apply($filters, auth()->user());
 
+        return $filters;
+    }
+
+    /**
+     * Dispatcher format export. Default 'xlsx' (BUKAN 'csv' seperti Invoice reguler) —
+     * exportDirExcel()/exportDirExcelB2B() di FE (tampilan Director) masih memanggil
+     * endpoint ini tanpa query 'format', jadi default harus tetap XLSX supaya perilaku
+     * lama mereka tidak berubah.
+     */
+    public function export(Request $request): BinaryFileResponse|StreamedResponse|JsonResponse
+    {
+        $this->authorizeViewOpeningBalance();
+
+        $format = strtolower((string) $request->query('format', 'xlsx'));
+
+        if ($format === 'csv') {
+            return $this->streamCsvExport($request);
+        }
+
+        if (! class_exists('ZipArchive')) {
+            return $this->errorResponse('Ekstensi PHP "zip" tidak aktif. Aktifkan extension=zip pada php.ini lalu restart server.', 500);
+        }
+
+        return $this->streamXlsxExport($request);
+    }
+
+    /**
+     * Jumlah baris (level-item) yang akan dihasilkan export untuk filter yang sama —
+     * dipakai FE untuk peringatan real-time XLSX vs CSV di modal Export Opening Balance.
+     * Sengaja ringan: cuma WHERE ... IN + COUNT, tanpa hydrate model.
+     */
+    public function exportRowCount(Request $request): JsonResponse
+    {
+        $this->authorizeViewOpeningBalance();
+
+        $filters = $this->resolveExportFilters($request);
+        $obIds = $this->service->getExportIds($filters);
+
+        $rowCount = OpeningBalanceDetailItem::whereHas(
+            'obDetail',
+            fn ($q) => $q->whereIn('invoice_id', $obIds)
+        )->count();
+
+        return $this->successResponse(['row_count' => $rowCount]);
+    }
+
+    private function streamXlsxExport(Request $request): BinaryFileResponse
+    {
+        $filters = $this->resolveExportFilters($request);
         $records = $this->service->getAllForExport($filters);
 
         $spreadsheet = new Spreadsheet;
@@ -723,6 +771,112 @@ class OpeningBalanceController extends Controller
             $sheet->getRowDimension($row)->setRowHeight(24);
             $row++;
         }
+    }
+
+    /**
+     * Export CSV — gabungkan ketiga sheet data (Data OB, Rincian Invoice Asal, Item
+     * Invoice Asal) jadi 1 baris per item, kolom berdampingan dipisah 1 kolom kosong per
+     * grup (meniru InvoiceController::streamCsvExport()). Sheet "Keterangan" (legend statis)
+     * sengaja tidak ikut, karena tidak ada isi data. OB tanpa detail, atau detail tanpa item,
+     * tetap ditulis minimal 1 baris (padding kolom kosong) supaya tidak hilang dari CSV —
+     * mirror perilaku buildExportObSheet()/buildExportDetailSheet() yang selalu menampilkan
+     * tiap OB/detail apa pun isinya.
+     */
+    private function streamCsvExport(Request $request): StreamedResponse
+    {
+        $filters = $this->resolveExportFilters($request);
+        $records = $this->service->getAllForExport($filters);
+
+        $headerOb = [
+            'No. Opening Balance', 'Klien', 'Kode Klien', 'Entitas Penagih', 'Tanggal OB',
+            'Saldo Awal', 'Total Terbayar', 'Sisa Tagihan', 'Keterangan', 'Status',
+            'Approval', 'Dibuat Oleh', 'Tanggal Dibuat',
+        ];
+        $headerDetail = [
+            'No. Opening Balance', 'No. Invoice Asal', 'Tanggal Invoice Asal', 'Deskripsi',
+            'Jumlah Tagihan Asal', 'Sisa Tagihan Asal', 'Keterangan', 'Kode Resto', 'Nama Resto', 'Jumlah Item',
+        ];
+        $headerItem = [
+            'No. Opening Balance', 'No. Invoice Asal', 'Kode Barang', 'Nama Barang',
+            'Qty', 'Satuan', 'Harga Satuan', 'Subtotal', 'Keterangan',
+        ];
+        $header = array_merge($headerOb, [''], $headerDetail, [''], $headerItem);
+
+        $detailBlank = array_fill(0, count($headerDetail), '');
+        $itemBlank = array_fill(0, count($headerItem), '');
+
+        return response()->streamDownload(function () use ($records, $header, $detailBlank, $itemBlank) {
+            $handle = fopen('php://output', 'w');
+            fprintf($handle, chr(0xEF).chr(0xBB).chr(0xBF)); // UTF-8 BOM
+            // Titik koma, bukan koma — locale Excel Indonesia pakai ";" sebagai list
+            // separator sistem, jadi file terbuka langsung terbagi rapi per kolom.
+            fputcsv($handle, $header, ';');
+
+            foreach ($records as $inv) {
+                $obRow = [
+                    $inv->no_invoice,
+                    $inv->klienAr?->nama_klien ?? '-',
+                    $inv->klienAr?->kode_klien ?? '-',
+                    $inv->perusahaan?->nama_singkatan_perusahaan ?? '-',
+                    $inv->tanggal_invoice ? Carbon::parse($inv->tanggal_invoice)->format('d-m-Y') : '-',
+                    (float) $inv->subtotal,
+                    (float) $inv->total_pembayaran,
+                    (float) $inv->sisa_tagihan,
+                    $inv->keterangan ?? '-',
+                    $inv->status ?? '-',
+                    $inv->approval_status ?? '-',
+                    $inv->createdBy?->username ?? '-',
+                    $inv->created_at ? Carbon::parse($inv->created_at)->format('d-m-Y H:i') : '-',
+                ];
+
+                if ($inv->openingBalanceDetails->isEmpty()) {
+                    fputcsv($handle, array_merge($obRow, [''], $detailBlank, [''], $itemBlank), ';');
+
+                    continue;
+                }
+
+                foreach ($inv->openingBalanceDetails as $detail) {
+                    $detailRow = [
+                        $inv->no_invoice,
+                        $detail->no_invoice_asal,
+                        $detail->tanggal_invoice_asal ? Carbon::parse($detail->tanggal_invoice_asal)->format('d-m-Y') : '-',
+                        $detail->deskripsi,
+                        (float) $detail->jumlah_tagihan_asal,
+                        (float) $detail->sisa_tagihan_asal,
+                        $detail->keterangan ?? '-',
+                        $detail->kode_resto ?? '-',
+                        $detail->nama_resto ?? '-',
+                        $detail->items->count(),
+                    ];
+
+                    if ($detail->items->isEmpty()) {
+                        fputcsv($handle, array_merge($obRow, [''], $detailRow, [''], $itemBlank), ';');
+
+                        continue;
+                    }
+
+                    foreach ($detail->items as $item) {
+                        $itemRow = [
+                            $inv->no_invoice,
+                            $detail->no_invoice_asal,
+                            $item->kode_barang ?? $item->barang?->kode_barang ?? '-',
+                            $item->nama_barang,
+                            (float) $item->qty,
+                            $item->satuan ?? '-',
+                            (float) $item->harga_satuan,
+                            (float) $item->subtotal,
+                            $item->keterangan ?? '-',
+                        ];
+
+                        fputcsv($handle, array_merge($obRow, [''], $detailRow, [''], $itemRow), ';');
+                    }
+                }
+            }
+
+            fclose($handle);
+        }, 'Data Opening Balance-'.now()->format('Ymd-His').'.csv', [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+        ]);
     }
 
     // ─── Private: Auth Helpers ────────────────────────────────────────────────

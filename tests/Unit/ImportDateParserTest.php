@@ -17,6 +17,27 @@ class ImportDateParserTest extends TestCase
         $this->assertSame('2026-05-28', ImportDateParser::parse('2026-05-28'));
     }
 
+    public function test_format_dd_mm_yyyy_slash(): void
+    {
+        $this->assertSame('2026-05-28', ImportDateParser::parse('28/05/2026'));
+    }
+
+    public function test_format_dd_mm_yyyy_titik(): void
+    {
+        $this->assertSame('2026-05-28', ImportDateParser::parse('28.05.2026'));
+    }
+
+    public function test_format_yyyy_mm_dd_slash(): void
+    {
+        $this->assertSame('2026-05-28', ImportDateParser::parse('2026/05/28'));
+    }
+
+    public function test_format_dd_mm_yy_2_digit_tahun(): void
+    {
+        $this->assertSame('2026-05-28', ImportDateParser::parse('28-05-26'));
+        $this->assertSame('2026-05-28', ImportDateParser::parse('28/05/26'));
+    }
+
     public function test_nama_bulan_indonesia(): void
     {
         $this->assertSame('2026-05-28', ImportDateParser::parse('28 Mei 2026'));
@@ -61,6 +82,29 @@ class ImportDateParserTest extends TestCase
     public function test_singkatan_bulan_inggris_salah_mengembalikan_null(): void
     {
         $this->assertNull(ImportDateParser::parse('01-Xyz-26'));
+    }
+
+    public function test_semua_singkatan_bulan_indonesia(): void
+    {
+        $bulan = [
+            'Jan' => '01', 'Feb' => '02', 'Mar' => '03', 'Apr' => '04',
+            'Mei' => '05', 'Jun' => '06', 'Jul' => '07', 'Agu' => '08', 'Ags' => '08',
+            'Sep' => '09', 'Okt' => '10', 'Nov' => '11', 'Des' => '12',
+        ];
+
+        foreach ($bulan as $nama => $num) {
+            $this->assertSame("2026-{$num}-01", ImportDateParser::parse("01-{$nama}-26"), "Gagal parse bulan {$nama}");
+        }
+    }
+
+    public function test_singkatan_bulan_dengan_tahun_4_digit(): void
+    {
+        $this->assertSame('2026-12-01', ImportDateParser::parse('01-Des-2026'));
+    }
+
+    public function test_singkatan_bulan_pemisah_spasi(): void
+    {
+        $this->assertSame('2026-08-01', ImportDateParser::parse('01 Ags 2026'));
     }
 
     public function test_serial_excel_numerik(): void
