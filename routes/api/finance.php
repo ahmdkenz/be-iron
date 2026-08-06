@@ -60,6 +60,7 @@ Route::prefix('invoices')->group(function () {
     Route::get('/export-count',         [InvoiceController::class, 'exportRowCount']);
     Route::get('/export-b2b-delivery',  [InvoiceController::class, 'exportB2BDelivery']);
     Route::get('/{id}/print', [InvoiceController::class, 'print']);
+    Route::get('/{id}/print/status', [InvoiceController::class, 'printStatus']);
     Route::get('/carryover', [InvoiceController::class, 'carryover']);
     Route::get('/outstanding', [InvoiceController::class, 'outstanding']);
     Route::get('/preview-no', [InvoiceController::class, 'previewNo']);

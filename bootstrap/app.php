@@ -37,7 +37,7 @@ return Application::configure(basePath: dirname(__DIR__))
         // aman dipanggil ulang tiap menit oleh scheduler tanpa menumpuk daemon
         // (withoutOverlapping() jaga-jaga kalau proses sebelumnya masih berjalan
         // saat antrian sedang ramai/besar, mis. import rekening koran 1 tahun).
-        $schedule->command('queue:work database --queue=bank-statement,invoice-import,default --stop-when-empty --tries=1 --timeout=1800')
+        $schedule->command('queue:work database --queue=bank-statement,invoice-import,invoice-print,default --stop-when-empty --tries=1 --timeout=1800')
             ->everyMinute()
             ->withoutOverlapping();
 

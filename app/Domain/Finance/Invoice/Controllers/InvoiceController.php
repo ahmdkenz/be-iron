@@ -8,8 +8,9 @@ use App\Domain\Finance\Invoice\Requests\UpdateInvoiceRequest;
 use App\Domain\Finance\Invoice\Resources\InvoiceItemResource;
 use App\Domain\Finance\Invoice\Resources\InvoiceListResource;
 use App\Domain\Finance\Invoice\Resources\InvoiceResource;
+use App\Domain\Finance\Invoice\Jobs\GenerateOpeningBalancePrintJob;
 use App\Domain\Finance\Invoice\Services\FonnteApiClient;
-use App\Domain\Finance\Invoice\Services\InvoicePrintItemAggregator;
+use App\Domain\Finance\Invoice\Services\InvoicePrintCacheService;
 use App\Domain\Finance\Invoice\Services\InvoiceService;
 use App\Http\Controllers\Controller;
 use App\Models\BulkPrintToken;
@@ -22,7 +23,6 @@ use App\Models\Resto;
 use Carbon\Carbon;
 use App\Support\Helpers\ArFilterScope;
 use App\Support\Helpers\RoleHelper;
-use App\Support\Helpers\SignatureBarcodeHelper;
 use App\Support\Traits\ApiResponse;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\JsonResponse;
@@ -52,6 +52,7 @@ class InvoiceController extends Controller
     public function __construct(
         private readonly InvoiceService $service,
         private readonly FonnteApiClient $fonnte,
+        private readonly InvoicePrintCacheService $printCache,
     ) {}
 
     public function index(Request $request): JsonResponse
@@ -911,7 +912,7 @@ class InvoiceController extends Controller
             ->deleteFileAfterSend(true);
     }
 
-    public function publicPrint(string $token): Response
+    public function publicPrint(string $token): Response|StreamedResponse
     {
         $invoice = \App\Models\Invoice::where('prepared_token', $token)->firstOrFail();
         abort_if(
@@ -937,55 +938,59 @@ class InvoiceController extends Controller
                 ->where('status', 'APPROVED'),
         ]);
 
-        $regularInvoicesInPeriod = collect();
-        if ($invoice->is_opening_balance && $invoice->klien_ar_id && $invoice->tanggal_invoice) {
-            $bulanAwal = \Carbon\Carbon::parse($invoice->tanggal_invoice)->startOfMonth();
-            $bulanAkhir = \Carbon\Carbon::parse($invoice->tanggal_invoice)->endOfMonth();
-            $regularInvoicesInPeriod = Invoice::query()
-                ->where('klien_ar_id', $invoice->klien_ar_id)
-                ->where('perusahaan_id', $invoice->perusahaan_id)
-                ->where('is_opening_balance', false)
-                ->whereBetween('tanggal_invoice', [
-                    $bulanAwal->toDateString(),
-                    $bulanAkhir->toDateString(),
-                ])
-                ->orderBy('tanggal_invoice', 'asc')
-                ->get();
-        }
-
-        if ($regularInvoicesInPeriod->isNotEmpty()) {
-            $regularInvoicesInPeriod->load([
-                'klienAr.karyawanAr.perusahaan',
-                'klienAr.perusahaan',
-                'klienAr.resto.investor',
-                'perusahaan',
-                'karyawan.perusahaan',
-                'resto',
-                'items.barang',
-                'pembayarans',
-                'createdBy.karyawan',
-                'submittedBy.karyawan',
-                'approvedBy.karyawan',
-            ]);
-        }
-
-        $this->attachPrintItems($invoice);
-
-        $signatureData = $this->buildSignatureData($invoice);
         $filename = 'Invoice-' . str_replace(['/', '\\', ' '], '-', $invoice->no_invoice) . '.pdf';
 
-        return Pdf::loadView('finance.invoice-print', compact('invoice', 'signatureData', 'regularInvoicesInPeriod'))
-            ->setPaper('a4', 'portrait')
-            ->setOptions([
-                'isHtml5ParserEnabled' => true,
-                'isRemoteEnabled'      => false,
-                'defaultFont'          => 'Arial',
-                'dpi'                  => 96,
-            ])
-            ->stream($filename);
+        // Kalau sudah pernah di-generate (biasanya lewat tombol Cetak internal
+        // sebelum di-share), langsung sajikan dari cache — link WA jadi instan.
+        $version = null;
+        if ($invoice->is_opening_balance) {
+            $version = $this->printCache->resolveVersion($invoice);
+            if ($this->printCache->isReady($invoice->id, $version)) {
+                return $this->printCache->response($invoice->id, $version, $filename);
+            }
+        }
+
+        // Belum ada cache: generate sinkron seperti sebelumnya (perilaku link
+        // publik tidak berubah/tidak berisiko), tapi hasilnya disimpan juga
+        // supaya percobaan berikutnya (share link maupun tombol Cetak) instan.
+        [$regularInvoicesInPeriod, $regularInvoicesSignatureData] = $this->service
+            ->buildOpeningBalanceRegularInvoicesPrintData($invoice);
+
+        $this->service->attachPrintItems($invoice);
+        $signatureData = $this->service->buildSignatureData($invoice);
+
+        // compact() sengaja tidak dipakai di dalam fn() ini — lihat komentar serupa
+        // di GenerateOpeningBalancePrintJob::handle().
+        $viewData = [
+            'invoice'                      => $invoice,
+            'signatureData'                => $signatureData,
+            'regularInvoicesInPeriod'      => $regularInvoicesInPeriod,
+            'regularInvoicesSignatureData' => $regularInvoicesSignatureData,
+        ];
+
+        $pdfBinary = $this->printCache->withBoostedMemoryLimit(
+            fn () => Pdf::loadView('finance.invoice-print', $viewData)
+                ->setPaper('a4', 'portrait')
+                ->setOptions([
+                    'isHtml5ParserEnabled' => true,
+                    'isRemoteEnabled'      => false,
+                    'defaultFont'          => 'Arial',
+                    'dpi'                  => 96,
+                ])
+                ->output()
+        );
+
+        if ($invoice->is_opening_balance && $version) {
+            $this->printCache->store($invoice->id, $version, $pdfBinary);
+        }
+
+        return response($pdfBinary, 200, [
+            'Content-Type'        => 'application/pdf',
+            'Content-Disposition' => 'inline; filename="' . $filename . '"',
+        ]);
     }
 
-    public function print(Request $request, int $id): Response|string
+    public function print(Request $request, int $id): Response|StreamedResponse|JsonResponse|string
     {
         $invoice = $this->service->findForPrintOrFail($id);
 
@@ -997,51 +1002,37 @@ class InvoiceController extends Controller
             'Opening balance belum disetujui, dokumen belum dapat dicetak'
         );
 
-        $regularInvoicesInPeriod = collect();
-        if ($invoice->is_opening_balance && $invoice->klien_ar_id && $invoice->tanggal_invoice) {
-            $bulanAwal = \Carbon\Carbon::parse($invoice->tanggal_invoice)->startOfMonth();
-            $bulanAkhir = \Carbon\Carbon::parse($invoice->tanggal_invoice)->endOfMonth();
-            $regularInvoicesInPeriod = Invoice::query()
-                ->where('klien_ar_id', $invoice->klien_ar_id)
-                ->where('perusahaan_id', $invoice->perusahaan_id)
-                ->where('is_opening_balance', false)
-                ->whereBetween('tanggal_invoice', [
-                    $bulanAwal->toDateString(),
-                    $bulanAkhir->toDateString(),
-                ])
-                ->orderBy('tanggal_invoice', 'asc')
-                ->get();
+        $filename = 'Invoice-' . str_replace(['/', '\\', ' '], '-', $invoice->no_invoice) . '.pdf';
+
+        // OB bisa jadi puluhan-ratusan halaman replika invoice reguler (lihat
+        // catatan performa cetak Opening Balance) — generate PDF-nya dipindah ke
+        // background job + di-cache di disk, supaya tidak terikat 1 request/
+        // timeout web-server. Mode ?html= (preview developer) & invoice biasa
+        // tetap sinkron seperti sebelumnya karena sudah cepat.
+        if ($invoice->is_opening_balance && !$request->has('html')) {
+            $version = $this->printCache->resolveVersion($invoice);
+
+            if ($this->printCache->isReady($invoice->id, $version)) {
+                return $this->printCache->response($invoice->id, $version, $filename);
+            }
+
+            if ($this->printCache->markDispatched($invoice->id, $version)) {
+                $this->printCache->clearFailureMessage($invoice->id, $version);
+                GenerateOpeningBalancePrintJob::dispatch($invoice->id, $version);
+            }
+
+            return response()->json(['status' => 'processing'], 202);
         }
 
-        if ($regularInvoicesInPeriod->isNotEmpty()) {
-            $regularInvoicesInPeriod->load([
-                'klienAr.karyawanAr.perusahaan',
-                'klienAr.perusahaan',
-                'klienAr.resto.investor',
-                'perusahaan',
-                'karyawan.perusahaan',
-                'resto',
-                'items.barang',
-                'pembayarans',
-                'createdBy.karyawan',
-                'submittedBy.karyawan',
-                'approvedBy.karyawan',
-            ]);
-        }
+        [$regularInvoicesInPeriod, $regularInvoicesSignatureData] = $this->service
+            ->buildOpeningBalanceRegularInvoicesPrintData($invoice);
 
-        $this->attachPrintItems($invoice);
-        $regularInvoicesInPeriod->each(fn ($inv) => $this->attachPrintItems($inv));
-
-        $signatureData = $this->buildSignatureData($invoice);
-        $regularInvoicesSignatureData = $regularInvoicesInPeriod
-            ->mapWithKeys(fn ($inv) => [$inv->id => $this->buildSignatureData($inv)])
-            ->all();
+        $this->service->attachPrintItems($invoice);
+        $signatureData = $this->service->buildSignatureData($invoice);
 
         if ($request->has('html')) {
             return view('finance.invoice-print', compact('invoice', 'signatureData', 'regularInvoicesInPeriod', 'regularInvoicesSignatureData'))->render();
         }
-
-        $filename = 'Invoice-' . str_replace(['/', '\\', ' '], '-', $invoice->no_invoice) . '.pdf';
 
         return Pdf::loadView('finance.invoice-print', compact('invoice', 'signatureData', 'regularInvoicesInPeriod', 'regularInvoicesSignatureData'))
             ->setPaper('a4', 'portrait')
@@ -1052,6 +1043,33 @@ class InvoiceController extends Controller
                 'dpi'                  => 96,
             ])
             ->stream($filename);
+    }
+
+    /**
+     * Dipoll FE saat print() membalas 202 (job masih diproses di background).
+     */
+    public function printStatus(int $id): JsonResponse
+    {
+        $invoice = $this->service->findForPrintOrFail($id);
+
+        $this->authorizeInvoiceAccess($invoice);
+
+        if (!$invoice->is_opening_balance) {
+            return response()->json(['status' => 'ready']);
+        }
+
+        $version = $this->printCache->resolveVersion($invoice);
+
+        if ($this->printCache->isReady($invoice->id, $version)) {
+            return response()->json(['status' => 'ready']);
+        }
+
+        $failureMessage = $this->printCache->getFailureMessage($invoice->id, $version);
+        if ($failureMessage) {
+            return response()->json(['status' => 'failed', 'message' => $failureMessage]);
+        }
+
+        return response()->json(['status' => 'processing']);
     }
 
     /**
@@ -1190,9 +1208,9 @@ class InvoiceController extends Controller
             'tanggal_sampai'    => $invoices->max('tanggal_invoice')?->format('Y-m-d'),
         ];
 
-        $invoices->each(fn($inv) => $this->attachPrintItems($inv));
+        $invoices->each(fn($inv) => $this->service->attachPrintItems($inv));
         $signaturesById = $invoices
-            ->mapWithKeys(fn($inv) => [$inv->id => $this->buildSignatureData($inv)])
+            ->mapWithKeys(fn($inv) => [$inv->id => $this->service->buildSignatureData($inv)])
             ->all();
 
         $restoGroups = $this->groupInvoicesByResto($invoices);
@@ -1529,37 +1547,4 @@ class InvoiceController extends Controller
             ->deleteFileAfterSend(true);
     }
 
-    private function buildSignatureData($invoice): array
-    {
-        if ($invoice->is_opening_balance) {
-            $preparedByUser = $invoice->submittedBy ?: $invoice->createdBy;
-            $preparedByName = $preparedByUser?->karyawan?->nama_karyawan
-                ?? $preparedByUser?->username
-                ?? '___________________';
-
-            $preparedPayload = SignatureBarcodeHelper::buildObPreparedPayload($invoice, $preparedByName);
-        } else {
-            $preparedByName = $invoice->klienAr?->karyawanAr?->nama_karyawan ?? '___________________';
-
-            $preparedPayload = SignatureBarcodeHelper::buildInvoicePreparedPayload($invoice, $preparedByName);
-        }
-
-        return [
-            'prepared_by_name' => $preparedByName,
-            'prepared_qr_src'  => SignatureBarcodeHelper::generateDataUri($preparedPayload, 250),
-            'approved_by_name' => null,
-            'approved_qr_src'  => null,
-        ];
-    }
-
-    /**
-     * Item khusus untuk cetak: invoice PT diringkas (lihat InvoicePrintItemAggregator),
-     * invoice RESTO/B2C tetap memakai item asli.
-     */
-    private function attachPrintItems(Invoice $invoice): void
-    {
-        $invoice->printItems = $invoice->klienAr?->tipe_klien === 'PT'
-            ? InvoicePrintItemAggregator::aggregate($invoice->items)
-            : $invoice->items;
-    }
 }

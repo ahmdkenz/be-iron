@@ -19,7 +19,9 @@ use App\Models\PendapatanDiMuka;
 use App\Models\User;
 use App\Support\Helpers\InvestorIdentityMatcher;
 use App\Support\Helpers\RoleHelper;
+use App\Support\Helpers\SignatureBarcodeHelper;
 use Carbon\Carbon;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -90,6 +92,101 @@ class InvoiceService
         abort_if(! $invoice, 404, 'Invoice tidak ditemukan');
 
         return $invoice;
+    }
+
+    /**
+     * Query dasar invoice reguler klien tsb pada bulan kalender yang sama dengan
+     * $invoice. Dipakai baik untuk mengambil data lengkap Halaman 2+ cetak Opening
+     * Balance maupun untuk agregat murah (COUNT/MAX/SUM) saat menghitung hash versi
+     * cache cetak — lihat InvoicePrintCacheService. Pemanggil wajib memastikan
+     * klien_ar_id & tanggal_invoice terisi.
+     */
+    public function regularInvoicesInPeriodQuery(Invoice $invoice): Builder
+    {
+        $bulanAwal  = Carbon::parse($invoice->tanggal_invoice)->startOfMonth();
+        $bulanAkhir = Carbon::parse($invoice->tanggal_invoice)->endOfMonth();
+
+        return Invoice::query()
+            ->where('klien_ar_id', $invoice->klien_ar_id)
+            ->where('perusahaan_id', $invoice->perusahaan_id)
+            ->where('is_opening_balance', false)
+            ->whereBetween('tanggal_invoice', [$bulanAwal->toDateString(), $bulanAkhir->toDateString()]);
+    }
+
+    /**
+     * Data Halaman 2+ cetak Opening Balance: replika invoice reguler klien tsb di
+     * bulan yang sama + data QR masing-masing. Dipakai bersama oleh
+     * InvoiceController::print()/publicPrint() (sinkron) dan
+     * GenerateOpeningBalancePrintJob (async) supaya tidak ada 2 sumber logika yang
+     * bisa menghasilkan cetakan berbeda untuk OB yang sama.
+     *
+     * @return array{0: Collection, 1: array}
+     */
+    public function buildOpeningBalanceRegularInvoicesPrintData(Invoice $invoice): array
+    {
+        $regularInvoicesInPeriod = collect();
+
+        if ($invoice->is_opening_balance && $invoice->klien_ar_id && $invoice->tanggal_invoice) {
+            $regularInvoicesInPeriod = $this->regularInvoicesInPeriodQuery($invoice)
+                ->orderBy('tanggal_invoice', 'asc')
+                ->get();
+        }
+
+        if ($regularInvoicesInPeriod->isNotEmpty()) {
+            // Hanya relasi yang benar-benar dipakai saat render replika invoice reguler
+            // di Halaman 2+ (lihat resolveEntitasPenagih() & buildSignatureData() di
+            // bawah) — klienAr.perusahaan, klienAr.resto.investor, resto, pembayarans,
+            // dan createdBy/submittedBy/approvedBy.karyawan tidak pernah dibaca blade
+            // untuk invoice reguler, jadi sengaja tidak di-eager-load.
+            $regularInvoicesInPeriod->load([
+                'klienAr.karyawanAr.perusahaan',
+                'perusahaan',
+                'karyawan.perusahaan',
+                'items.barang',
+            ]);
+        }
+
+        $regularInvoicesInPeriod->each(fn (Invoice $inv) => $this->attachPrintItems($inv));
+
+        $regularInvoicesSignatureData = $regularInvoicesInPeriod
+            ->mapWithKeys(fn (Invoice $inv) => [$inv->id => $this->buildSignatureData($inv)])
+            ->all();
+
+        return [$regularInvoicesInPeriod, $regularInvoicesSignatureData];
+    }
+
+    /**
+     * Item khusus untuk cetak: invoice PT diringkas (lihat InvoicePrintItemAggregator),
+     * invoice RESTO/B2C tetap memakai item asli.
+     */
+    public function attachPrintItems(Invoice $invoice): void
+    {
+        $invoice->printItems = $invoice->klienAr?->tipe_klien === 'PT'
+            ? InvoicePrintItemAggregator::aggregate($invoice->items)
+            : $invoice->items;
+    }
+
+    public function buildSignatureData(Invoice $invoice): array
+    {
+        if ($invoice->is_opening_balance) {
+            $preparedByUser = $invoice->submittedBy ?: $invoice->createdBy;
+            $preparedByName = $preparedByUser?->karyawan?->nama_karyawan
+                ?? $preparedByUser?->username
+                ?? '___________________';
+
+            $preparedPayload = SignatureBarcodeHelper::buildObPreparedPayload($invoice, $preparedByName);
+        } else {
+            $preparedByName = $invoice->klienAr?->karyawanAr?->nama_karyawan ?? '___________________';
+
+            $preparedPayload = SignatureBarcodeHelper::buildInvoicePreparedPayload($invoice, $preparedByName);
+        }
+
+        return [
+            'prepared_by_name' => $preparedByName,
+            'prepared_qr_src'  => SignatureBarcodeHelper::generateDataUri($preparedPayload, 250),
+            'approved_by_name' => null,
+            'approved_qr_src'  => null,
+        ];
     }
 
     /**
