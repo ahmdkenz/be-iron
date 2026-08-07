@@ -13,8 +13,29 @@ class KlienArService
 {
     public function __construct(private readonly KlienArRepository $repository) {}
 
+    /**
+     * Dipakai import (banyak KlienAr baru dalam 1 run) supaya generateKodeKlien() tidak
+     * mengulang COUNT(*) penuh untuk setiap baris — cukup 1x di awal, lalu increment di
+     * memori. Aman selama satu run PHP proses batch-nya secara tunggal (kondisi yang sama
+     * seperti job import lain, lihat EndingBalanceSyncBatcher untuk pola serupa).
+     */
+    private ?int $kodeKlienCounter = null;
+
+    public function primeKodeKlienCounter(): void
+    {
+        $this->kodeKlienCounter = KlienAr::withTrashed()
+            ->where('kode_klien', 'like', 'CL%')
+            ->count();
+    }
+
     public function generateKodeKlien(?string $tipeKlien = null): string
     {
+        if ($this->kodeKlienCounter !== null) {
+            $seq = str_pad(++$this->kodeKlienCounter, 3, '0', STR_PAD_LEFT);
+
+            return "CL{$seq}";
+        }
+
         $count = KlienAr::withTrashed()
             ->where('kode_klien', 'like', 'CL%')
             ->count();
@@ -45,7 +66,7 @@ class KlienArService
         return $klien;
     }
 
-    public function create(KlienArDTO $dto): KlienAr
+    public function create(KlienArDTO $dto, bool $eagerLoad = true): KlienAr
     {
         $perusahaanId = $dto->perusahaan_id
             ?? ($dto->tipe_klien === 'RESTO' && $dto->resto_id
@@ -64,10 +85,10 @@ class KlienArService
             'resto_id'      => $dto->resto_id,
             'status'        => $dto->status,
             'created_by'    => auth()->id(),
-        ]);
+        ], $eagerLoad);
     }
 
-    public function update(KlienAr $klien, KlienArDTO $dto): KlienAr
+    public function update(KlienAr $klien, KlienArDTO $dto, bool $eagerLoad = true): KlienAr
     {
         $perusahaanId = $dto->perusahaan_id
             ?? ($dto->tipe_klien === 'RESTO' && $dto->resto_id
@@ -88,7 +109,7 @@ class KlienArService
             'resto_id'      => $dto->resto_id,
             'status'        => $dto->status,
             'updated_by'    => auth()->id(),
-        ]);
+        ], $eagerLoad);
     }
 
     // PIC Resto (karyawan_id) adalah sumber kebenaran untuk PIC AR Client tipe RESTO —

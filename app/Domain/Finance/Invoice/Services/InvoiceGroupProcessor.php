@@ -48,6 +48,9 @@ class InvoiceGroupProcessor
      * @param  ?array $existingInvoiceMap  Preloaded map dari InvoiceImportService::buildApplyExistingMap()
      *                              (key: "klienArId|Y-m-d"). Null berarti query per-grup seperti biasa
      *                              (dipakai caller lain di luar import chunk).
+     * @param  ?array $klienMap  Preloaded map klien_ar_id => KlienAr (with perusahaan) dari
+     *                              InvoiceImportService::buildApplyKlienMap(). Null berarti
+     *                              query per-grup seperti biasa (dipakai caller lain di luar import chunk).
      * @return ProcessGroupResult
      */
     public function processGroup(
@@ -56,6 +59,7 @@ class InvoiceGroupProcessor
         array $items,
         array $lockedEbMap,
         ?array $existingInvoiceMap = null,
+        ?array $klienMap = null,
     ): ProcessGroupResult {
         $klienArId = (int) $headerData['klien_ar_id'];
         $tanggal   = $headerData['tanggal_invoice'];
@@ -79,7 +83,7 @@ class InvoiceGroupProcessor
             return $this->updateInvoice($existingInvoice, $items);
         }
 
-        return $this->createInvoice($tipeInvoice, $klienArId, $headerData, $items);
+        return $this->createInvoice($tipeInvoice, $klienArId, $headerData, $items, $klienMap);
     }
 
     /**
@@ -161,9 +165,12 @@ class InvoiceGroupProcessor
         int    $klienArId,
         array  $headerData,
         array  $items,
+        ?array $klienMap = null,
     ): ProcessGroupResult {
         try {
-            $klien     = KlienAr::with('perusahaan')->find($klienArId);
+            $klien     = $klienMap !== null
+                ? ($klienMap[$klienArId] ?? KlienAr::with('perusahaan')->find($klienArId))
+                : KlienAr::with('perusahaan')->find($klienArId);
             $tanggal   = $headerData['tanggal_invoice'];
             $carryover = $this->service->getMonthlyCarryover($klienArId, $tanggal);
             $noInvoice = $tipeInvoice === 'B2B'

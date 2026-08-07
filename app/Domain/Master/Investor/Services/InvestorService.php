@@ -29,7 +29,7 @@ class InvestorService
         return $investor;
     }
 
-    public function create(InvestorDTO $dto): Investor
+    public function create(InvestorDTO $dto, bool $eagerLoad = true): Investor
     {
         return $this->repository->create([
             'nama_investor'   => $dto->nama_investor,
@@ -41,10 +41,10 @@ class InvestorService
             'kode_cabang'     => $dto->kode_cabang,
             'id_cabang'       => $dto->id_cabang,
             'status'          => $dto->status,
-        ]);
+        ], $eagerLoad);
     }
 
-    public function update(Investor $investor, InvestorDTO $dto): Investor
+    public function update(Investor $investor, InvestorDTO $dto, bool $eagerLoad = true): Investor
     {
         return $this->repository->update($investor, [
             'nama_investor'   => $dto->nama_investor,
@@ -56,7 +56,7 @@ class InvestorService
             'kode_cabang'     => $dto->kode_cabang,
             'id_cabang'       => $dto->id_cabang,
             'status'          => $dto->status,
-        ]);
+        ], $eagerLoad);
     }
 
     public function delete(Investor $investor): void

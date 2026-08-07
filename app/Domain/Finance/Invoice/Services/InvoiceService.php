@@ -3,6 +3,7 @@
 namespace App\Domain\Finance\Invoice\Services;
 
 use App\Domain\Finance\EndingBalance\Services\EndingBalanceService;
+use App\Domain\Finance\EndingBalance\Services\EndingBalanceSyncBatcher;
 use App\Domain\Finance\Invoice\DTO\InvoiceDTO;
 use App\Domain\Finance\Invoice\Repositories\InvoiceRepository;
 use App\Domain\Finance\PendapatanDiMuka\Services\PendapatanDiMukaService;
@@ -13,6 +14,7 @@ use App\Models\Invoice;
 use App\Models\InvoiceApprovalLog;
 use App\Models\KlienAr;
 use App\Models\OpeningBalanceDetail;
+use App\Models\OpeningBalanceDetailItem;
 use App\Models\PembayaranAr;
 use App\Models\PembayaranArLog;
 use App\Models\PendapatanDiMuka;
@@ -423,14 +425,21 @@ class InvoiceService
         });
     }
 
-    public function createOpeningBalance(array $data, bool $notify = true): Invoice
+    /**
+     * @param  bool  $eagerLoad  false melewati findOrFail() 19-relasi di akhir persistOpeningBalance()
+     *                           — dipakai OpeningBalanceImportService yang membuang hasilnya (hanya
+     *                           butuh insertedOb++), bukan mengembalikan resource API.
+     * @param  ?KlienAr  $klien  klien yang sudah diresolusi caller (hindari refetch KlienAr::findOrFail()
+     *                           saat caller — mis. import — sudah punya objeknya di memori).
+     */
+    public function createOpeningBalance(array $data, bool $notify = true, bool $eagerLoad = true, ?KlienAr $klien = null): Invoice
     {
         $user = auth()->user()->loadMissing('karyawan');
         abort_if(! $user?->karyawan?->id, 422, 'User tidak terhubung dengan data karyawan');
 
-        $klien = KlienAr::findOrFail($data['klien_ar_id']);
+        $klien ??= KlienAr::findOrFail($data['klien_ar_id']);
 
-        return DB::transaction(fn () => $this->persistOpeningBalance($data, $klien, $user, $notify));
+        return DB::transaction(fn () => $this->persistOpeningBalance($data, $klien, $user, $notify, $eagerLoad));
     }
 
     /**
@@ -456,7 +465,7 @@ class InvoiceService
         });
     }
 
-    private function persistOpeningBalance(array $data, KlienAr $klien, User $user, bool $notify): Invoice
+    private function persistOpeningBalance(array $data, KlienAr $klien, User $user, bool $notify, bool $eagerLoad = true): Invoice
     {
         $saldoAwal = ! empty($data['details'])
             ? collect($data['details'])->sum(fn ($d) => (float) ($d['sisa_tagihan_asal'] ?? 0))
@@ -490,7 +499,10 @@ class InvoiceService
             $this->syncOpeningBalanceDetails($invoice, $data['details']);
         }
 
-        $submitted = $this->findOrFail($invoice->id);
+        // findOrFail() eager-load 19 relasi — hanya perlu untuk resource API/notifikasi.
+        // Import (eagerLoad: false) membuang hasilnya, jadi cukup $invoice apa adanya
+        // (hindari ±15-20 query per Opening Balance yang dibuat, lihat OpeningBalanceImportService).
+        $submitted = $eagerLoad ? $this->findOrFail($invoice->id) : $invoice;
 
         if ($notify) {
             $this->financeNotificationService->obArSubmitted($submitted);
@@ -559,8 +571,10 @@ class InvoiceService
                 'created_by' => auth()->id(),
             ]);
 
-            foreach ($items as $item) {
-                $obDetail->items()->create([
+            if (! empty($items)) {
+                $now = now();
+                OpeningBalanceDetailItem::insert(array_map(fn (array $item) => [
+                    'ob_detail_id' => $obDetail->id,
                     'barang_id' => $item['barang_id'] ?? null,
                     'kode_barang' => $item['kode_barang'] ?? null,
                     'nama_barang' => $item['nama_barang'],
@@ -569,7 +583,9 @@ class InvoiceService
                     'harga_satuan' => $item['harga_satuan'],
                     'subtotal' => $item['subtotal'],
                     'keterangan' => $item['keterangan'] ?? null,
-                ]);
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ], $items));
             }
         }
     }
@@ -968,10 +984,24 @@ class InvoiceService
             return;
         }
 
+        $userId = auth()->id();
+
+        // Saat dipanggil dari import (InvoiceImportService::applySafeChunk(), dibungkus
+        // EndingBalanceSyncBatcher::run()) — tunda & dedup per ending_balance_id, supaya
+        // banyak invoice SAFE_UPDATE yang jatuh ke EB DRAFT yang sama dalam 1 chunk cukup
+        // di-recalculate() sekali di akhir chunk, bukan berulang per invoice.
+        if (EndingBalanceSyncBatcher::isActive()) {
+            foreach ($ebList as $eb) {
+                EndingBalanceSyncBatcher::collectRecalculate($eb->id, $userId);
+            }
+
+            return;
+        }
+
         $ebService = app(EndingBalanceService::class);
         foreach ($ebList as $eb) {
             try {
-                $ebService->recalculate($eb, auth()->id());
+                $ebService->recalculate($eb, $userId);
             } catch (\Throwable) {
                 // Tidak blokir proses import jika EB recalculate gagal
             }

@@ -36,16 +36,20 @@ class RestoRepository
         return $this->baseQuery()->find($id);
     }
 
-    public function create(array $data): Resto
+    public function create(array $data, bool $eagerLoad = true): Resto
     {
         $resto = Resto::create($data);
-        return $resto->load(['investor', 'perusahaan', 'perusahaan.klienArs.karyawanAr', 'brand', 'pic', 'klienArs.karyawanAr', 'createdBy', 'updatedBy']);
+        return $eagerLoad
+            ? $resto->load(['investor', 'perusahaan', 'perusahaan.klienArs.karyawanAr', 'brand', 'pic', 'klienArs.karyawanAr', 'createdBy', 'updatedBy'])
+            : $resto;
     }
 
-    public function update(Resto $resto, array $data): Resto
+    public function update(Resto $resto, array $data, bool $eagerLoad = true): Resto
     {
         $resto->update($data);
-        return $resto->fresh(['investor', 'perusahaan', 'perusahaan.klienArs.karyawanAr', 'brand', 'pic', 'klienArs.karyawanAr', 'createdBy', 'updatedBy']);
+        return $eagerLoad
+            ? $resto->fresh(['investor', 'perusahaan', 'perusahaan.klienArs.karyawanAr', 'brand', 'pic', 'klienArs.karyawanAr', 'createdBy', 'updatedBy'])
+            : $resto;
     }
 
     public function delete(Resto $resto): bool

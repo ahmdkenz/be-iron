@@ -29,7 +29,7 @@ class RestoService
         return $resto;
     }
 
-    public function create(RestoDTO $dto): Resto
+    public function create(RestoDTO $dto, bool $eagerLoad = true): Resto
     {
         return $this->repository->create([
             'kode_resto'    => $dto->kode_resto,
@@ -48,10 +48,10 @@ class RestoService
             'tgl_aktif'       => $dto->tgl_aktif,
             'keterangan'      => $dto->keterangan,
             'status'          => $dto->status,
-        ]);
+        ], $eagerLoad);
     }
 
-    public function update(Resto $resto, RestoDTO $dto): Resto
+    public function update(Resto $resto, RestoDTO $dto, bool $eagerLoad = true): Resto
     {
         $resto = $this->repository->update($resto, [
             'nama_resto'      => $dto->nama_resto,
@@ -69,7 +69,7 @@ class RestoService
             'tgl_aktif'     => $dto->tgl_aktif,
             'keterangan'    => $dto->keterangan,
             'status'        => $dto->status,
-        ]);
+        ], $eagerLoad);
 
         $this->syncKlienArPic($resto);
 

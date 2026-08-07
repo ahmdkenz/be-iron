@@ -155,8 +155,28 @@ class OpeningBalanceImportService
         $insertedOb = $skippedOb = 0;
         $insertedDetail = $insertedItem = 0;
 
+        // 1 query whereIn untuk semua klien di batch ini, bukan 1 exists() per bucket
+        // (~1.240 query terpisah sebelum fix ini, untuk data dummy OB).
+        $existingKlienIds = Invoice::whereIn('klien_ar_id', array_keys($buckets))
+            ->where('is_opening_balance', true)
+            ->whereDate('tanggal_invoice', $cutoverDate)
+            ->pluck('klien_ar_id')
+            ->flip();
+
+        $bucketIndex = 0;
         foreach ($buckets as $bucket) {
             $klien = $bucket['klien'];
+
+            $bucketIndex++;
+            if ($bucketIndex % 50 === 0) {
+                $batch->update([
+                    'inserted_ob' => $insertedOb,
+                    'skipped_ob' => $skippedOb,
+                    'failed_ob' => $failedOb,
+                    'inserted_detail' => $insertedDetail,
+                    'inserted_item' => $insertedItem,
+                ]);
+            }
 
             $built = $this->buildDetailsForGroup($bucket['rows'], $rawItems, $barangByKode, $barangByNama, $errors);
             if ($built === null) {
@@ -170,11 +190,7 @@ class OpeningBalanceImportService
                 continue;
             }
 
-            $exists = Invoice::where('klien_ar_id', $klien->id)
-                ->where('is_opening_balance', true)
-                ->whereDate('tanggal_invoice', $cutoverDate)
-                ->exists();
-            if ($exists) {
+            if (isset($existingKlienIds[$klien->id])) {
                 $skippedOb++;
 
                 continue;
@@ -190,7 +206,10 @@ class OpeningBalanceImportService
                     'details' => $built['details'],
                 ];
 
-                $this->invoiceService->createOpeningBalance($data, notify: false);
+                // eagerLoad: false — hasil create() tidak dipakai di sini (cuma counter),
+                // jadi lewati findOrFail() 19-relasi di persistOpeningBalance(). klien: $klien
+                // — sudah diresolusi Pass 1, hindari KlienAr::findOrFail() ulang per klien.
+                $this->invoiceService->createOpeningBalance($data, notify: false, eagerLoad: false, klien: $klien);
                 $insertedOb++;
                 $insertedDetail += count($built['details']);
                 $insertedItem += array_sum(array_map(fn ($d) => count($d['items']), $built['details']));
@@ -410,11 +429,15 @@ class OpeningBalanceImportService
      */
     private function buildKlienMapsForOb(): array
     {
-        $ptNamaGroups = KlienAr::where('tipe_klien', 'PT')->where('status', true)->whereNotNull('nama_klien')
+        // ->with('perusahaan') di kedua map ini menghindari lazy-load per klien di
+        // generateOpeningBalanceNoInvoice()/persistOpeningBalance() saat Pass 2 (lihat
+        // InvoiceService::createOpeningBalance()) — tanpa ini, loadMissing('perusahaan')
+        // memicu 1 query tambahan per klien (~1.240 query untuk data dummy OB).
+        $ptNamaGroups = KlienAr::with('perusahaan')->where('tipe_klien', 'PT')->where('status', true)->whereNotNull('nama_klien')
             ->get(['id', 'nama_klien', 'perusahaan_id'])
             ->groupBy(fn (KlienAr $k) => strtolower(trim($k->nama_klien)));
 
-        $restoMap = KlienAr::with('resto:id,kode_resto')->where('tipe_klien', 'RESTO')->where('status', true)
+        $restoMap = KlienAr::with(['resto:id,kode_resto', 'perusahaan'])->where('tipe_klien', 'RESTO')->where('status', true)
             ->get(['id', 'nama_klien', 'resto_id', 'perusahaan_id'])
             ->filter(fn (KlienAr $k) => filled($k->resto?->kode_resto))
             ->keyBy(fn (KlienAr $k) => strtoupper($k->resto->kode_resto));

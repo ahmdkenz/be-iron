@@ -72,16 +72,16 @@ class KlienArRepository
         return KlienAr::with(['perusahaan', 'karyawanAr.perusahaan', 'resto.investor', 'createdBy', 'updatedBy'])->find($id);
     }
 
-    public function create(array $data): KlienAr
+    public function create(array $data, bool $eagerLoad = true): KlienAr
     {
         $klien = KlienAr::create($data);
-        return $klien->load(['perusahaan', 'karyawanAr.perusahaan', 'resto.investor', 'createdBy', 'updatedBy']);
+        return $eagerLoad ? $klien->load(['perusahaan', 'karyawanAr.perusahaan', 'resto.investor', 'createdBy', 'updatedBy']) : $klien;
     }
 
-    public function update(KlienAr $klien, array $data): KlienAr
+    public function update(KlienAr $klien, array $data, bool $eagerLoad = true): KlienAr
     {
         $klien->update($data);
-        return $klien->fresh(['perusahaan', 'karyawanAr.perusahaan', 'resto.investor', 'createdBy', 'updatedBy']);
+        return $eagerLoad ? $klien->fresh(['perusahaan', 'karyawanAr.perusahaan', 'resto.investor', 'createdBy', 'updatedBy']) : $klien;
     }
 
     public function delete(KlienAr $klien): bool

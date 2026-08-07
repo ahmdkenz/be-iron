@@ -39,7 +39,10 @@ class ImportMasterJob implements ShouldQueue
         . 'diawali tanda "="), lalu ganti dengan nilai angka/teks biasa — bisa dengan cara salin sel tersebut '
         . '(Copy) lalu tempel sebagai nilai saja (Paste Special > Values). Setelah itu simpan file dan upload ulang.';
 
-    public function __construct(private readonly string $batchId) {}
+    public function __construct(private readonly string $batchId)
+    {
+        $this->onQueue('invoice-import');
+    }
 
     public function handle(MasterImportService $service, FinanceNotificationService $notifications): void
     {

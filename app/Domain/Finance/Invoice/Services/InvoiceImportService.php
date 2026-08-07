@@ -41,8 +41,13 @@ use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
  */
 class InvoiceImportService
 {
-    /** Jumlah grup yang diproses per job chunk saat "Proses Data Aman". */
-    public const APPLY_CHUNK = 50;
+    /**
+     * Jumlah grup yang diproses per job chunk saat "Proses Data Aman". Dinaikkan dari 50 ke
+     * 200 (2026-08-07) setelah kerja per-grup di applySafeChunk()/applyGroup() jadi O(1) query
+     * (preload klien+rows per chunk, EB batching) — chunk lebih besar = lebih sedikit overhead
+     * job dispatch/reserve di queue database per import.
+     */
+    public const APPLY_CHUNK = 200;
 
     /** Kolom sheet MASTER INVOICE (0-based, harus sinkron dengan InvoiceImportTemplateService). */
     private const COL_NAMA_KLIEN          = 0;
@@ -806,41 +811,79 @@ class InvoiceImportService
         }
 
         $existingInvoiceMap = $this->buildApplyExistingMap($groups);
+        $klienMap = $this->buildApplyKlienMap($groups);
+        // Preload rows semua grup dalam chunk ini sekali (mirror pola classify()'s
+        // $rowsByGroup) — bukan 1 query rows() per grup di dalam applyGroup().
+        $rowsByGroup = InvoiceImportRow::whereIn('group_id', $groups->pluck('id'))
+            ->orderBy('row_number')
+            ->get()
+            ->groupBy('group_id');
         $errors = $batch->errors ?? [];
+
+        $groupUpdates  = [];
+        $counterDeltas = ['applied_inserted' => 0, 'applied_updated' => 0, 'applied_skipped' => 0, 'applied_failed' => 0];
+        $now = now();
 
         // Batching: sinkronisasi Ending Balance per invoice (via InvoiceObserver)
         // ditunda dan di-dedup, lalu di-flush sekali per klien+periode di akhir
         // chunk ini alih-alih recompute penuh (+cascade 6 bulan) berulang kali.
-        EndingBalanceSyncBatcher::run(function () use ($groups, $lockedEbMap, $existingInvoiceMap, $batch, &$errors) {
+        EndingBalanceSyncBatcher::run(function () use (
+            $groups, $lockedEbMap, $existingInvoiceMap, $klienMap, $rowsByGroup,
+            &$errors, &$groupUpdates, &$counterDeltas, $now,
+        ) {
             foreach ($groups as $group) {
                 try {
-                    $result = $this->applyGroup($group, $lockedEbMap, $existingInvoiceMap);
+                    $rows = $rowsByGroup->get($group->id, collect());
+                    $result = $this->applyGroup($group, $lockedEbMap, $existingInvoiceMap, $klienMap, $rows);
                 } catch (\Throwable $e) {
                     Log::error('InvoiceImportService: gagal memproses grup', ['group_id' => $group->id, 'error' => $e->getMessage()]);
-                    $result = ['status' => 'FAILED', 'message' => 'Error tak terduga: ' . $e->getMessage(), 'invoice_id' => null];
+                    $result = ['status' => 'FAILED', 'message' => 'Error tak terduga: ' . $e->getMessage(), 'invoice_id' => null, 'no_invoice' => null];
                 }
 
-                $group->update([
+                $groupUpdates[] = [
+                    'id'            => $group->id,
+                    // batch_id/group_key NOT NULL tanpa default — MySQL INSERT ... ON DUPLICATE
+                    // KEY UPDATE tetap memvalidasi row lengkap untuk cabang INSERT meski baris ini
+                    // sebenarnya match id existing (mirror pola classify() di atas).
+                    'batch_id'      => $group->batch_id,
+                    'group_key'     => $group->group_key,
                     'apply_status'  => $result['status'],
                     'apply_message' => $result['message'],
                     'invoice_id'    => $result['invoice_id'] ?? $group->invoice_id,
                     'no_invoice'    => $result['no_invoice'] ?? $group->no_invoice,
-                ]);
+                    'updated_at'    => $now,
+                ];
 
                 if (in_array($result['status'], ['SKIPPED', 'FAILED'], true)) {
                     $errors[] = ['row' => $group->first_line, 'message' => $result['message']];
                 }
 
-                $batch->increment('applied_processed');
-                $batch->increment(match ($result['status']) {
+                $counterDeltas[match ($result['status']) {
                     'APPLIED' => $group->classification === 'NEW_INVOICE' ? 'applied_inserted' : 'applied_updated',
                     'SKIPPED' => 'applied_skipped',
                     default   => 'applied_failed',
-                });
+                }]++;
             }
         });
 
-        $batch->update(['errors' => $errors]);
+        // Bulk upsert hasil apply per grup — 1 query untuk semua grup di chunk ini, bukan
+        // $group->update() + 2x $batch->increment() per grup (mirror pola classify()).
+        if (!empty($groupUpdates)) {
+            InvoiceImportGroup::upsert(
+                $groupUpdates,
+                ['id'],
+                ['apply_status', 'apply_message', 'invoice_id', 'no_invoice', 'updated_at'],
+            );
+        }
+
+        $batch->update([
+            'errors'            => $errors,
+            'applied_processed' => $batch->applied_processed + count($groupUpdates),
+            'applied_inserted'  => $batch->applied_inserted + $counterDeltas['applied_inserted'],
+            'applied_updated'   => $batch->applied_updated + $counterDeltas['applied_updated'],
+            'applied_skipped'   => $batch->applied_skipped + $counterDeltas['applied_skipped'],
+            'applied_failed'    => $batch->applied_failed + $counterDeltas['applied_failed'],
+        ]);
 
         return InvoiceImportGroup::where('batch_id', $batch->id)
             ->whereIn('classification', InvoiceImportGroup::SAFE_CLASSIFICATIONS)
@@ -866,10 +909,32 @@ class InvoiceImportService
             ->all();
     }
 
-    /** @return array{status: string, message: ?string, invoice_id: ?int, no_invoice: ?string} */
-    private function applyGroup(InvoiceImportGroup $group, array $lockedEbMap, array $existingInvoiceMap = []): array
+    /**
+     * Preload klien_ar_id => KlienAr (with perusahaan) untuk createInvoice() (grup NEW_INVOICE)
+     * — hindari KlienAr::with('perusahaan')->find() per grup di InvoiceGroupProcessor.
+     *
+     * @return array<int, KlienAr>
+     */
+    private function buildApplyKlienMap($groups): array
     {
-        $items = $this->rowsToItems($group->rows()->orderBy('row_number')->get());
+        $klienIds = $groups->pluck('klien_ar_id')->filter()->unique()->values()->all();
+
+        if (empty($klienIds)) {
+            return [];
+        }
+
+        return KlienAr::with('perusahaan')->whereIn('id', $klienIds)->get()->keyBy('id')->all();
+    }
+
+    /** @return array{status: string, message: ?string, invoice_id: ?int, no_invoice: ?string} */
+    private function applyGroup(
+        InvoiceImportGroup $group,
+        array $lockedEbMap,
+        array $existingInvoiceMap = [],
+        array $klienMap = [],
+        ?\Illuminate\Support\Collection $preloadedRows = null,
+    ): array {
+        $items = $this->rowsToItems($preloadedRows ?? $group->rows()->orderBy('row_number')->get());
 
         if (empty($items)) {
             return ['status' => 'SKIPPED', 'message' => 'Tidak ada item untuk diproses.', 'invoice_id' => null, 'no_invoice' => null];
@@ -895,7 +960,7 @@ class InvoiceImportService
             ]);
         }
 
-        $result = $this->groupProcessor->processGroup($group->tipe_invoice, $headerData, $items, $lockedEbMap, $existingInvoiceMap);
+        $result = $this->groupProcessor->processGroup($group->tipe_invoice, $headerData, $items, $lockedEbMap, $existingInvoiceMap, $klienMap);
 
         return match (true) {
             $result->isInserted(), $result->isUpdated() => [

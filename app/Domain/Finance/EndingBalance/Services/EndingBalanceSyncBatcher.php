@@ -2,6 +2,7 @@
 
 namespace App\Domain\Finance\EndingBalance\Services;
 
+use App\Models\EndingBalance;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -25,6 +26,16 @@ class EndingBalanceSyncBatcher
 
     /** @var array<string, array{klien_ar_id:int, periode_awal:string, periode_akhir:string, user_id:int}> */
     private static array $pending = [];
+
+    /**
+     * Dedup untuk InvoiceService::recalculateDraftEndingBalance() — beda dari $pending
+     * (yang mem-flush syncEbForKlien(), termasuk cascade forward). recalculate() cuma
+     * menghitung ulang 1 EndingBalance DRAFT yang SUDAH ADA tanpa cascade, jadi dedup-nya
+     * langsung per ending_balance_id (bukan per klien+periode).
+     *
+     * @var array<int, int> ending_balance_id => user_id
+     */
+    private static array $pendingRecalculate = [];
 
     public static function isActive(): bool
     {
@@ -64,14 +75,27 @@ class EndingBalanceSyncBatcher
         ];
     }
 
+    /**
+     * Dedup untuk InvoiceService::recalculateDraftEndingBalance() (dipanggil per invoice
+     * SAFE_UPDATE dari InvoiceGroupProcessor::updateInvoice()). Beberapa invoice yang
+     * jatuh ke EndingBalance DRAFT yang sama dalam 1 chunk import cukup di-recalculate()
+     * sekali di akhir, bukan berulang per invoice.
+     */
+    public static function collectRecalculate(int $endingBalanceId, int $userId): void
+    {
+        self::$pendingRecalculate[$endingBalanceId] = $userId;
+    }
+
     private static function flush(): void
     {
-        if (empty(self::$pending)) {
+        if (empty(self::$pending) && empty(self::$pendingRecalculate)) {
             return;
         }
 
         $batch = self::$pending;
         self::$pending = [];
+        $recalculateBatch = self::$pendingRecalculate;
+        self::$pendingRecalculate = [];
 
         $ebService = app(EndingBalanceService::class);
 
@@ -92,6 +116,20 @@ class EndingBalanceSyncBatcher
                 ]);
             }
         }
+
+        foreach ($recalculateBatch as $endingBalanceId => $userId) {
+            try {
+                $eb = EndingBalance::find($endingBalanceId);
+                if ($eb) {
+                    $ebService->recalculate($eb, $userId);
+                }
+            } catch (\Throwable $e) {
+                Log::error('EndingBalanceSyncBatcher: gagal recalculate EB', [
+                    'ending_balance_id' => $endingBalanceId,
+                    'error'             => $e->getMessage(),
+                ]);
+            }
+        }
     }
 
     /** Hanya dipakai test — paksa reset state statis di antara test case. */
@@ -99,5 +137,6 @@ class EndingBalanceSyncBatcher
     {
         self::$depth = 0;
         self::$pending = [];
+        self::$pendingRecalculate = [];
     }
 }

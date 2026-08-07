@@ -133,6 +133,9 @@ class MasterImportService
             throw new \RuntimeException("File import tidak ditemukan: {$batch->file_path}");
         }
 
+        // Hindari COUNT(*) penuh per baris KlienAr baru — lihat KlienArService::primeKodeKlienCounter().
+        $this->klienArService->primeKodeKlienCounter();
+
         $fullPath = $disk->path($batch->file_path);
         $reader   = IOFactory::createReaderForFile($fullPath);
         $reader->setReadDataOnly(true);
@@ -220,6 +223,18 @@ class MasterImportService
         $karyawanNameById = $karyawanRecords->pluck('nama_karyawan', 'id')->all();
         $perusahaanMap    = $this->buildPerusahaanMap();
 
+        // Preload dedup map Investor/Resto/KlienAr sekali di awal (pre-scan seluruh sheet,
+        // TANPA removeRow() — beda dari chunkMasterRows() di bawah) — supaya loop utama tidak
+        // query DB per baris untuk cek "sudah ada atau belum". Baris baru yang dibuat DALAM
+        // loop utama tetap ditulis balik ke map yang sama (lihat pemakaian *Map[...] = ... di
+        // bawah) supaya baris duplikat berikutnya di file yang sama tetap ter-dedup benar.
+        $dedupMaps          = $this->preloadMasterDataDedupMaps($sheet, $detected, $col, $perusahaanMap);
+        $investorMap        = $dedupMaps['investor'];
+        $restoByKodeMap      = $dedupMaps['resto_by_kode'];
+        $restoByNamaMap      = $dedupMaps['resto_by_nama'];
+        $klienByPerusahaanMap = $dedupMaps['klien_by_perusahaan'];
+        $klienByRestoMap      = $dedupMaps['klien_by_resto'];
+
         $invIns = $invUpd = $invFail = $invSkip = 0;
         $resIns = $resUpd = $resFail = $resSkip = 0;
         $kliIns = $kliUpd = $kliFail = $kliSkip = 0;
@@ -238,6 +253,7 @@ class MasterImportService
                     &$invIns, &$invUpd, &$invFail, &$invSkip, &$resIns, &$resUpd, &$resFail, &$resSkip,
                     &$kliIns, &$kliUpd, &$kliFail, &$kliSkip,
                     &$karyawanMap, &$karyawanNameById,
+                    &$investorMap, &$restoByKodeMap, &$restoByNamaMap, &$klienByPerusahaanMap, &$klienByRestoMap,
                     $col, $batch, $actingUserId, $brandMap, $karyawanNikMap, $perusahaanMap,
                 ) {
                 if ($inChunk >= self::CHUNK) {
@@ -310,17 +326,16 @@ class MasterImportService
                         $invFail++;
                         $investorFailed = true;
                     } else {
-                        $existing = Investor::where('nama_investor', $invData['nama_investor'])
-                            ->where('kode_cabang', $invData['kode_cabang'])
-                            ->where('id_cabang', $invData['id_cabang'])
-                            ->latest()->first();
+                        $investorKey = $this->investorDedupKey($invData['nama_investor'], $invData['kode_cabang'], $invData['id_cabang']);
+                        $existing = $investorMap[$investorKey] ?? null;
 
                         try {
                             if ($existing) {
                                 $invDiff = $this->investorDiff($existing, $invData);
                                 if (!empty($invDiff)) {
                                     $existing->updated_by = $actingUserId;
-                                    $investor = $this->investorService->update($existing, InvestorDTO::fromRequest($invData));
+                                    $investor = $this->investorService->update($existing, InvestorDTO::fromRequest($invData), eagerLoad: false);
+                                    $investorMap[$investorKey] = $investor;
                                     $invUpd++;
                                     $this->pushDetail($details, 'MASTER DATA', $lineNumber, '[Investor] ' . $this->formatDiffMessage($invDiff, self::INVESTOR_FIELD_LABELS));
                                 } else {
@@ -329,7 +344,8 @@ class MasterImportService
                                     $this->pushDetail($details, 'MASTER DATA', $lineNumber, '[Investor] Data sudah sama persis dengan data tersimpan — tidak ada perubahan, baris dilewati.');
                                 }
                             } else {
-                                $investor = $this->investorService->create(InvestorDTO::fromRequest($invData));
+                                $investor = $this->investorService->create(InvestorDTO::fromRequest($invData), eagerLoad: false);
+                                $investorMap[$investorKey] = $investor;
                                 $invIns++;
                             }
                         } catch (\Throwable $e) {
@@ -381,9 +397,11 @@ class MasterImportService
                     // dua cabang dengan nama sama (mis. "Veteran" di kota berbeda) tidak tertukar.
                     // Fallback ke nama_resto hanya berlaku untuk baris lama yang kode_resto-nya kosong.
                     if ($kodeResto !== '') {
-                        $existingResto = Resto::where('kode_resto', $kodeResto)->latest()->first();
+                        $restoKey = $this->restoDedupKeyByKode($kodeResto);
+                        $existingResto = $restoByKodeMap[$restoKey] ?? null;
                     } else {
-                        $existingResto = Resto::where('nama_resto', $namaCabang)->latest()->first();
+                        $restoKey = $this->restoDedupKeyByNama($namaCabang);
+                        $existingResto = $restoByNamaMap[$restoKey] ?? null;
                     }
                     if (!$existingResto && $kodeResto === '') {
                         $rowErrors[] = "kode_resto wajib diisi untuk data baru '{$namaCabang}'";
@@ -440,7 +458,8 @@ class MasterImportService
                                     $resDiff = $this->restoDiff($existingResto, $resData);
                                     if (!empty($resDiff)) {
                                         $existingResto->updated_by = $actingUserId;
-                                        $resto = $this->restoService->update($existingResto, RestoDTO::fromRequest($resData));
+                                        $resto = $this->restoService->update($existingResto, RestoDTO::fromRequest($resData), eagerLoad: false);
+                                        $this->writeRestoDedupMaps($resto, $restoByKodeMap, $restoByNamaMap);
                                         $resUpd++;
                                         $this->pushDetail($details, 'MASTER DATA', $lineNumber, '[Resto] ' . $this->formatDiffMessage($resDiff, self::RESTO_FIELD_LABELS));
                                     } else {
@@ -449,7 +468,8 @@ class MasterImportService
                                         $this->pushDetail($details, 'MASTER DATA', $lineNumber, '[Resto] Data sudah sama persis dengan data tersimpan — tidak ada perubahan, baris dilewati.');
                                     }
                                 } else {
-                                    $resto = $this->restoService->create(RestoDTO::fromRequest($resData));
+                                    $resto = $this->restoService->create(RestoDTO::fromRequest($resData), eagerLoad: false);
+                                    $this->writeRestoDedupMaps($resto, $restoByKodeMap, $restoByNamaMap);
                                     $resIns++;
                                 }
                             } catch (\Throwable $e) {
@@ -590,14 +610,16 @@ class MasterImportService
                             $errors[] = ['sheet' => 'MASTER DATA', 'row' => $lineNumber, 'message' => '[Client] ' . implode('; ', $validator->errors()->all())];
                             $kliFail++;
                         } else {
+                            // klienKey null berarti jalur fallback (nama_klien+tipe_klien) — path langka
+                            // (hanya saat perusahaan_id/resto_id tidak berhasil diresolusi), sengaja
+                            // dibiarkan query live per-baris seperti sebelumnya (tidak di-preload).
+                            $klienKey = null;
                             if ($tipeKlien === 'PT' && $perusahaanIdKli) {
-                                $existingKlien = KlienAr::where('perusahaan_id', $perusahaanIdKli)
-                                    ->where('tipe_klien', 'PT')
-                                    ->latest()->first();
+                                $klienKey = $this->klienDedupKeyByPerusahaan($perusahaanIdKli);
+                                $existingKlien = $klienByPerusahaanMap[$klienKey] ?? null;
                             } elseif ($tipeKlien === 'RESTO' && $restoIdKli) {
-                                $existingKlien = KlienAr::where('resto_id', $restoIdKli)
-                                    ->where('tipe_klien', 'RESTO')
-                                    ->latest()->first();
+                                $klienKey = $this->klienDedupKeyByResto($restoIdKli);
+                                $existingKlien = $klienByRestoMap[$klienKey] ?? null;
                             } else {
                                 $existingKlien = KlienAr::where('nama_klien', $namaKlien)
                                     ->where('tipe_klien', $tipeKlien)
@@ -609,7 +631,10 @@ class MasterImportService
                                     $kliDiff = $this->klienArDiff($existingKlien, $kliData);
                                     if (!empty($kliDiff)) {
                                         $existingKlien->updated_by = $actingUserId;
-                                        $this->klienArService->update($existingKlien, KlienArDTO::fromRequest($kliData));
+                                        $updatedKlien = $this->klienArService->update($existingKlien, KlienArDTO::fromRequest($kliData), eagerLoad: false);
+                                        if ($klienKey !== null) {
+                                            $tipeKlien === 'PT' ? $klienByPerusahaanMap[$klienKey] = $updatedKlien : $klienByRestoMap[$klienKey] = $updatedKlien;
+                                        }
                                         $kliUpd++;
                                         $this->pushDetail($details, 'MASTER DATA', $lineNumber, '[Client] ' . $this->formatDiffMessage($kliDiff, self::KLIEN_AR_FIELD_LABELS));
                                     } else {
@@ -617,7 +642,10 @@ class MasterImportService
                                         $this->pushDetail($details, 'MASTER DATA', $lineNumber, '[Client] Data sudah sama persis dengan data tersimpan — tidak ada perubahan, baris dilewati.');
                                     }
                                 } else {
-                                    $this->klienArService->create(KlienArDTO::fromRequest($kliData));
+                                    $newKlien = $this->klienArService->create(KlienArDTO::fromRequest($kliData), eagerLoad: false);
+                                    if ($klienKey !== null) {
+                                        $tipeKlien === 'PT' ? $klienByPerusahaanMap[$klienKey] = $newKlien : $klienByRestoMap[$klienKey] = $newKlien;
+                                    }
                                     $kliIns++;
                                 }
                             } catch (\Throwable $e) {
@@ -674,6 +702,8 @@ class MasterImportService
         $batch->update(['barang_total' => max(0, $detected['highestRow'] - $detected['dataStart'] + 1)]);
 
         $actingUserId = $batch->user_id;
+        // Pre-scan sekali di awal — lihat komentar preloadMasterDataDedupMaps() untuk rasional.
+        $barangMap = $this->preloadBarangMap($sheet, $detected, $col);
 
         $brgIns = $brgUpd = $brgSkip = $brgFail = 0;
         $processed  = 0;
@@ -686,7 +716,7 @@ class MasterImportService
             $this->chunkMasterRows($sheet, $detected['dataStart'], $detected['highestColumn'], self::PARSE_CHUNK,
                 function (array $row) use (
                     &$errors, &$details, &$inChunk, &$processed, &$lineNumber,
-                    &$brgIns, &$brgUpd, &$brgSkip, &$brgFail,
+                    &$brgIns, &$brgUpd, &$brgSkip, &$brgFail, &$barangMap,
                     $col, $batch, $actingUserId,
                 ) {
                 if ($inChunk >= self::CHUNK) {
@@ -742,12 +772,14 @@ class MasterImportService
                 }
 
                 // kode_barang adalah identitas unik barang — nama_barang bisa sama untuk produk berbeda (varian/kategori berbeda)
-                $existing = Barang::where('kode_barang', $rawKode)->first();
+                $existing = $barangMap[$rawKode] ?? null;
 
                 try {
                     if ($existing) {
                         $brgDiff = $this->barangDiff($existing, $data);
                         if (!empty($brgDiff)) {
+                            // update() mutasi objek $existing di tempat — otomatis konsisten dengan
+                            // referensi yang sama di $barangMap, tidak perlu tulis balik eksplisit.
                             $existing->update([
                                 'nama_barang' => $data['nama_barang'],
                                 'spesifikasi' => $data['spesifikasi'],
@@ -762,7 +794,7 @@ class MasterImportService
                             $this->pushDetail($details, 'MASTER BARANG', $lineNumber, 'Data sudah sama persis dengan data tersimpan — tidak ada perubahan, baris dilewati.');
                         }
                     } else {
-                        Barang::create([
+                        $barangMap[$rawKode] = Barang::create([
                             'kode_barang' => $rawKode,
                             'nama_barang' => $data['nama_barang'],
                             'spesifikasi' => $data['spesifikasi'],
@@ -899,6 +931,257 @@ class MasterImportService
                 $map[strtolower($val)] = $model->id;
             }
         }
+        return $map;
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    //  Preload dedup map Investor/Resto/KlienAr — hindari query per baris di
+    //  processMasterDataSheet() untuk lookup "sudah ada atau belum". Key builder
+    //  dipakai KONSISTEN baik saat preload maupun saat lookup per-baris di loop
+    //  utama, supaya tidak ada drift logic.
+    // ──────────────────────────────────────────────────────────────
+
+    private function investorDedupKey(string $namaInvestor, ?string $kodeCabang, ?string $idCabang): string
+    {
+        return strtolower($namaInvestor) . '|' . strtolower((string) $kodeCabang) . '|' . strtolower((string) $idCabang);
+    }
+
+    private function restoDedupKeyByKode(string $kodeResto): string
+    {
+        return strtolower($kodeResto);
+    }
+
+    private function restoDedupKeyByNama(string $namaResto): string
+    {
+        return strtolower($namaResto);
+    }
+
+    private function klienDedupKeyByPerusahaan(int $perusahaanId): string
+    {
+        return (string) $perusahaanId;
+    }
+
+    private function klienDedupKeyByResto(int $restoId): string
+    {
+        return (string) $restoId;
+    }
+
+    /**
+     * Tulis balik Resto yang baru dibuat/diupdate ke KEDUA map (by kode & by nama) — bukan
+     * cuma map yang cocok dengan mode lookup baris ini. Meniru perilaku query-per-baris asli:
+     * baris LAIN di file yang sama boleh mencari resto ini lewat salah satu dari 2 cara
+     * (kode_resto ATAU nama_resto), terlepas dari cara baris INI menemukannya.
+     */
+    private function writeRestoDedupMaps(Resto $resto, array &$restoByKodeMap, array &$restoByNamaMap): void
+    {
+        if ($resto->kode_resto) {
+            $restoByKodeMap[$this->restoDedupKeyByKode($resto->kode_resto)] = $resto;
+        }
+        if ($resto->nama_resto) {
+            $restoByNamaMap[$this->restoDedupKeyByNama($resto->nama_resto)] = $resto;
+        }
+    }
+
+    /**
+     * Pre-scan SELURUH sheet MASTER DATA (satu kali baca penuh via rangeToArray(), TANPA
+     * removeRow() — beda dari chunkMasterRows() yang dipakai loop utama) untuk mengumpulkan
+     * kandidat key dedup Investor/Resto/KlienAr, lalu bulk-query sekali per entitas alih-alih
+     * 1 query per baris. Baris baru yang dibuat SELAMA loop utama tetap ditulis balik ke map
+     * yang dikembalikan di sini (lihat pemanggil) supaya baris duplikat berikutnya di file
+     * yang sama tetap ter-dedup benar — persis seperti pola Brand/Karyawan/Perusahaan yang
+     * sudah ada di atas.
+     *
+     * Jalur fallback yang jarang terjadi (KlienAr by nama_klien+tipe_klien saat perusahaan_id/
+     * resto_id gagal diresolusi, dan Resto-by-nama saat baris Resto sendiri gagal validasi)
+     * SENGAJA tidak di-preload — tetap query live per-baris seperti sebelumnya, karena hanya
+     * relevan untuk baris yang sudah gagal validasi di jalur utama (bukan hot path).
+     *
+     * @return array{
+     *     investor: array<string, Investor>,
+     *     resto_by_kode: array<string, Resto>,
+     *     resto_by_nama: array<string, Resto>,
+     *     klien_by_perusahaan: array<string, KlienAr>,
+     *     klien_by_resto: array<string, KlienAr>,
+     * }
+     */
+    private function preloadMasterDataDedupMaps(
+        \PhpOffice\PhpSpreadsheet\Worksheet\Worksheet $sheet,
+        array $detected,
+        callable $col,
+        array $perusahaanMap,
+    ): array {
+        $empty = [
+            'investor' => [], 'resto_by_kode' => [], 'resto_by_nama' => [],
+            'klien_by_perusahaan' => [], 'klien_by_resto' => [],
+        ];
+
+        if ($detected['highestRow'] < $detected['dataStart']) {
+            return $empty;
+        }
+
+        $rawRows = $sheet->rangeToArray(
+            "A{$detected['dataStart']}:{$detected['highestColumn']}{$detected['highestRow']}",
+            null, true, false, false,
+        );
+
+        $namaInvestorList     = [];
+        $kodeRestoList        = [];
+        $namaRestoFallbackList = [];
+        $ptPerusahaanIdSet    = [];
+        $parsedRows           = [];
+
+        foreach ($rawRows as $rawRow) {
+            $row = array_map(fn ($c) => $this->xlsxRawValueToString($c), $rawRow);
+
+            $firstCell = trim((string) ($row[0] ?? ''));
+            if ($firstCell === '' && count(array_filter(array_map('strval', $row))) === 0) continue;
+            if (str_starts_with($firstCell, '#') || str_starts_with($firstCell, '[CONTOH]')) continue;
+
+            $namaInvestor = trim($firstCell);
+            $namaCabang   = trim((string) $col($row, 'nama_cabang'));
+            $tipeKlien    = $this->normalizeTipeKlien(trim((string) $col($row, 'tipe_klien')))['value'] ?? '';
+            $namaEntitas  = $this->importValue($col($row, 'nama_entitas')) ?? '';
+            $kodeResto    = $this->importValue($col($row, 'kode_resto')) ?? '';
+
+            if ($namaInvestor !== '') {
+                $namaInvestorList[strtolower($namaInvestor)] = $namaInvestor;
+            }
+
+            $parsedRows[] = [
+                'nama_cabang' => $namaCabang,
+                'tipe_klien'  => $tipeKlien,
+                'kode_resto'  => $kodeResto,
+            ];
+
+            if ($namaCabang !== '') {
+                if ($kodeResto !== '') {
+                    $kodeRestoList[strtolower($kodeResto)] = $kodeResto;
+                } else {
+                    $namaRestoFallbackList[strtolower($namaCabang)] = $namaCabang;
+                }
+
+                if ($tipeKlien === 'PT' && $namaEntitas !== '') {
+                    $pid = $perusahaanMap[strtolower($namaEntitas)] ?? null;
+                    if ($pid) $ptPerusahaanIdSet[$pid] = true;
+                }
+            }
+        }
+
+        $investorMap = [];
+        if (! empty($namaInvestorList)) {
+            Investor::whereIn('nama_investor', array_values($namaInvestorList))
+                ->orderBy('created_at')
+                ->get()
+                ->each(function (Investor $inv) use (&$investorMap) {
+                    $investorMap[$this->investorDedupKey((string) $inv->nama_investor, $inv->kode_cabang, $inv->id_cabang)] = $inv;
+                });
+        }
+
+        $restoByKodeMap = [];
+        if (! empty($kodeRestoList)) {
+            Resto::whereIn('kode_resto', array_values($kodeRestoList))
+                ->orderBy('created_at')
+                ->get()
+                ->each(function (Resto $r) use (&$restoByKodeMap) {
+                    $restoByKodeMap[$this->restoDedupKeyByKode((string) $r->kode_resto)] = $r;
+                });
+        }
+
+        $restoByNamaMap = [];
+        if (! empty($namaRestoFallbackList)) {
+            Resto::whereIn('nama_resto', array_values($namaRestoFallbackList))
+                ->orderBy('created_at')
+                ->get()
+                ->each(function (Resto $r) use (&$restoByNamaMap) {
+                    $restoByNamaMap[$this->restoDedupKeyByNama((string) $r->nama_resto)] = $r;
+                });
+        }
+
+        // Fase 2: perlu resto_id EXISTING (dari map di atas) untuk preload KlienAr tipe RESTO —
+        // resto yang baru akan dibuat DALAM loop utama otomatis tidak punya KlienAr existing juga.
+        $restoIdsForKlien = [];
+        foreach ($parsedRows as $pr) {
+            if ($pr['tipe_klien'] !== 'RESTO' || $pr['nama_cabang'] === '') continue;
+
+            $existingResto = $pr['kode_resto'] !== ''
+                ? ($restoByKodeMap[$this->restoDedupKeyByKode($pr['kode_resto'])] ?? null)
+                : ($restoByNamaMap[$this->restoDedupKeyByNama($pr['nama_cabang'])] ?? null);
+
+            if ($existingResto) {
+                $restoIdsForKlien[$existingResto->id] = true;
+            }
+        }
+
+        $klienByPerusahaanMap = [];
+        if (! empty($ptPerusahaanIdSet)) {
+            KlienAr::whereIn('perusahaan_id', array_keys($ptPerusahaanIdSet))
+                ->where('tipe_klien', 'PT')
+                ->orderBy('created_at')
+                ->get()
+                ->each(function (KlienAr $k) use (&$klienByPerusahaanMap) {
+                    $klienByPerusahaanMap[$this->klienDedupKeyByPerusahaan((int) $k->perusahaan_id)] = $k;
+                });
+        }
+
+        $klienByRestoMap = [];
+        if (! empty($restoIdsForKlien)) {
+            KlienAr::whereIn('resto_id', array_keys($restoIdsForKlien))
+                ->where('tipe_klien', 'RESTO')
+                ->orderBy('created_at')
+                ->get()
+                ->each(function (KlienAr $k) use (&$klienByRestoMap) {
+                    $klienByRestoMap[$this->klienDedupKeyByResto((int) $k->resto_id)] = $k;
+                });
+        }
+
+        return [
+            'investor' => $investorMap,
+            'resto_by_kode' => $restoByKodeMap,
+            'resto_by_nama' => $restoByNamaMap,
+            'klien_by_perusahaan' => $klienByPerusahaanMap,
+            'klien_by_resto' => $klienByRestoMap,
+        ];
+    }
+
+    /**
+     * Pre-scan sheet MASTER BARANG (pola sama seperti preloadMasterDataDedupMaps()) supaya
+     * lookup "kode_barang sudah ada atau belum" tidak query per baris.
+     *
+     * @return array<string, Barang> kode_barang (uppercase) => Barang
+     */
+    private function preloadBarangMap(\PhpOffice\PhpSpreadsheet\Worksheet\Worksheet $sheet, array $detected, callable $col): array
+    {
+        if ($detected['highestRow'] < $detected['dataStart']) {
+            return [];
+        }
+
+        $rawRows = $sheet->rangeToArray(
+            "A{$detected['dataStart']}:{$detected['highestColumn']}{$detected['highestRow']}",
+            null, true, false, false,
+        );
+
+        $kodeSet = [];
+        foreach ($rawRows as $rawRow) {
+            $row = array_map(fn ($c) => $this->xlsxRawValueToString($c), $rawRow);
+
+            $firstCell = trim((string) ($row[0] ?? ''));
+            if ($firstCell === '' && count(array_filter(array_map('strval', $row))) === 0) continue;
+            if (str_starts_with($firstCell, '#') || str_starts_with($firstCell, '[CONTOH]')) continue;
+
+            $kode = strtoupper(trim((string) $col($row, 'kode_barang')));
+            if ($kode !== '') $kodeSet[$kode] = true;
+        }
+
+        if (empty($kodeSet)) {
+            return [];
+        }
+
+        $map = [];
+        Barang::whereIn('kode_barang', array_keys($kodeSet))->get()
+            ->each(function (Barang $b) use (&$map) {
+                $map[strtoupper((string) $b->kode_barang)] = $b;
+            });
+
         return $map;
     }
 

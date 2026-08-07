@@ -49,16 +49,16 @@ class InvestorRepository
         return Investor::with(['createdBy', 'updatedBy'])->find($id);
     }
 
-    public function create(array $data): Investor
+    public function create(array $data, bool $eagerLoad = true): Investor
     {
         $investor = Investor::create($data);
-        return $investor->load(['createdBy', 'updatedBy']);
+        return $eagerLoad ? $investor->load(['createdBy', 'updatedBy']) : $investor;
     }
 
-    public function update(Investor $investor, array $data): Investor
+    public function update(Investor $investor, array $data, bool $eagerLoad = true): Investor
     {
         $investor->update($data);
-        return $investor->fresh(['createdBy', 'updatedBy']);
+        return $eagerLoad ? $investor->fresh(['createdBy', 'updatedBy']) : $investor;
     }
 
     public function delete(Investor $investor): bool
