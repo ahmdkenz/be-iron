@@ -430,47 +430,73 @@ class InvoiceService
 
         $klien = KlienAr::findOrFail($data['klien_ar_id']);
 
-        return DB::transaction(function () use ($data, $klien, $user, $notify) {
-            $saldoAwal = ! empty($data['details'])
-                ? collect($data['details'])->sum(fn ($d) => (float) ($d['sisa_tagihan_asal'] ?? 0))
-                : (float) ($data['saldo_awal'] ?? 0);
+        return DB::transaction(fn () => $this->persistOpeningBalance($data, $klien, $user, $notify));
+    }
 
-            $invoice = $this->repository->create([
-                'no_invoice' => $data['no_invoice'],
-                'tanggal_invoice' => $data['tanggal'],
-                'klien_ar_id' => $data['klien_ar_id'],
-                'perusahaan_id' => $klien->perusahaan_id,
-                'resto_id' => $klien->resto_id,
-                'karyawan_id' => $this->resolveInvoiceKaryawanId($user, $klien),
-                'subtotal' => $saldoAwal,
-                'tagihan_periode_sebelumnya' => 0,
-                'total_tagihan' => $saldoAwal,
-                'total_pembayaran' => 0,
-                'sisa_tagihan' => $saldoAwal,
-                'status' => 'DRAFT',
-                'approval_status' => 'PENDING',
-                'submitted_at' => now(),
-                'submitted_by' => auth()->id(),
-                'is_opening_balance' => true,
-                'keterangan' => $data['keterangan'] ?? 'Opening Balance',
-                'prepared_token' => Str::uuid()->toString(),
-                'created_by' => auth()->id(),
-            ]);
+    /**
+     * Buat banyak Opening Balance sekaligus dalam satu transaksi (all-or-nothing).
+     * no_invoice di-generate server-side per item (mirror OpeningBalanceImportService)
+     * karena payload bulk tidak mengirim no_invoice dari client.
+     */
+    public function createOpeningBalanceBulk(array $items): array
+    {
+        $user = auth()->user()->loadMissing('karyawan');
+        abort_if(! $user?->karyawan?->id, 422, 'User tidak terhubung dengan data karyawan');
 
-            $this->createApprovalLog($invoice, 'SUBMITTED');
+        return DB::transaction(function () use ($items, $user) {
+            $created = [];
 
-            if (! empty($data['details'])) {
-                $this->syncOpeningBalanceDetails($invoice, $data['details']);
+            foreach ($items as $data) {
+                $klien = KlienAr::findOrFail($data['klien_ar_id']);
+                $data['no_invoice'] = $this->generateOpeningBalanceNoInvoice($klien, $data['tanggal']);
+                $created[] = $this->persistOpeningBalance($data, $klien, $user, notify: true);
             }
 
-            $submitted = $this->findOrFail($invoice->id);
-
-            if ($notify) {
-                $this->financeNotificationService->obArSubmitted($submitted);
-            }
-
-            return $submitted;
+            return $created;
         });
+    }
+
+    private function persistOpeningBalance(array $data, KlienAr $klien, User $user, bool $notify): Invoice
+    {
+        $saldoAwal = ! empty($data['details'])
+            ? collect($data['details'])->sum(fn ($d) => (float) ($d['sisa_tagihan_asal'] ?? 0))
+            : (float) ($data['saldo_awal'] ?? 0);
+
+        $invoice = $this->repository->create([
+            'no_invoice' => $data['no_invoice'],
+            'tanggal_invoice' => $data['tanggal'],
+            'klien_ar_id' => $data['klien_ar_id'],
+            'perusahaan_id' => $klien->perusahaan_id,
+            'resto_id' => $klien->resto_id,
+            'karyawan_id' => $this->resolveInvoiceKaryawanId($user, $klien),
+            'subtotal' => $saldoAwal,
+            'tagihan_periode_sebelumnya' => 0,
+            'total_tagihan' => $saldoAwal,
+            'total_pembayaran' => 0,
+            'sisa_tagihan' => $saldoAwal,
+            'status' => 'DRAFT',
+            'approval_status' => 'PENDING',
+            'submitted_at' => now(),
+            'submitted_by' => auth()->id(),
+            'is_opening_balance' => true,
+            'keterangan' => $data['keterangan'] ?? 'Opening Balance',
+            'prepared_token' => Str::uuid()->toString(),
+            'created_by' => auth()->id(),
+        ]);
+
+        $this->createApprovalLog($invoice, 'SUBMITTED');
+
+        if (! empty($data['details'])) {
+            $this->syncOpeningBalanceDetails($invoice, $data['details']);
+        }
+
+        $submitted = $this->findOrFail($invoice->id);
+
+        if ($notify) {
+            $this->financeNotificationService->obArSubmitted($submitted);
+        }
+
+        return $submitted;
     }
 
     public function updateOpeningBalance(Invoice $invoice, array $data): Invoice

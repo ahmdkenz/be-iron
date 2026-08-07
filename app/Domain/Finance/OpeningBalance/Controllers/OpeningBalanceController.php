@@ -7,6 +7,7 @@ use App\Domain\Finance\Invoice\Resources\OpeningBalanceDetailResource;
 use App\Domain\Finance\Invoice\Services\InvoiceService;
 use App\Domain\Finance\OpeningBalance\Jobs\ProcessOpeningBalanceBulkApproveJob;
 use App\Domain\Finance\OpeningBalance\Jobs\ProcessOpeningBalanceImportJob;
+use App\Domain\Finance\OpeningBalance\Requests\BulkStoreOpeningBalanceRequest;
 use App\Domain\Finance\OpeningBalance\Requests\StoreOpeningBalanceRequest;
 use App\Domain\Finance\OpeningBalance\Services\OpeningBalanceBulkApproveCacheService;
 use App\Domain\Finance\OpeningBalance\Services\OpeningBalanceImportTemplateService;
@@ -90,6 +91,23 @@ class OpeningBalanceController extends Controller
         return $this->createdResponse(
             new InvoiceResource($invoice),
             'Opening balance berhasil diajukan untuk persetujuan'
+        );
+    }
+
+    public function storeBulk(BulkStoreOpeningBalanceRequest $request): JsonResponse
+    {
+        $this->authorizeOperateOpeningBalance();
+
+        $items = $request->validated('items');
+        foreach ($items as $idx => $item) {
+            $this->authorizeKlienArOwnership((int) $item['klien_ar_id'], $idx);
+        }
+
+        $invoices = $this->service->createOpeningBalanceBulk($items);
+
+        return $this->createdResponse(
+            InvoiceResource::collection($invoices),
+            count($invoices).' opening balance berhasil diajukan untuk persetujuan'
         );
     }
 
@@ -823,7 +841,7 @@ class OpeningBalanceController extends Controller
      * Tolak akses kalau user AR murni (PIC AR) mencoba mengelola/memilih Client
      * yang bukan miliknya. Admin/Manager/Supervisor tetap punya akses global.
      */
-    private function authorizeKlienArOwnership(int $klienArId): void
+    private function authorizeKlienArOwnership(int $klienArId, ?int $index = null): void
     {
         $picArKaryawanId = RoleHelper::picArKaryawanIdFor(auth()->user());
         if ($picArKaryawanId === null) {
@@ -831,11 +849,12 @@ class OpeningBalanceController extends Controller
         }
 
         $klien = KlienAr::withTrashed()->find($klienArId);
+        $suffix = $index !== null ? ' (baris ke-'.($index + 1).')' : '';
 
         abort_if(
             ! $klien || (int) $klien->karyawan_ar_id !== $picArKaryawanId,
             403,
-            'Anda hanya dapat mengelola opening balance untuk Client yang ditugaskan kepada Anda'
+            'Anda hanya dapat mengelola opening balance untuk Client yang ditugaskan kepada Anda'.$suffix
         );
     }
 

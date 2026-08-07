@@ -226,34 +226,93 @@ class InvoiceController extends Controller
             ? \App\Models\Barang::whereIn('kode_barang', $kodeBarangTanpaId)->get()->keyBy('kode_barang')
             : collect();
 
-        $invoices = $invoices->map(fn($inv) => [
-                'id'              => $inv->id,
-                'no_invoice'      => $inv->no_invoice,
-                'tanggal_invoice' => $inv->tanggal_invoice?->toDateString(),
-                'subtotal'        => (float) $inv->subtotal,
-                'total_tagihan'   => (float) $inv->total_tagihan,
-                'sisa_tagihan'    => max(0.0, (float) $inv->subtotal - (float) $inv->total_pembayaran - (float) $inv->total_penyesuaian),
-                'status'          => $inv->status,
-                'keterangan'      => $inv->keterangan,
-                'items'           => $inv->items->map(function ($item) use ($barangByKode) {
-                    $fallbackBarang = !$item->barang_id && $item->kode_barang
-                        ? $barangByKode->get($item->kode_barang)
-                        : null;
-
-                    return [
-                        'barang_id'    => $item->barang_id ?? $fallbackBarang?->id,
-                        'kode_barang'  => $item->kode_barang ?? $item->barang?->kode_barang ?? '',
-                        'nama_barang'  => $item->nama_barang,
-                        'qty'          => (float) $item->qty,
-                        'satuan'       => $item->satuan ?? 'pcs',
-                        'harga_satuan' => (float) $item->harga_satuan,
-                        'subtotal'     => (float) $item->subtotal,
-                        'keterangan'   => $item->keterangan ?? '',
-                    ];
-                })->values()->all(),
-            ]);
+        $invoices = $invoices->map(fn($inv) => $this->mapOutstandingInvoice($inv, $barangByKode));
 
         return $this->successResponse($invoices);
+    }
+
+    /**
+     * Versi bulk dari outstanding() — 1 query untuk banyak Client sekaligus,
+     * dipakai khusus oleh "Muat Client" massal (Opening Balance) untuk
+     * menghindari N request paralel per Client yang bisa membebani backend.
+     * Selalu dibatasi ke bulan lalu (relatif terhadap `tanggal`) karena itu
+     * memang tujuan spesifik pemanggilnya, bukan pengganti outstanding() biasa.
+     */
+    public function outstandingBulk(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'klien_ar_ids'   => ['required', 'array', 'min:1', 'max:50'],
+            'klien_ar_ids.*' => ['integer', 'exists:tb_klien_ar,id'],
+            'tanggal'        => ['nullable', 'date'],
+        ]);
+
+        foreach ($validated['klien_ar_ids'] as $klienArId) {
+            $this->authorizeKlienArOwnership((int) $klienArId);
+        }
+
+        $acuan = !empty($validated['tanggal']) ? Carbon::parse($validated['tanggal']) : Carbon::now();
+        $bulanLalu = $acuan->copy()->subMonthNoOverflow();
+
+        $invoices = \App\Models\Invoice::with('items.barang')
+            ->whereIn('klien_ar_id', $validated['klien_ar_ids'])
+            ->whereIn('status', ['TERKIRIM', 'SEBAGIAN'])
+            ->where('is_opening_balance', false)
+            ->whereBetween('tanggal_invoice', [
+                $bulanLalu->copy()->startOfMonth()->toDateString(),
+                $bulanLalu->copy()->endOfMonth()->toDateString(),
+            ])
+            ->orderBy('tanggal_invoice')
+            ->orderBy('id')
+            ->get();
+
+        $kodeBarangTanpaId = $invoices->flatMap(fn($inv) => $inv->items)
+            ->whereNull('barang_id')
+            ->pluck('kode_barang')
+            ->filter()
+            ->unique()
+            ->values();
+
+        $barangByKode = $kodeBarangTanpaId->isNotEmpty()
+            ? \App\Models\Barang::whereIn('kode_barang', $kodeBarangTanpaId)->get()->keyBy('kode_barang')
+            : collect();
+
+        $grouped = $invoices
+            ->map(fn($inv) => $this->mapOutstandingInvoice($inv, $barangByKode))
+            ->groupBy('klien_ar_id')
+            ->map(fn($group) => $group->values());
+
+        return $this->successResponse($grouped);
+    }
+
+    private function mapOutstandingInvoice(\App\Models\Invoice $inv, \Illuminate\Support\Collection $barangByKode): array
+    {
+        return [
+            'id'              => $inv->id,
+            'klien_ar_id'     => $inv->klien_ar_id,
+            'no_invoice'      => $inv->no_invoice,
+            'tanggal_invoice' => $inv->tanggal_invoice?->toDateString(),
+            'subtotal'        => (float) $inv->subtotal,
+            'total_tagihan'   => (float) $inv->total_tagihan,
+            'sisa_tagihan'    => max(0.0, (float) $inv->subtotal - (float) $inv->total_pembayaran - (float) $inv->total_penyesuaian),
+            'status'          => $inv->status,
+            'keterangan'      => $inv->keterangan,
+            'items'           => $inv->items->map(function ($item) use ($barangByKode) {
+                $fallbackBarang = !$item->barang_id && $item->kode_barang
+                    ? $barangByKode->get($item->kode_barang)
+                    : null;
+
+                return [
+                    'barang_id'    => $item->barang_id ?? $fallbackBarang?->id,
+                    'kode_barang'  => $item->kode_barang ?? $item->barang?->kode_barang ?? '',
+                    'nama_barang'  => $item->nama_barang,
+                    'qty'          => (float) $item->qty,
+                    'satuan'       => $item->satuan ?? 'pcs',
+                    'harga_satuan' => (float) $item->harga_satuan,
+                    'subtotal'     => (float) $item->subtotal,
+                    'keterangan'   => $item->keterangan ?? '',
+                ];
+            })->values()->all(),
+        ];
     }
 
     public function settleableOriginals(int $id): JsonResponse

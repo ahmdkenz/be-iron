@@ -64,6 +64,7 @@ Route::prefix('invoices')->group(function () {
     Route::get('/{id}/print/status', [InvoiceController::class, 'printStatus']);
     Route::get('/carryover', [InvoiceController::class, 'carryover']);
     Route::get('/outstanding', [InvoiceController::class, 'outstanding']);
+    Route::get('/outstanding-bulk', [InvoiceController::class, 'outstandingBulk']);
     Route::get('/preview-no', [InvoiceController::class, 'previewNo']);
     Route::get('/preview-no-konsolidasi', [InvoiceController::class, 'previewConsolidatedNo']);
     Route::post('/bulk-b2c-investor/preview', [InvoiceController::class, 'bulkB2CInvestorPreview']);
@@ -200,6 +201,7 @@ Route::prefix('opening-balance')->group(function () {
     // registrasi kedua akan menang & diam-diam menghilangkan throttle yang dimaksud untuk endpoint export.
     Route::get('/export-count', [OpeningBalanceController::class, 'exportRowCount']);
     Route::post('/', [OpeningBalanceController::class, 'store']);
+    Route::post('/bulk', [OpeningBalanceController::class, 'storeBulk']);
     Route::put('/{invoice}', [OpeningBalanceController::class, 'update']);
     Route::get('/{invoice}/details', [OpeningBalanceController::class, 'details']);
     Route::patch('/bulk-approve', [OpeningBalanceController::class, 'bulkApprove'])->middleware('role:MANAGER|SUPERVISOR');
