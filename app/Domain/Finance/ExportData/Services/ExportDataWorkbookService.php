@@ -279,8 +279,11 @@ class ExportDataWorkbookService
         foreach ($rows as $index => $row) {
             $dataRows[] = [
                 $index + 1,
-                $row['kode_klien'] ?? '',
                 $row['nama_klien'] ?? '',
+                // Klien B2B (PT) tidak punya 1 resto tunggal (lihat catatan sama di
+                // InvoiceController::rekapKlienRowValues(), kedua tempat ini sengaja disamakan).
+                $row['kode_resto'] ?? '-',
+                $row['nama_resto'] ?? '-',
                 $row['pic_ar'] ?? '',
                 $row['perusahaan'] ?? '',
                 $row['total_invoice'] ?? 0,
@@ -304,8 +307,9 @@ class ExportDataWorkbookService
             'theme'   => self::THEMES['rekap_klien'],
             'columns' => [
                 ['label' => 'No',              'width' => 5,  'type' => 'int', 'align' => 'center'],
-                ['label' => 'Kode Klien',      'width' => 16],
                 ['label' => 'Nama Klien',      'width' => 30],
+                ['label' => 'Kode Resto',      'width' => 16],
+                ['label' => 'Nama Resto',      'width' => 24],
                 ['label' => 'PIC AR',          'width' => 20],
                 ['label' => 'Entitas',         'width' => 14],
                 ['label' => 'Jml Invoice',     'width' => 12, 'type' => 'int'],
@@ -321,12 +325,12 @@ class ExportDataWorkbookService
             ],
             'rows'    => $dataRows,
             'total'   => [
-                '', '', 'TOTAL', '', '',
-                $this->sumColumn($dataRows, 5),
+                '', 'TOTAL', '', '', '', '',
                 $this->sumColumn($dataRows, 6),
                 $this->sumColumn($dataRows, 7),
                 $this->sumColumn($dataRows, 8),
                 $this->sumColumn($dataRows, 9),
+                $this->sumColumn($dataRows, 10),
                 '', '', '', '', '',
             ],
         ];

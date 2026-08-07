@@ -30,6 +30,7 @@ Route::prefix('v1')->group(function () {
                 Route::post('klien-ar/import',             [\App\Domain\Finance\KlienAr\Controllers\KlienArController::class, 'import']);
                 Route::get('klien-ar/export',              [\App\Domain\Finance\KlienAr\Controllers\KlienArController::class, 'export']);
                 Route::get('aging-report/export-excel',    [\App\Domain\Finance\AgingReport\Controllers\AgingReportController::class, 'exportExcel']);
+                Route::get('invoices/rekap-klien/export-excel', [\App\Domain\Finance\Invoice\Controllers\InvoiceController::class, 'exportRekapKlien']);
                 Route::get('jurnal-pic/export-excel',      [\App\Domain\Finance\JurnalPic\Controllers\JurnalPicController::class, 'exportExcel']);
                 Route::get('mutasi-piutang/export-excel',  [\App\Domain\Finance\MutasiPiutang\Controllers\MutasiPiutangController::class, 'exportExcel']);
                 Route::get('rekap-pembayaran/export-excel',[\App\Domain\Finance\RekapPembayaran\Controllers\RekapPembayaranController::class, 'exportExcel']);

@@ -15,6 +15,7 @@ use PhpOffice\PhpSpreadsheet\Style\Border;
 use PhpOffice\PhpSpreadsheet\Style\Fill;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx as XlsxWriter;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class AgingReportController extends Controller
 {
@@ -58,24 +59,143 @@ class AgingReportController extends Controller
         return $this->successResponse($report);
     }
 
-    public function exportExcel(Request $request): BinaryFileResponse|JsonResponse
+    private function exportFilterRules(): array
     {
-        if (!class_exists('ZipArchive')) {
-            return $this->errorResponse('Ekstensi PHP "zip" tidak aktif. Aktifkan extension=zip pada php.ini lalu restart server.', 500);
-        }
-
-        $request->validate([
+        return [
             'as_of_date'     => ['nullable', 'date'],
             'klien_ar_id'    => ['nullable', 'integer', 'exists:tb_klien_ar,id'],
             'perusahaan_id'  => ['nullable', 'integer', 'exists:tb_perusahaan,id'],
             'karyawan_ar_id' => ['nullable', 'integer', 'exists:tb_karyawan,id'],
             'segment'        => ['nullable', 'in:B2B,B2C,ALL'],
-        ]);
+        ];
+    }
+
+    /**
+     * Jumlah baris detail invoice yang akan dihasilkan export untuk filter yang sama —
+     * dipakai FE untuk peringatan real-time XLSX vs CSV di modal Export.
+     */
+    public function exportRowCount(Request $request): JsonResponse
+    {
+        $request->validate($this->exportFilterRules());
+
+        $filters = $request->only(['as_of_date', 'klien_ar_id', 'perusahaan_id', 'karyawan_ar_id', 'segment']);
+        ArFilterScope::apply($filters, $request->user());
+
+        $report   = $this->service->getReport($filters);
+        $rowCount = array_sum(array_map(fn($row) => count($row['details'] ?? []), $report['rows']));
+
+        return $this->successResponse(['row_count' => $rowCount]);
+    }
+
+    public function exportExcel(Request $request): BinaryFileResponse|StreamedResponse|JsonResponse
+    {
+        $request->validate($this->exportFilterRules());
 
         $filters = $request->only(['as_of_date', 'klien_ar_id', 'perusahaan_id', 'karyawan_ar_id', 'segment']);
         ArFilterScope::apply($filters, $request->user());
 
         $report = $this->service->getReport($filters);
+        $format = strtolower((string) $request->query('format', 'xlsx'));
+
+        return $format === 'csv' ? $this->streamCsvExport($report) : $this->streamXlsxExport($report);
+    }
+
+    /**
+     * Export CSV — blok ringkasan per klien (kiri) & blok detail invoice (kanan, dipisah 1
+     * kolom kosong) ditulis berdampingan pada baris yang sama, meniru tampilan 2-sheet versi
+     * XLSX (lihat streamXlsxExport()). Pola sama seperti InvoiceController::streamCsvExport().
+     */
+    private function streamCsvExport(array $report): StreamedResponse
+    {
+        $summaryHeaders = ['No', 'Kode Klien', 'Nama Klien', 'Entitas', 'Belum JT', '1–30 Hari', '31–60 Hari', '61–90 Hari', '>90 Hari', 'Total'];
+        $detailHeaders  = ['No', 'Kode Klien', 'Nama Klien', 'No Invoice', 'Tgl Invoice', 'Jatuh Tempo', 'Umur (hari)', 'Hari Terlambat', 'Bucket', 'Total Tagihan', 'Total Bayar', 'Sisa Tagihan', 'Status', 'PIC AR', 'Entitas'];
+
+        $bucketLabels = [
+            'current'      => 'Belum JT',
+            'hari_1_30'    => '1–30 Hari',
+            'hari_31_60'   => '31–60 Hari',
+            'hari_61_90'   => '61–90 Hari',
+            'hari_91_plus' => '>90 Hari',
+        ];
+
+        $summaryRows = [];
+        foreach ($report['rows'] as $i => $row) {
+            $summaryRows[] = [
+                $i + 1,
+                $row['kode_klien'] ?? '',
+                $row['nama_klien'] ?? '',
+                $row['perusahaan'] ?? '',
+                $row['current'] ?? 0,
+                $row['hari_1_30'] ?? 0,
+                $row['hari_31_60'] ?? 0,
+                $row['hari_61_90'] ?? 0,
+                $row['hari_91_plus'] ?? 0,
+                $row['total'] ?? 0,
+            ];
+        }
+
+        $detailRows = [];
+        $no         = 1;
+        foreach ($report['rows'] as $klienRow) {
+            foreach (($klienRow['details'] ?? []) as $d) {
+                $detailRows[] = [
+                    $no++,
+                    $klienRow['kode_klien'] ?? '',
+                    $klienRow['nama_klien'] ?? '',
+                    $d['no_invoice'] ?? '',
+                    $d['tanggal_invoice'] ?? '',
+                    $d['tanggal_jatuh_tempo'] ?? '',
+                    $d['umur_invoice'] ?? '',
+                    $d['hari_terlambat'] ?? 0,
+                    $bucketLabels[$d['bucket'] ?? ''] ?? ($d['bucket'] ?? ''),
+                    $d['total_tagihan'] ?? 0,
+                    $d['total_pembayaran'] ?? 0,
+                    $d['sisa_tagihan'] ?? 0,
+                    $d['status'] ?? '',
+                    $d['pic_ar'] ?? '',
+                    $d['perusahaan'] ?? '',
+                ];
+            }
+        }
+
+        $summaryCount = count($summaryRows);
+        $summaryBlank = array_fill(0, count($summaryHeaders), '');
+        $detailBlank  = array_fill(0, count($detailHeaders), '');
+        $header       = array_merge($summaryHeaders, [''], $detailHeaders);
+
+        return response()->streamDownload(function () use ($detailRows, $summaryRows, $summaryCount, $summaryBlank, $detailBlank, $header) {
+            $handle = fopen('php://output', 'w');
+            fprintf($handle, chr(0xEF) . chr(0xBB) . chr(0xBF)); // UTF-8 BOM
+            fputcsv($handle, $header, ';');
+
+            $rowIndex = 0;
+            foreach ($detailRows as $detail) {
+                $left = $rowIndex < $summaryCount ? $summaryRows[$rowIndex] : $summaryBlank;
+                fputcsv($handle, array_merge($left, [''], $detail), ';');
+                $rowIndex++;
+            }
+
+            // Kasus klien tanpa invoice tertunggak (jarang, tapi mungkin): baris ringkasannya
+            // belum sempat ditulis di loop atas — tulis sisanya dengan blok detail kosong.
+            while ($rowIndex < $summaryCount) {
+                fputcsv($handle, array_merge($summaryRows[$rowIndex], [''], $detailBlank), ';');
+                $rowIndex++;
+            }
+
+            fclose($handle);
+        }, 'aging-report-' . $report['as_of_date'] . '.csv', [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+        ]);
+    }
+
+    /**
+     * Export XLSX asli (PhpSpreadsheet), 2 sheet: "Summary per Klien" & "Detail Invoice".
+     */
+    private function streamXlsxExport(array $report): BinaryFileResponse|JsonResponse
+    {
+        if (!class_exists('ZipArchive')) {
+            return $this->errorResponse('Ekstensi PHP "zip" tidak aktif. Aktifkan extension=zip pada php.ini lalu restart server.', 500);
+        }
 
         $spreadsheet = new Spreadsheet();
         $sheet       = $spreadsheet->getActiveSheet();

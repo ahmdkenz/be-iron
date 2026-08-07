@@ -55,6 +55,7 @@ Route::prefix('invoices')->group(function () {
     Route::get('/', [InvoiceController::class, 'index']);
     Route::get('/summary', [InvoiceController::class, 'summary']);
     Route::get('/rekap-klien', [InvoiceController::class, 'rekapKlien']);
+    Route::get('/rekap-klien/export-count', [InvoiceController::class, 'exportRekapKlienRowCount']);
     Route::get('/export',               [InvoiceController::class, 'export']);
     Route::get('/export-excel',         [InvoiceController::class, 'exportExcel']);
     Route::get('/export-count',         [InvoiceController::class, 'exportRowCount']);
@@ -98,10 +99,12 @@ Route::get('/jurnal-pic/export-excel',     [JurnalPicController::class, 'exportE
 // ─── Aging Report ────────────────────────────────────────────────
 Route::get('/aging-report', [AgingReportController::class, 'index']);
 Route::get('/aging-report/export-excel', [AgingReportController::class, 'exportExcel']);
+Route::get('/aging-report/export-count', [AgingReportController::class, 'exportRowCount']);
 
 // ─── Mutasi Piutang ───────────────────────────────────────────────
 Route::get('/mutasi-piutang', [MutasiPiutangController::class, 'index']);
 Route::get('/mutasi-piutang/export-excel', [MutasiPiutangController::class, 'exportExcel']);
+Route::get('/mutasi-piutang/export-count', [MutasiPiutangController::class, 'exportRowCount']);
 
 // ─── Rekening Koran (Jurnal Umum Bank Statement) ──────────────────
 // Laporan global lintas PIC — hanya ADMIN/MANAGER/SUPERVISOR. Status posting

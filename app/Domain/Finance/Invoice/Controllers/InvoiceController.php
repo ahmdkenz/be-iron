@@ -331,6 +331,184 @@ class InvoiceController extends Controller
         ]);
     }
 
+    private function rekapKlienFilterRules(): array
+    {
+        return [
+            'klien_ar_id'   => ['nullable', 'integer', 'exists:tb_klien_ar,id'],
+            'periode_bulan' => ['nullable', 'integer', 'between:1,12'],
+            'periode_tahun' => ['nullable', 'integer', 'between:2000,2100'],
+            'segment'       => ['nullable', 'in:B2B,B2C,ALL'],
+        ];
+    }
+
+    /** Kolom Rekap Klien — sama persis di XLSX & CSV, disamakan dengan ExportDataWorkbookService::rekapKlienSection(). */
+    private const REKAP_KLIEN_HEADERS = [
+        'No', 'Nama Klien', 'Kode Resto', 'Nama Resto', 'PIC AR', 'Entitas', 'Jml Invoice',
+        'Total Tagihan', 'Total Terbayar', 'Sisa Piutang', 'Overdue', 'Collection Rate',
+        'Draft', 'Terkirim', 'Sebagian', 'Lunas',
+    ];
+
+    private function rekapKlienRowValues(array $row, int $index): array
+    {
+        return [
+            $index + 1,
+            $row['nama_klien'] ?? '',
+            // Klien B2B (PT) tidak punya 1 resto tunggal — 1 PT bisa menaungi banyak
+            // outlet/resto sekaligus (ditagih dalam 1 invoice konsolidasi), jadi
+            // kode_resto/nama_resto selalu null utk tipe ini. Fallback ini SENGAJA
+            // cuma di export (bukan di InvoiceRepository::getRekapKlien()), karena
+            // data mentahnya juga dipakai tampilan web yang men-treat null sebagai
+            // "sembunyikan bagian resto" — lihat RekapKlien.vue.
+            $row['kode_resto'] ?? '-',
+            $row['nama_resto'] ?? '-',
+            $row['pic_ar'] ?? '',
+            $row['perusahaan'] ?? '',
+            $row['total_invoice'] ?? 0,
+            $row['total_tagihan'] ?? 0,
+            $row['total_pembayaran'] ?? 0,
+            $row['sisa_tagihan'] ?? 0,
+            $row['overdue_amount'] ?? 0,
+            ($row['collection_rate'] ?? 0) . '%',
+            $row['draft'] ?? 0,
+            $row['terkirim'] ?? 0,
+            $row['sebagian'] ?? 0,
+            $row['lunas'] ?? 0,
+        ];
+    }
+
+    /**
+     * Jumlah baris klien yang akan dihasilkan export untuk filter yang sama — dipakai FE
+     * untuk peringatan real-time XLSX vs CSV di modal Export. Rekap Klien 1 baris = 1 klien,
+     * jadi jumlahnya realistis selalu jauh di bawah ambang peringatan.
+     */
+    public function exportRekapKlienRowCount(Request $request): JsonResponse
+    {
+        $request->validate($this->rekapKlienFilterRules());
+
+        $filters = $request->only(['klien_ar_id', 'periode_bulan', 'periode_tahun', 'segment']);
+        ArFilterScope::apply($filters, auth()->user());
+
+        $rows = $this->service->getRekapKlien($filters);
+
+        return $this->successResponse(['row_count' => count($rows)]);
+    }
+
+    public function exportRekapKlien(Request $request): BinaryFileResponse|StreamedResponse|JsonResponse
+    {
+        $request->validate($this->rekapKlienFilterRules());
+
+        $filters = $request->only(['klien_ar_id', 'periode_bulan', 'periode_tahun', 'segment']);
+        ArFilterScope::apply($filters, auth()->user());
+
+        $rows   = $this->service->getRekapKlien($filters);
+        $format = strtolower((string) $request->query('format', 'xlsx'));
+
+        return $format === 'csv' ? $this->streamRekapKlienCsv($rows) : $this->streamRekapKlienXlsx($rows);
+    }
+
+    /** Rekap Klien cuma 1 level (tanpa baris detail per invoice), jadi CSV-nya 1 tabel flat biasa. */
+    private function streamRekapKlienCsv(array $rows): StreamedResponse
+    {
+        $dataRows = [];
+        foreach ($rows as $index => $row) {
+            $dataRows[] = $this->rekapKlienRowValues($row, $index);
+        }
+
+        return response()->streamDownload(function () use ($dataRows) {
+            $handle = fopen('php://output', 'w');
+            fprintf($handle, chr(0xEF) . chr(0xBB) . chr(0xBF)); // UTF-8 BOM
+            fputcsv($handle, self::REKAP_KLIEN_HEADERS, ';');
+
+            foreach ($dataRows as $row) {
+                fputcsv($handle, $row, ';');
+            }
+
+            fclose($handle);
+        }, 'Rekap Piutang per Klien-' . now()->format('Ymd-His') . '.csv', [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+        ]);
+    }
+
+    private function streamRekapKlienXlsx(array $rows): BinaryFileResponse|JsonResponse
+    {
+        if (!class_exists('ZipArchive')) {
+            return $this->errorResponse('Ekstensi PHP "zip" tidak aktif. Aktifkan extension=zip pada php.ini lalu restart server.', 500);
+        }
+
+        $spreadsheet = new Spreadsheet();
+        $sheet       = $spreadsheet->getActiveSheet();
+        $sheet->setTitle('Rekap Piutang per Klien');
+
+        $cols    = range('A', 'P'); // 16 kolom, sinkron dengan REKAP_KLIEN_HEADERS
+        $lastCol = 'P';
+
+        $sheet->mergeCells("A1:{$lastCol}1");
+        $sheet->setCellValue('A1', 'REKAP PIUTANG PER KLIEN');
+        $sheet->getStyle('A1')->applyFromArray([
+            'font'      => ['bold' => true, 'size' => 14, 'color' => ['argb' => 'FFFFFFFF']],
+            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF1565C0']],
+            'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
+        ]);
+        $sheet->getRowDimension(1)->setRowHeight(36);
+
+        $sheet->mergeCells("A2:{$lastCol}2");
+        $sheet->setCellValue('A2', 'Diekspor: ' . now()->format('d-m-Y H:i'));
+        $sheet->getStyle('A2')->applyFromArray([
+            'font'      => ['italic' => true, 'size' => 9, 'color' => ['argb' => 'FF455A64']],
+            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFE3F2FD']],
+            'alignment' => ['horizontal' => Alignment::HORIZONTAL_LEFT, 'vertical' => Alignment::VERTICAL_CENTER],
+        ]);
+        $sheet->getRowDimension(2)->setRowHeight(18);
+        $sheet->getRowDimension(3)->setRowHeight(6);
+
+        foreach (array_combine($cols, self::REKAP_KLIEN_HEADERS) as $col => $label) {
+            $sheet->setCellValue("{$col}4", $label);
+        }
+        $sheet->getStyle("A4:{$lastCol}4")->applyFromArray([
+            'font'      => ['bold' => true, 'size' => 10, 'color' => ['argb' => 'FFFFFFFF']],
+            'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF1976D2']],
+            'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
+            'borders'   => ['allBorders' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FF1565C0']]],
+        ]);
+        $sheet->getRowDimension(4)->setRowHeight(22);
+
+        $numericCols = ['G', 'H', 'I', 'J', 'K', 'M', 'N', 'O', 'P']; // Jml Invoice, Total Tagihan..Overdue, Draft..Lunas
+
+        $rowNum = 5;
+        foreach ($rows as $index => $row) {
+            $bg = $rowNum % 2 === 0 ? 'FFE3F2FD' : 'FFFFFFFF';
+
+            foreach (array_combine($cols, $this->rekapKlienRowValues($row, $index)) as $col => $val) {
+                $type = in_array($col, $numericCols, true) ? DataType::TYPE_NUMERIC : DataType::TYPE_STRING;
+                $sheet->getCell("{$col}{$rowNum}")->setValueExplicit($val, $type);
+            }
+
+            $sheet->getStyle("A{$rowNum}:{$lastCol}{$rowNum}")->applyFromArray([
+                'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => $bg]],
+                'borders'   => ['allBorders' => ['borderStyle' => Border::BORDER_HAIR, 'color' => ['argb' => 'FFCFD8DC']]],
+                'alignment' => ['vertical' => Alignment::VERTICAL_CENTER],
+            ]);
+            $sheet->getRowDimension($rowNum)->setRowHeight(18);
+            $rowNum++;
+        }
+
+        if ($rowNum > 5) {
+            $sheet->getStyle('G5:K' . ($rowNum - 1))->getNumberFormat()->setFormatCode('#,##0');
+            $sheet->getStyle('M5:P' . ($rowNum - 1))->getNumberFormat()->setFormatCode('#,##0');
+        }
+
+        $sheet->freezePane('A5');
+
+        $temp = tempnam(sys_get_temp_dir(), 'rk_') . '.xlsx';
+        (new XlsxWriter($spreadsheet))->save($temp);
+
+        return response()
+            ->download($temp, 'Rekap Piutang per Klien-' . now()->format('Ymd-His') . '.xlsx', [
+                'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            ])
+            ->deleteFileAfterSend(true);
+    }
+
     public function store(StoreInvoiceRequest $request): JsonResponse
     {
         $invoice = $this->service->create(InvoiceDTO::fromRequest($request->validated()));

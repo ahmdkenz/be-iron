@@ -241,6 +241,7 @@ class InvoiceRepository
                 'klien_id'        => $klien?->id,
                 'kode_klien'      => $klien?->kode_klien,
                 'nama_klien'      => $klien?->nama_klien,
+                'kode_resto'      => $klien?->resto?->kode_resto,
                 'nama_resto'      => $klien?->resto?->nama_resto,
                 'tipe_klien'      => $klien?->tipe_klien,
                 'perusahaan'      => $klien?->perusahaan?->nama_singkatan_perusahaan,

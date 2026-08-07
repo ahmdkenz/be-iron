@@ -15,6 +15,7 @@ use PhpOffice\PhpSpreadsheet\Style\Border;
 use PhpOffice\PhpSpreadsheet\Style\Fill;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx as XlsxWriter;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class MutasiPiutangController extends Controller
 {
@@ -46,23 +47,128 @@ class MutasiPiutangController extends Controller
         return $this->successResponse($report);
     }
 
-    public function exportExcel(Request $request): BinaryFileResponse|JsonResponse
+    private function exportFilterRules(): array
     {
-        if (!class_exists('ZipArchive')) {
-            return $this->errorResponse('Ekstensi PHP "zip" tidak aktif. Aktifkan extension=zip pada php.ini lalu restart server.', 500);
-        }
-
-        $request->validate([
+        return [
             'periode_awal'  => ['nullable', 'date'],
             'periode_akhir' => ['nullable', 'date', 'after_or_equal:periode_awal'],
             'klien_ar_id'   => ['nullable', 'integer', 'exists:tb_klien_ar,id'],
             'segment'       => ['nullable', 'in:B2B,B2C,ALL'],
-        ]);
+        ];
+    }
+
+    /**
+     * Jumlah baris detail mutasi yang akan dihasilkan export untuk filter yang sama —
+     * dipakai FE untuk peringatan real-time XLSX vs CSV di modal Export.
+     */
+    public function exportRowCount(Request $request): JsonResponse
+    {
+        $request->validate($this->exportFilterRules());
+
+        $filters = $request->only(['periode_awal', 'periode_akhir', 'klien_ar_id', 'segment']);
+        ArFilterScope::apply($filters, $request->user());
+
+        $report   = $this->service->getReport($filters);
+        $rowCount = array_sum(array_map(fn($row) => count($row['details'] ?? []), $report['rows']));
+
+        return $this->successResponse(['row_count' => $rowCount]);
+    }
+
+    public function exportExcel(Request $request): BinaryFileResponse|StreamedResponse|JsonResponse
+    {
+        $request->validate($this->exportFilterRules());
 
         $filters = $request->only(['periode_awal', 'periode_akhir', 'klien_ar_id', 'segment']);
         ArFilterScope::apply($filters, $request->user());
 
         $report = $this->service->getReport($filters);
+        $format = strtolower((string) $request->query('format', 'xlsx'));
+
+        return $format === 'csv' ? $this->streamCsvExport($report) : $this->streamXlsxExport($report);
+    }
+
+    /**
+     * Export CSV — blok ringkasan per klien (kiri) & blok detail mutasi (kanan, dipisah 1
+     * kolom kosong) ditulis berdampingan pada baris yang sama, meniru tampilan 2-sheet versi
+     * XLSX (lihat streamXlsxExport()). Pola sama seperti AgingReportController::streamCsvExport().
+     */
+    private function streamCsvExport(array $report): StreamedResponse
+    {
+        $summaryHeaders = ['No', 'Kode Klien', 'Nama Klien', 'Entitas', 'Saldo Awal', 'Invoice Masuk', 'Pembayaran', 'Saldo Akhir'];
+        $detailHeaders  = ['No', 'Kode Klien', 'Nama Klien', 'Tanggal', 'Tipe', 'Dokumen', 'Invoice', 'Debit', 'Kredit', 'Saldo', 'Keterangan'];
+
+        $summaryRows = [];
+        foreach ($report['rows'] as $i => $row) {
+            $summaryRows[] = [
+                $i + 1,
+                $row['kode_klien'] ?? '',
+                $row['nama_klien'] ?? '',
+                $row['perusahaan'] ?? '',
+                $row['saldo_awal'] ?? 0,
+                $row['invoice_masuk'] ?? 0,
+                $row['pembayaran'] ?? 0,
+                $row['saldo_akhir'] ?? 0,
+            ];
+        }
+
+        $detailRows = [];
+        $no         = 1;
+        foreach ($report['rows'] as $row) {
+            foreach (($row['details'] ?? []) as $detail) {
+                $detailRows[] = [
+                    $no++,
+                    $row['kode_klien'] ?? '',
+                    $row['nama_klien'] ?? '',
+                    $detail['tanggal'] ?? '',
+                    $detail['label'] ?? $detail['tipe'] ?? '',
+                    $detail['no_dokumen'] ?? '',
+                    $detail['no_invoice'] ?? '',
+                    $detail['debit'] ?? 0,
+                    $detail['kredit'] ?? 0,
+                    $detail['saldo'] ?? 0,
+                    $detail['keterangan'] ?? '',
+                ];
+            }
+        }
+
+        $summaryCount = count($summaryRows);
+        $summaryBlank = array_fill(0, count($summaryHeaders), '');
+        $detailBlank  = array_fill(0, count($detailHeaders), '');
+        $header       = array_merge($summaryHeaders, [''], $detailHeaders);
+
+        return response()->streamDownload(function () use ($detailRows, $summaryRows, $summaryCount, $summaryBlank, $detailBlank, $header) {
+            $handle = fopen('php://output', 'w');
+            fprintf($handle, chr(0xEF) . chr(0xBB) . chr(0xBF)); // UTF-8 BOM
+            fputcsv($handle, $header, ';');
+
+            $rowIndex = 0;
+            foreach ($detailRows as $detail) {
+                $left = $rowIndex < $summaryCount ? $summaryRows[$rowIndex] : $summaryBlank;
+                fputcsv($handle, array_merge($left, [''], $detail), ';');
+                $rowIndex++;
+            }
+
+            // Kasus klien tanpa mutasi pada periode ini: baris ringkasannya belum sempat
+            // ditulis di loop atas — tulis sisanya dengan blok detail kosong.
+            while ($rowIndex < $summaryCount) {
+                fputcsv($handle, array_merge($summaryRows[$rowIndex], [''], $detailBlank), ';');
+                $rowIndex++;
+            }
+
+            fclose($handle);
+        }, 'mutasi-piutang-' . now()->format('Ymd') . '.csv', [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+        ]);
+    }
+
+    /**
+     * Export XLSX asli (PhpSpreadsheet), 2 sheet: "Mutasi Piutang" & "Detail Mutasi".
+     */
+    private function streamXlsxExport(array $report): BinaryFileResponse|JsonResponse
+    {
+        if (!class_exists('ZipArchive')) {
+            return $this->errorResponse('Ekstensi PHP "zip" tidak aktif. Aktifkan extension=zip pada php.ini lalu restart server.', 500);
+        }
 
         $spreadsheet = new Spreadsheet();
         $sheet       = $spreadsheet->getActiveSheet();
