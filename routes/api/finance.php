@@ -67,7 +67,7 @@ Route::prefix('invoices')->group(function () {
     Route::get('/preview-no-konsolidasi', [InvoiceController::class, 'previewConsolidatedNo']);
     Route::post('/bulk-b2c-investor/preview', [InvoiceController::class, 'bulkB2CInvestorPreview']);
     Route::post('/bulk-b2c-investor/link', [InvoiceController::class, 'bulkB2CInvestorLink']);
-    Route::post('/share-blast', [InvoiceController::class, 'shareBlast'])->middleware('throttle:15,1');
+    Route::post('/share-blast', [InvoiceController::class, 'shareBlast'])->middleware('throttle:15,1,share-blast');
     Route::post('/', [InvoiceController::class, 'store']);
     Route::delete('/bulk', [InvoiceController::class, 'bulkDestroy']);
     Route::get('/{invoice}/settleable-originals', [InvoiceController::class, 'settleableOriginals']);
@@ -193,7 +193,8 @@ Route::prefix('ending-balance')->group(function () {
 Route::prefix('opening-balance')->group(function () {
     Route::get('/', [OpeningBalanceController::class, 'index']);
     Route::get('/summary', [OpeningBalanceController::class, 'summary']);
-    Route::get('/export', [OpeningBalanceController::class, 'export']);
+    // GET /export didaftarkan di api.php (grup throttle:10,1) — jangan didaftarkan ulang di sini,
+    // registrasi kedua akan menang & diam-diam menghilangkan throttle yang dimaksud untuk endpoint export.
     Route::get('/export-count', [OpeningBalanceController::class, 'exportRowCount']);
     Route::post('/', [OpeningBalanceController::class, 'store']);
     Route::put('/{invoice}', [OpeningBalanceController::class, 'update']);

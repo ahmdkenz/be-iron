@@ -362,7 +362,7 @@ class OpeningBalanceController extends Controller
     {
         $filters = $request->only([
             'search', 'status', 'klien_ar_id', 'karyawan_id',
-            'tanggal_dari', 'tanggal_sampai', 'approval_status',
+            'tanggal_dari', 'tanggal_sampai', 'approval_status', 'segment',
         ]);
         $filters['is_opening_balance'] = true;
         ArFilterScope::apply($filters, auth()->user());
@@ -415,26 +415,25 @@ class OpeningBalanceController extends Controller
 
     private function streamXlsxExport(Request $request): BinaryFileResponse
     {
+        @set_time_limit(300);
+        @ini_set('memory_limit', '512M');
+
         $filters = $this->resolveExportFilters($request);
         $records = $this->service->getAllForExport($filters);
 
         $spreadsheet = new Spreadsheet;
 
-        // Sheet 1: Data Opening Balance
+        // Sheet 1: Data Opening Balance (termasuk rincian invoice asal)
         $sheet1 = $spreadsheet->getActiveSheet();
         $this->buildExportObSheet($sheet1, $records);
 
-        // Sheet 2: Rincian Invoice Asal
+        // Sheet 2: Item Invoice Asal
         $sheet2 = $spreadsheet->createSheet();
-        $this->buildExportDetailSheet($sheet2, $records);
+        $this->buildExportItemSheet($sheet2, $records);
 
-        // Sheet 3: Item Invoice Asal
+        // Sheet 3: Keterangan
         $sheet3 = $spreadsheet->createSheet();
-        $this->buildExportItemSheet($sheet3, $records);
-
-        // Sheet 4: Petunjuk
-        $sheet4 = $spreadsheet->createSheet();
-        $this->buildExportInfoSheet($sheet4);
+        $this->buildExportInfoSheet($sheet3);
 
         $spreadsheet->setActiveSheetIndex(0);
 
@@ -450,6 +449,15 @@ class OpeningBalanceController extends Controller
 
     // ─── Private: Export Sheet Builders ──────────────────────────────────────
 
+    /**
+     * Sheet "Data Opening Balance" — gabungan header OB + rincian invoice asal (1 baris =
+     * 1 rincian; OB tanpa rincian tetap 1 baris dengan kolom rincian dikosongkan), meniru
+     * pola flat template Import Master Opening Balance. Kode/Nama Resto (C-D) sengaja
+     * ditaruh di depan dekat Klien supaya asal resto tiap baris langsung terlihat tanpa
+     * scroll. Kolom OB-level (A-B, E-J) & audit (R-U) sengaja DIULANG di tiap baris rincian
+     * milik OB yang sama supaya tiap baris tetap informatif berdiri sendiri (dikonfirmasi
+     * user, lihat plan).
+     */
     private function buildExportObSheet(Worksheet $sheet, $records): void
     {
         $sheet->setTitle('Data Opening Balance');
@@ -457,19 +465,27 @@ class OpeningBalanceController extends Controller
         $cols = [
             'A' => ['No. Opening Balance',  28],
             'B' => ['Klien',                30],
-            'C' => ['Kode Klien',           18],
-            'D' => ['Entitas Penagih',       20],
-            'E' => ['Tanggal OB',           16],
-            'F' => ['Saldo Awal',           20],
-            'G' => ['Total Terbayar',       20],
-            'H' => ['Sisa Tagihan',         20],
-            'I' => ['Keterangan',           32],
-            'J' => ['Status',               14],
-            'K' => ['Approval',             16],
-            'L' => ['Dibuat Oleh',          20],
-            'M' => ['Tanggal Dibuat',       20],
+            'C' => ['Kode Resto',           16],
+            'D' => ['Nama Resto',           22],
+            'E' => ['Entitas Bisnis',       20],
+            'F' => ['Tanggal OB',           16],
+            'G' => ['Saldo Awal',           20],
+            'H' => ['Total Terbayar',       20],
+            'I' => ['Sisa Tagihan',         20],
+            'J' => ['Keterangan OB',        30],
+            'K' => ['No. Invoice Asal',     24],
+            'L' => ['Tanggal Invoice Asal', 18],
+            'M' => ['Jumlah Tagihan Asal',  20],
+            'N' => ['Sisa Tagihan Asal',    20],
+            'O' => ['Deskripsi',            30],
+            'P' => ['Keterangan Rincian',   28],
+            'Q' => ['Jumlah Item',          12],
+            'R' => ['Status',               14],
+            'S' => ['Approval',             16],
+            'T' => ['Dibuat Oleh',          20],
+            'U' => ['Tanggal Dibuat',       20],
         ];
-        $lastCol = 'M';
+        $lastCol = 'U';
 
         $sheet->mergeCells("A1:{$lastCol}1");
         $sheet->setCellValue('A1', 'DATA OPENING BALANCE');
@@ -502,150 +518,74 @@ class OpeningBalanceController extends Controller
         ]);
         $sheet->getRowDimension(4)->setRowHeight(22);
 
-        $numFmt = '#,##0.00';
         $rowNum = 5;
+        $statusColors = ['DRAFT' => 'FF757575', 'TERKIRIM' => 'FF1565C0', 'SEBAGIAN' => 'FFE65100', 'LUNAS' => 'FF2E7D32'];
+        $approvalColors = ['PENDING' => 'FFE65100', 'APPROVED' => 'FF2E7D32', 'REJECTED' => 'FFC62828'];
 
         foreach ($records as $inv) {
-            $bg = $rowNum % 2 === 0 ? 'FFF1F8E9' : 'FFFFFFFF';
-
-            $rowData = [
+            $obValues = [
                 'A' => [$inv->no_invoice,                                              DataType::TYPE_STRING],
                 'B' => [$inv->klienAr?->nama_klien ?? '-',                             DataType::TYPE_STRING],
-                'C' => [$inv->klienAr?->kode_klien ?? '-',                             DataType::TYPE_STRING],
-                'D' => [$inv->perusahaan?->nama_singkatan_perusahaan ?? '-',           DataType::TYPE_STRING],
-                'E' => [$inv->tanggal_invoice ? Carbon::parse($inv->tanggal_invoice)->format('d-m-Y') : '-', DataType::TYPE_STRING],
-                'F' => [(float) $inv->subtotal,         DataType::TYPE_NUMERIC],
-                'G' => [(float) $inv->total_pembayaran, DataType::TYPE_NUMERIC],
-                'H' => [(float) $inv->sisa_tagihan,     DataType::TYPE_NUMERIC],
-                'I' => [$inv->keterangan ?? '-',                                       DataType::TYPE_STRING],
-                'J' => [$inv->status ?? '-',                                           DataType::TYPE_STRING],
-                'K' => [$inv->approval_status ?? '-',                                  DataType::TYPE_STRING],
-                'L' => [$inv->createdBy?->username ?? '-',                             DataType::TYPE_STRING],
-                'M' => [$inv->created_at ? Carbon::parse($inv->created_at)->format('d-m-Y H:i') : '-', DataType::TYPE_STRING],
+                'E' => [$inv->perusahaan?->nama_singkatan_perusahaan ?? '-',           DataType::TYPE_STRING],
+                'F' => [$inv->tanggal_invoice ? Carbon::parse($inv->tanggal_invoice)->format('d-m-Y') : '-', DataType::TYPE_STRING],
+                'G' => [(float) $inv->subtotal,         DataType::TYPE_NUMERIC],
+                'H' => [(float) $inv->total_pembayaran, DataType::TYPE_NUMERIC],
+                'I' => [(float) $inv->sisa_tagihan,     DataType::TYPE_NUMERIC],
+                'J' => [$inv->keterangan ?? '-',                                       DataType::TYPE_STRING],
+                'R' => [$inv->status ?? '-',                                           DataType::TYPE_STRING],
+                'S' => [$inv->approval_status ?? '-',                                  DataType::TYPE_STRING],
+                'T' => [$inv->createdBy?->username ?? '-',                             DataType::TYPE_STRING],
+                'U' => [$inv->created_at ? Carbon::parse($inv->created_at)->format('d-m-Y H:i') : '-', DataType::TYPE_STRING],
             ];
 
-            foreach ($rowData as $col => [$val, $type]) {
-                $sheet->getCell("{$col}{$rowNum}")->setValueExplicit($val, $type);
+            $details = $inv->openingBalanceDetails->isEmpty() ? [null] : $inv->openingBalanceDetails;
+
+            foreach ($details as $detail) {
+                $detailValues = $detail ? [
+                    'C' => [$detail->kode_resto ?? '-',                                                               DataType::TYPE_STRING],
+                    'D' => [$detail->nama_resto ?? '-',                                                               DataType::TYPE_STRING],
+                    'K' => [$detail->no_invoice_asal,                                                                 DataType::TYPE_STRING],
+                    'L' => [$detail->tanggal_invoice_asal ? Carbon::parse($detail->tanggal_invoice_asal)->format('d-m-Y') : '-', DataType::TYPE_STRING],
+                    'M' => [(float) $detail->jumlah_tagihan_asal,                                                     DataType::TYPE_NUMERIC],
+                    'N' => [(float) $detail->sisa_tagihan_asal,                                                       DataType::TYPE_NUMERIC],
+                    'O' => [$detail->deskripsi,                                                                       DataType::TYPE_STRING],
+                    'P' => [$detail->keterangan ?? '-',                                                               DataType::TYPE_STRING],
+                    'Q' => [$detail->items->count(),                                                                  DataType::TYPE_NUMERIC],
+                ] : [
+                    'C' => ['-', DataType::TYPE_STRING],
+                    'D' => ['-', DataType::TYPE_STRING],
+                    'K' => ['-', DataType::TYPE_STRING],
+                    'L' => ['-', DataType::TYPE_STRING],
+                    'M' => [0.0, DataType::TYPE_NUMERIC],
+                    'N' => [0.0, DataType::TYPE_NUMERIC],
+                    'O' => ['-', DataType::TYPE_STRING],
+                    'P' => ['-', DataType::TYPE_STRING],
+                    'Q' => [0, DataType::TYPE_NUMERIC],
+                ];
+
+                foreach ($obValues + $detailValues as $col => [$val, $type]) {
+                    $sheet->getCell("{$col}{$rowNum}")->setValueExplicit($val, $type);
+                }
+
+                $statusColor = $statusColors[$inv->status] ?? 'FF212121';
+                $sheet->getStyle("R{$rowNum}")->getFont()->setColor(new Color($statusColor))->setBold(true);
+
+                $approvalColor = $approvalColors[$inv->approval_status] ?? 'FF212121';
+                $sheet->getStyle("S{$rowNum}")->getFont()->setColor(new Color($approvalColor))->setBold(true);
+
+                $rowNum++;
             }
-
-            foreach (['F', 'G', 'H'] as $numCol) {
-                $sheet->getStyle("{$numCol}{$rowNum}")->getNumberFormat()->setFormatCode($numFmt);
-            }
-
-            $sheet->getStyle("A{$rowNum}:{$lastCol}{$rowNum}")->applyFromArray([
-                'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => $bg]],
-                'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_HAIR, 'color' => ['argb' => 'FFCFD8DC']]],
-                'alignment' => ['vertical' => Alignment::VERTICAL_CENTER],
-            ]);
-
-            // Status color
-            $statusColors = ['DRAFT' => 'FF757575', 'TERKIRIM' => 'FF1565C0', 'SEBAGIAN' => 'FFE65100', 'LUNAS' => 'FF2E7D32'];
-            $statusColor = $statusColors[$inv->status] ?? 'FF212121';
-            $sheet->getStyle("J{$rowNum}")->getFont()->setColor(new Color($statusColor))->setBold(true);
-
-            // Approval color
-            $approvalColors = ['PENDING' => 'FFE65100', 'APPROVED' => 'FF2E7D32', 'REJECTED' => 'FFC62828'];
-            $approvalColor = $approvalColors[$inv->approval_status] ?? 'FF212121';
-            $sheet->getStyle("K{$rowNum}")->getFont()->setColor(new Color($approvalColor))->setBold(true);
-
-            $sheet->getRowDimension($rowNum)->setRowHeight(18);
-            $rowNum++;
         }
 
         if ($rowNum > 5) {
+            $sheet->getStyle("G5:I".($rowNum - 1))->getNumberFormat()->setFormatCode('#,##0.00');
+            $sheet->getStyle("M5:N".($rowNum - 1))->getNumberFormat()->setFormatCode('#,##0.00');
             $sheet->getStyle("A4:{$lastCol}".($rowNum - 1))->applyFromArray([
                 'borders' => ['outline' => ['borderStyle' => Border::BORDER_MEDIUM, 'color' => ['argb' => 'FF2E7D32']]],
             ]);
         }
 
         $sheet->freezePane('A5');
-    }
-
-    private function buildExportDetailSheet(Worksheet $sheet, $records): void
-    {
-        $sheet->setTitle('Rincian Invoice Asal');
-
-        $cols = [
-            'A' => ['No. Opening Balance',  28],
-            'B' => ['No. Invoice Asal',     24],
-            'C' => ['Tanggal Invoice Asal', 18],
-            'D' => ['Deskripsi',            32],
-            'E' => ['Jumlah Tagihan Asal',  20],
-            'F' => ['Sisa Tagihan Asal',    20],
-            'G' => ['Keterangan',           30],
-            'H' => ['Kode Resto',           16],
-            'I' => ['Nama Resto',           24],
-            'J' => ['Jumlah Item',          14],
-        ];
-        $lastCol = 'J';
-
-        $sheet->mergeCells("A1:{$lastCol}1");
-        $sheet->setCellValue('A1', 'RINCIAN INVOICE ASAL');
-        $sheet->getStyle('A1')->applyFromArray([
-            'font' => ['bold' => true, 'size' => 13, 'color' => ['argb' => 'FFFFFFFF']],
-            'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF1B5E20']],
-            'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
-        ]);
-        $sheet->getRowDimension(1)->setRowHeight(30);
-        $sheet->getRowDimension(2)->setRowHeight(6);
-
-        foreach ($cols as $col => [$label, $width]) {
-            $sheet->setCellValue("{$col}3", $label);
-            $sheet->getColumnDimension($col)->setWidth($width);
-        }
-        $sheet->getStyle("A3:{$lastCol}3")->applyFromArray([
-            'font' => ['bold' => true, 'size' => 10, 'color' => ['argb' => 'FFFFFFFF']],
-            'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF2E7D32']],
-            'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
-            'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['argb' => 'FF1B5E20']]],
-        ]);
-        $sheet->getRowDimension(3)->setRowHeight(22);
-
-        $numFmt = '#,##0.00';
-        $rowNum = 4;
-
-        foreach ($records as $inv) {
-            foreach ($inv->openingBalanceDetails as $detail) {
-                $bg = $rowNum % 2 === 0 ? 'FFF1F8E9' : 'FFFFFFFF';
-
-                $rowData = [
-                    'A' => [$inv->no_invoice,                                                                         DataType::TYPE_STRING],
-                    'B' => [$detail->no_invoice_asal,                                                                 DataType::TYPE_STRING],
-                    'C' => [$detail->tanggal_invoice_asal ? Carbon::parse($detail->tanggal_invoice_asal)->format('d-m-Y') : '-', DataType::TYPE_STRING],
-                    'D' => [$detail->deskripsi,                                                                       DataType::TYPE_STRING],
-                    'E' => [(float) $detail->jumlah_tagihan_asal,                                                     DataType::TYPE_NUMERIC],
-                    'F' => [(float) $detail->sisa_tagihan_asal,                                                       DataType::TYPE_NUMERIC],
-                    'G' => [$detail->keterangan ?? '-',                                                               DataType::TYPE_STRING],
-                    'H' => [$detail->kode_resto ?? '-',                                                               DataType::TYPE_STRING],
-                    'I' => [$detail->nama_resto ?? '-',                                                               DataType::TYPE_STRING],
-                    'J' => [$detail->items->count(),                                                                  DataType::TYPE_NUMERIC],
-                ];
-
-                foreach ($rowData as $col => [$val, $type]) {
-                    $sheet->getCell("{$col}{$rowNum}")->setValueExplicit($val, $type);
-                }
-
-                foreach (['E', 'F'] as $numCol) {
-                    $sheet->getStyle("{$numCol}{$rowNum}")->getNumberFormat()->setFormatCode($numFmt);
-                }
-
-                $sheet->getStyle("A{$rowNum}:{$lastCol}{$rowNum}")->applyFromArray([
-                    'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => $bg]],
-                    'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_HAIR, 'color' => ['argb' => 'FFCFD8DC']]],
-                    'alignment' => ['vertical' => Alignment::VERTICAL_CENTER],
-                ]);
-                $sheet->getRowDimension($rowNum)->setRowHeight(18);
-                $rowNum++;
-            }
-        }
-
-        if ($rowNum > 4) {
-            $sheet->getStyle("A3:{$lastCol}".($rowNum - 1))->applyFromArray([
-                'borders' => ['outline' => ['borderStyle' => Border::BORDER_MEDIUM, 'color' => ['argb' => 'FF2E7D32']]],
-            ]);
-        }
-
-        $sheet->freezePane('A4');
     }
 
     private function buildExportItemSheet(Worksheet $sheet, $records): void
@@ -687,14 +627,11 @@ class OpeningBalanceController extends Controller
         ]);
         $sheet->getRowDimension(3)->setRowHeight(22);
 
-        $numFmt = '#,##0.00';
         $rowNum = 4;
 
         foreach ($records as $inv) {
             foreach ($inv->openingBalanceDetails as $detail) {
                 foreach ($detail->items as $item) {
-                    $bg = $rowNum % 2 === 0 ? 'FFF1F8E9' : 'FFFFFFFF';
-
                     $rowData = [
                         'A' => [$inv->no_invoice,                        DataType::TYPE_STRING],
                         'B' => [$detail->no_invoice_asal,                DataType::TYPE_STRING],
@@ -711,22 +648,13 @@ class OpeningBalanceController extends Controller
                         $sheet->getCell("{$col}{$rowNum}")->setValueExplicit($val, $type);
                     }
 
-                    foreach (['G', 'H'] as $numCol) {
-                        $sheet->getStyle("{$numCol}{$rowNum}")->getNumberFormat()->setFormatCode($numFmt);
-                    }
-
-                    $sheet->getStyle("A{$rowNum}:{$lastCol}{$rowNum}")->applyFromArray([
-                        'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => $bg]],
-                        'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_HAIR, 'color' => ['argb' => 'FFCFD8DC']]],
-                        'alignment' => ['vertical' => Alignment::VERTICAL_CENTER],
-                    ]);
-                    $sheet->getRowDimension($rowNum)->setRowHeight(18);
                     $rowNum++;
                 }
             }
         }
 
         if ($rowNum > 4) {
+            $sheet->getStyle("G4:H".($rowNum - 1))->getNumberFormat()->setFormatCode('#,##0.00');
             $sheet->getStyle("A3:{$lastCol}".($rowNum - 1))->applyFromArray([
                 'borders' => ['outline' => ['borderStyle' => Border::BORDER_MEDIUM, 'color' => ['argb' => 'FF2E7D32']]],
             ]);
@@ -751,9 +679,8 @@ class OpeningBalanceController extends Controller
         $sheet->getRowDimension(1)->setRowHeight(30);
 
         $infos = [
-            ['Sheet 1 — Data Opening Balance', 'Berisi ringkasan data Opening Balance: klien, saldo awal, periode, status pembayaran, dan status approval.'],
-            ['Sheet 2 — Rincian Invoice Asal',  'Berisi detail per Invoice Asal dari setiap Opening Balance: no. invoice, tanggal, deskripsi, dan sisa tagihan.'],
-            ['Sheet 3 — Item Invoice Asal',     'Berisi item/barang per Invoice Asal: nama barang, qty, harga satuan, dan subtotal.'],
+            ['Sheet 1 — Data Opening Balance', 'Berisi data Opening Balance beserta rincian invoice asalnya (1 baris = 1 rincian invoice; OB tanpa rincian tetap 1 baris): klien, saldo awal, periode, rincian invoice asal, status pembayaran, dan status approval.'],
+            ['Sheet 2 — Item Invoice Asal',     'Berisi item/barang per Invoice Asal: nama barang, qty, harga satuan, dan subtotal.'],
         ];
 
         $row = 3;
@@ -774,38 +701,38 @@ class OpeningBalanceController extends Controller
     }
 
     /**
-     * Export CSV — gabungkan ketiga sheet data (Data OB, Rincian Invoice Asal, Item
-     * Invoice Asal) jadi 1 baris per item, kolom berdampingan dipisah 1 kolom kosong per
-     * grup (meniru InvoiceController::streamCsvExport()). Sheet "Keterangan" (legend statis)
-     * sengaja tidak ikut, karena tidak ada isi data. OB tanpa detail, atau detail tanpa item,
-     * tetap ditulis minimal 1 baris (padding kolom kosong) supaya tidak hilang dari CSV —
-     * mirror perilaku buildExportObSheet()/buildExportDetailSheet() yang selalu menampilkan
-     * tiap OB/detail apa pun isinya.
+     * Export CSV — gabungkan sheet Data OB (termasuk rincian invoice asal, sudah menyatu
+     * lewat buildExportObSheet()) dengan Item Invoice Asal jadi 1 baris per item, kolom
+     * berdampingan dipisah 1 kolom kosong per blok (meniru InvoiceController::streamCsvExport()).
+     * Sheet "Keterangan" (legend statis) sengaja tidak ikut, karena tidak ada isi data. OB
+     * tanpa detail, atau detail tanpa item, tetap ditulis minimal 1 baris (padding kolom
+     * kosong) supaya tidak hilang dari CSV — mirror perilaku buildExportObSheet() yang selalu
+     * menampilkan tiap OB/rincian apa pun isinya.
      */
     private function streamCsvExport(Request $request): StreamedResponse
     {
+        @set_time_limit(300);
+        @ini_set('memory_limit', '512M');
+
         $filters = $this->resolveExportFilters($request);
         $records = $this->service->getAllForExport($filters);
 
-        $headerOb = [
-            'No. Opening Balance', 'Klien', 'Kode Klien', 'Entitas Penagih', 'Tanggal OB',
-            'Saldo Awal', 'Total Terbayar', 'Sisa Tagihan', 'Keterangan', 'Status',
-            'Approval', 'Dibuat Oleh', 'Tanggal Dibuat',
-        ];
-        $headerDetail = [
-            'No. Opening Balance', 'No. Invoice Asal', 'Tanggal Invoice Asal', 'Deskripsi',
-            'Jumlah Tagihan Asal', 'Sisa Tagihan Asal', 'Keterangan', 'Kode Resto', 'Nama Resto', 'Jumlah Item',
+        $headerObDetail = [
+            'No. Opening Balance', 'Klien', 'Kode Resto', 'Nama Resto', 'Entitas Bisnis', 'Tanggal OB',
+            'Saldo Awal', 'Total Terbayar', 'Sisa Tagihan', 'Keterangan OB',
+            'No. Invoice Asal', 'Tanggal Invoice Asal', 'Jumlah Tagihan Asal', 'Sisa Tagihan Asal',
+            'Deskripsi', 'Keterangan Rincian', 'Jumlah Item',
+            'Status', 'Approval', 'Dibuat Oleh', 'Tanggal Dibuat',
         ];
         $headerItem = [
             'No. Opening Balance', 'No. Invoice Asal', 'Kode Barang', 'Nama Barang',
             'Qty', 'Satuan', 'Harga Satuan', 'Subtotal', 'Keterangan',
         ];
-        $header = array_merge($headerOb, [''], $headerDetail, [''], $headerItem);
+        $header = array_merge($headerObDetail, [''], $headerItem);
 
-        $detailBlank = array_fill(0, count($headerDetail), '');
         $itemBlank = array_fill(0, count($headerItem), '');
 
-        return response()->streamDownload(function () use ($records, $header, $detailBlank, $itemBlank) {
+        return response()->streamDownload(function () use ($records, $header, $itemBlank) {
             $handle = fopen('php://output', 'w');
             fprintf($handle, chr(0xEF).chr(0xBB).chr(0xBF)); // UTF-8 BOM
             // Titik koma, bukan koma — locale Excel Indonesia pakai ";" sebagai list
@@ -813,16 +740,19 @@ class OpeningBalanceController extends Controller
             fputcsv($handle, $header, ';');
 
             foreach ($records as $inv) {
-                $obRow = [
+                $obPrefix = [
                     $inv->no_invoice,
                     $inv->klienAr?->nama_klien ?? '-',
-                    $inv->klienAr?->kode_klien ?? '-',
+                ];
+                $obSuffix = [
                     $inv->perusahaan?->nama_singkatan_perusahaan ?? '-',
                     $inv->tanggal_invoice ? Carbon::parse($inv->tanggal_invoice)->format('d-m-Y') : '-',
                     (float) $inv->subtotal,
                     (float) $inv->total_pembayaran,
                     (float) $inv->sisa_tagihan,
                     $inv->keterangan ?? '-',
+                ];
+                $auditValues = [
                     $inv->status ?? '-',
                     $inv->approval_status ?? '-',
                     $inv->createdBy?->username ?? '-',
@@ -830,27 +760,30 @@ class OpeningBalanceController extends Controller
                 ];
 
                 if ($inv->openingBalanceDetails->isEmpty()) {
-                    fputcsv($handle, array_merge($obRow, [''], $detailBlank, [''], $itemBlank), ';');
+                    $obDetailRow = array_merge($obPrefix, ['-', '-'], $obSuffix, ['-', '-', 0, 0, '-', '-', 0], $auditValues);
+                    fputcsv($handle, array_merge($obDetailRow, [''], $itemBlank), ';');
 
                     continue;
                 }
 
                 foreach ($inv->openingBalanceDetails as $detail) {
-                    $detailRow = [
-                        $inv->no_invoice,
-                        $detail->no_invoice_asal,
-                        $detail->tanggal_invoice_asal ? Carbon::parse($detail->tanggal_invoice_asal)->format('d-m-Y') : '-',
-                        $detail->deskripsi,
-                        (float) $detail->jumlah_tagihan_asal,
-                        (float) $detail->sisa_tagihan_asal,
-                        $detail->keterangan ?? '-',
+                    $restoValues = [
                         $detail->kode_resto ?? '-',
                         $detail->nama_resto ?? '-',
+                    ];
+                    $detailValues = [
+                        $detail->no_invoice_asal,
+                        $detail->tanggal_invoice_asal ? Carbon::parse($detail->tanggal_invoice_asal)->format('d-m-Y') : '-',
+                        (float) $detail->jumlah_tagihan_asal,
+                        (float) $detail->sisa_tagihan_asal,
+                        $detail->deskripsi,
+                        $detail->keterangan ?? '-',
                         $detail->items->count(),
                     ];
+                    $obDetailRow = array_merge($obPrefix, $restoValues, $obSuffix, $detailValues, $auditValues);
 
                     if ($detail->items->isEmpty()) {
-                        fputcsv($handle, array_merge($obRow, [''], $detailRow, [''], $itemBlank), ';');
+                        fputcsv($handle, array_merge($obDetailRow, [''], $itemBlank), ';');
 
                         continue;
                     }
@@ -868,7 +801,7 @@ class OpeningBalanceController extends Controller
                             $item->keterangan ?? '-',
                         ];
 
-                        fputcsv($handle, array_merge($obRow, [''], $detailRow, [''], $itemRow), ';');
+                        fputcsv($handle, array_merge($obDetailRow, [''], $itemRow), ';');
                     }
                 }
             }

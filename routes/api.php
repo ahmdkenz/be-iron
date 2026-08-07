@@ -14,7 +14,7 @@ Route::prefix('v1')->group(function () {
     Route::prefix('auth')->group(base_path('routes/api/auth.php'));
 
     // ─── Protected Routes ─────────────────────────────────────────────
-    Route::middleware(['auth:sanctum', 'throttle:60,1'])->group(function () {
+    Route::middleware(['auth:sanctum', 'throttle:120,1,api-global'])->group(function () {
 
         Route::prefix('master')->group(base_path('routes/api/master.php'));
         Route::prefix('iam')->group(base_path('routes/api/iam.php'));
@@ -22,7 +22,7 @@ Route::prefix('v1')->group(function () {
 
         Route::prefix('finance')->group(function () {
             // Export & import: rate limit ketat untuk mencegah exfiltrasi & DoS
-            Route::middleware('throttle:10,1')->group(function () {
+            Route::middleware('throttle:10,1,ar-export')->group(function () {
                 Route::get('invoices/export',              [\App\Domain\Finance\Invoice\Controllers\InvoiceController::class, 'export']);
                 Route::get('invoices/export-excel',        [\App\Domain\Finance\Invoice\Controllers\InvoiceController::class, 'exportExcel']);
                 Route::get('invoices/export-b2b-delivery', [\App\Domain\Finance\Invoice\Controllers\InvoiceController::class, 'exportB2BDelivery']);

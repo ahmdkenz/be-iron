@@ -91,7 +91,7 @@ class ExportDataRouteAndValidationTest extends TestCase
     {
         $route = $this->findRoute('GET', 'api/v1/finance/rekening-koran/export-excel');
 
-        $this->assertContains('throttle:10,1', $route->gatherMiddleware());
+        $this->assertContains('throttle:10,1,ar-export', $route->gatherMiddleware());
     }
 
     public function test_daftar_report_kosong_ditolak(): void
