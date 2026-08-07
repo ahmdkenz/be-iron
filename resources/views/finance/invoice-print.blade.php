@@ -265,10 +265,12 @@
               <td class="dl-val">{{ \Carbon\Carbon::parse($invoice->tanggal_jatuh_tempo)->isoFormat('D MMMM YYYY') }}</td>
             </tr>
             @endif
+            @unless($invoice->is_opening_balance)
             <tr>
               <td class="dl-lbl">No. Surat Jalan</td><td class="dl-colon">:</td>
               <td class="dl-val">{{ $invoice->no_surat_jalan ?: '-' }}</td>
             </tr>
+            @endunless
 
             <tr>
               <td class="dl-lbl">Status</td><td class="dl-colon">:</td>
@@ -415,7 +417,6 @@
       <tr>
         <th class="ob-detail-no text-center">No</th>
         <th class="ob-detail-invoice text-left">No. Invoice</th>
-        <th class="ob-detail-invoice text-left">No. Surat Jalan</th>
         <th class="ob-detail-date text-center">Tanggal</th>
         <th class="ob-detail-jumlah text-right">Total Tagihan</th>
         <th class="ob-detail-sisa text-right">Sisa Tagihan</th>
@@ -426,14 +427,13 @@
       <tr>
         <td class="ob-detail-no text-center" style="color:#777;">{{ $ri + 1 }}</td>
         <td class="ob-detail-invoice font-bold" style="color:#b71c1c;">{{ $regInv->no_invoice }}</td>
-        <td class="ob-detail-invoice" style="color:#555;">{{ $regInv->no_surat_jalan ?: '-' }}</td>
         <td class="ob-detail-date text-center" style="color:#555;">{{ \Carbon\Carbon::parse($regInv->tanggal_invoice)->isoFormat('D MMM YYYY') }}</td>
         <td class="ob-detail-jumlah text-right" style="color:#555;">Rp {{ number_format((float)$regInv->subtotal, 0, ',', '.') }}</td>
         <td class="ob-detail-sisa text-right font-bold">Rp {{ number_format(max(0, (float)$regInv->subtotal - (float)$regInv->total_pembayaran), 0, ',', '.') }}</td>
       </tr>
       @empty
       <tr>
-        <td colspan="6" class="text-center" style="padding:20px; color:#777; font-style:italic;">
+        <td colspan="5" class="text-center" style="padding:20px; color:#777; font-style:italic;">
           Tidak ada invoice reguler dalam periode ini.
         </td>
       </tr>
@@ -442,7 +442,7 @@
     @if($regularInvoicesInPeriod->isNotEmpty())
     <tfoot>
       <tr class="ob-grand-row">
-        <td colspan="4" class="text-right">TOTAL INVOICE BULAN BERJALAN</td>
+        <td colspan="3" class="text-right">TOTAL INVOICE BULAN BERJALAN</td>
         <td class="text-right">Rp {{ number_format((float)$totalTagihanPeriode, 0, ',', '.') }}</td>
         <td class="text-right">Rp {{ number_format((float)$totalSisaPeriode, 0, ',', '.') }}</td>
       </tr>
@@ -672,10 +672,6 @@
                 <td class="dl-val">{{ \Carbon\Carbon::parse($regInv->tanggal_jatuh_tempo)->isoFormat('D MMMM YYYY') }}</td>
               </tr>
               @endif
-              <tr>
-                <td class="dl-lbl">No. Surat Jalan</td><td class="dl-colon">:</td>
-                <td class="dl-val">{{ $regInv->no_surat_jalan ?: '-' }}</td>
-              </tr>
               <tr>
                 <td class="dl-lbl">Status</td><td class="dl-colon">:</td>
                 <td class="dl-val"><span class="badge badge-{{ $regInv->status }}">{{ $regInv->status }}</span></td>
