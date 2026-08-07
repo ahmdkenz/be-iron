@@ -1246,23 +1246,39 @@ class InvoiceService
      *
      * Sengaja TIDAK rekursif: pada import batch besar satu klien bisa punya
      * ribuan invoice, sehingga rekursi akan menabrak batas kedalaman PHP.
+     *
+     * Preload SEKALI semua kandidat invoice klien ini yang mungkin dilewati cascade
+     * (dari awal bulan $invoice, bukan cuma >= tanggal $invoice — lihat alasan di
+     * sumOwnSisaFromCandidates()), lalu jalankan seluruh langkah dari koleksi
+     * in-memory — bukan query "next invoice" + query sum + update + fresh() per
+     * langkah seperti sebelumnya (2026-08-07: root cause "Proses Data Aman" masih
+     * lambat di production untuk import besar-banyak-klien, ~4 query/invoice yang
+     * dilewati cascade). Field yang dipakai traversal & sum (tanggal_invoice, id,
+     * subtotal, total_pembayaran, total_penyesuaian, is_opening_balance) TIDAK
+     * PERNAH diubah oleh cascade ini sendiri — hanya tagihan_periode_sebelumnya/
+     * total_tagihan/sisa_tagihan/status yang diubah, jadi snapshot di memori aman
+     * dipakai sepanjang 1 kali pemanggilan. status IKUT dibaca live dari objek yang
+     * sama (bukan snapshot terpisah) karena field itu MEMANG bisa berubah akibat
+     * langkah cascade sebelumnya dan mempengaruhi filter status di sum langkah
+     * berikutnya — lihat sumOwnSisaFromCandidates().
      */
     private function cascadeCarryoverToNext(Invoice $invoice): void
     {
+        $monthStart = Carbon::parse($invoice->tanggal_invoice)->startOfMonth();
+
+        $candidates = Invoice::where('klien_ar_id', $invoice->klien_ar_id)
+            ->where('tanggal_invoice', '>=', $monthStart->toDateString())
+            ->orderBy('tanggal_invoice')
+            ->orderBy('id')
+            ->get();
+
         $current = $invoice;
 
         while (true) {
-            $nextInvoice = Invoice::where('klien_ar_id', $current->klien_ar_id)
-                ->where(function ($q) use ($current) {
-                    $q->where('tanggal_invoice', '>', $current->tanggal_invoice)
-                        ->orWhere(function ($q2) use ($current) {
-                            $q2->where('tanggal_invoice', $current->tanggal_invoice)
-                                ->where('id', '>', $current->id);
-                        });
-                })
-                ->orderBy('tanggal_invoice')
-                ->orderBy('id')
-                ->first();
+            $nextInvoice = $candidates->first(function (Invoice $candidate) use ($current) {
+                return $candidate->tanggal_invoice->gt($current->tanggal_invoice)
+                    || ($candidate->tanggal_invoice->eq($current->tanggal_invoice) && $candidate->id > $current->id);
+            });
 
             if (! $nextInvoice) {
                 return;
@@ -1287,13 +1303,13 @@ class InvoiceService
                     ]);
                 }
                 // Lanjutkan cascade melewati OB agar invoice reguler sesudahnya ikut diperbarui
-                $current = $nextInvoice->fresh();
+                $current = $nextInvoice;
 
                 continue;
             }
 
             $oldCarryover = (float) $nextInvoice->tagihan_periode_sebelumnya;
-            $newCarryover = $this->sumOwnSisaBeforeInvoice($nextInvoice);
+            $newCarryover = $this->sumOwnSisaFromCandidates($candidates, $nextInvoice);
 
             if (abs($oldCarryover - $newCarryover) < 0.01) {
                 return;
@@ -1325,8 +1341,48 @@ class InvoiceService
                 'updated_by' => auth()->id(),
             ]);
 
-            $current = $nextInvoice->fresh();
+            $current = $nextInvoice;
         }
+    }
+
+    /**
+     * Versi in-memory dari sumOwnSisaBeforeInvoice() — dipakai HANYA oleh
+     * cascadeCarryoverToNext() yang sudah preload $candidates sekali di awal.
+     * Replika persis kondisi query aslinya (is_opening_balance, status, batas
+     * awal bulan, urutan tanggal_invoice+id) supaya hasilnya identik.
+     *
+     * $candidates dibaca live (bukan snapshot beku) — status salah satu invoice
+     * BISA berubah akibat langkah cascade sebelumnya dalam pemanggilan yang sama
+     * (mis. jadi LUNAS), dan itu harus ikut mempengaruhi filter status di sini,
+     * persis seperti query DB yang selalu membaca state terbaru.
+     */
+    private function sumOwnSisaFromCandidates(Collection $candidates, Invoice $target): float
+    {
+        $monthStart = Carbon::parse($target->tanggal_invoice)->startOfMonth();
+
+        $sum = 0.0;
+        foreach ($candidates as $candidate) {
+            if ($candidate->is_opening_balance) {
+                continue;
+            }
+            if (! in_array($candidate->status, ['TERKIRIM', 'SEBAGIAN'], true)) {
+                continue;
+            }
+            if ($candidate->tanggal_invoice->lt($monthStart)) {
+                continue;
+            }
+
+            $isBeforeTarget = $candidate->tanggal_invoice->lt($target->tanggal_invoice)
+                || ($candidate->tanggal_invoice->eq($target->tanggal_invoice) && $candidate->id < $target->id);
+
+            if (! $isBeforeTarget) {
+                continue;
+            }
+
+            $sum += max(0, (float) $candidate->subtotal - (float) $candidate->total_pembayaran - (float) $candidate->total_penyesuaian);
+        }
+
+        return $sum;
     }
 
     public function delete(Invoice $invoice): void
