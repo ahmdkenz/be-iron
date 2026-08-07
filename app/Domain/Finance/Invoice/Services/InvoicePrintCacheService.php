@@ -47,8 +47,48 @@ class InvoicePrintCacheService
         try {
             return $callback();
         } finally {
+            $this->restoreMemoryLimitSafely($originalMemoryLimit);
+        }
+    }
+
+    /**
+     * PHP menolak menurunkan memory_limit lewat ini_set() selama usage saat ini
+     * masih >= limit baru — fatal level-engine yang tidak bisa ditangkap
+     * try/catch ("Failed to set memory limit..."), persis yang terjadi kalau
+     * blok finally di atas langsung mengembalikan ke nilai semula tepat setelah
+     * render PDF OB besar (objek DomPDF belum sempat di-GC). gc_collect_cycles()
+     * dulu untuk melepas siklus objek yang sudah tidak dipakai; kalau usage
+     * masih di atas limit lama setelah itu, biarkan tetap boosted — proses
+     * worker (--stop-when-empty) umurnya pendek jadi risiko "bocor" ke job lain
+     * minim, jauh lebih aman daripada memicu fatal di jalur cetak.
+     */
+    private function restoreMemoryLimitSafely(string $originalMemoryLimit): void
+    {
+        gc_collect_cycles();
+
+        $originalBytes = $this->parseMemoryLimitBytes($originalMemoryLimit);
+
+        if ($originalBytes === -1 || memory_get_usage(true) < $originalBytes) {
             ini_set('memory_limit', $originalMemoryLimit);
         }
+    }
+
+    private function parseMemoryLimitBytes(string $value): int
+    {
+        $value = trim($value);
+        if ($value === '' || $value === '-1') {
+            return -1;
+        }
+
+        $unit   = strtolower(substr($value, -1));
+        $number = (int) $value;
+
+        return match ($unit) {
+            'g'     => $number * 1024 * 1024 * 1024,
+            'm'     => $number * 1024 * 1024,
+            'k'     => $number * 1024,
+            default => (int) $value,
+        };
     }
 
     /**
