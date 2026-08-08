@@ -198,7 +198,7 @@ class InvoiceController extends Controller
 
         $this->authorizeKlienArOwnership((int) $validated['klien_ar_id']);
 
-        $query = \App\Models\Invoice::with('items.barang')
+        $query = \App\Models\Invoice::with(['items.barang', 'resto', 'klienAr.resto'])
             ->where('klien_ar_id', $validated['klien_ar_id'])
             ->whereIn('status', ['TERKIRIM', 'SEBAGIAN'])
             ->where('is_opening_balance', false);
@@ -253,7 +253,7 @@ class InvoiceController extends Controller
         $acuan = !empty($validated['tanggal']) ? Carbon::parse($validated['tanggal']) : Carbon::now();
         $bulanLalu = $acuan->copy()->subMonthNoOverflow();
 
-        $invoices = \App\Models\Invoice::with('items.barang')
+        $invoices = \App\Models\Invoice::with(['items.barang', 'resto', 'klienAr.resto'])
             ->whereIn('klien_ar_id', $validated['klien_ar_ids'])
             ->whereIn('status', ['TERKIRIM', 'SEBAGIAN'])
             ->where('is_opening_balance', false)
@@ -286,6 +286,17 @@ class InvoiceController extends Controller
 
     private function mapOutstandingInvoice(\App\Models\Invoice $inv, \Illuminate\Support\Collection $barangByKode): array
     {
+        $resto = $inv->resto ?? $inv->klienAr?->resto;
+
+        // Untuk klien PT: resto tidak ada di header invoice/klien,
+        // tapi bisa ada di level item (kode_resto/nama_resto per item).
+        $kodeResto = $resto?->kode_resto
+            ?? $inv->items->first(fn($item) => filled($item->kode_resto))?->kode_resto
+            ?? '';
+        $namaResto = $resto?->nama_resto
+            ?? $inv->items->first(fn($item) => filled($item->nama_resto))?->nama_resto
+            ?? '';
+
         return [
             'id'              => $inv->id,
             'klien_ar_id'     => $inv->klien_ar_id,
@@ -296,6 +307,8 @@ class InvoiceController extends Controller
             'sisa_tagihan'    => max(0.0, (float) $inv->subtotal - (float) $inv->total_pembayaran - (float) $inv->total_penyesuaian),
             'status'          => $inv->status,
             'keterangan'      => $inv->keterangan,
+            'kode_resto'      => $kodeResto,
+            'nama_resto'      => $namaResto,
             'items'           => $inv->items->map(function ($item) use ($barangByKode) {
                 $fallbackBarang = !$item->barang_id && $item->kode_barang
                     ? $barangByKode->get($item->kode_barang)
