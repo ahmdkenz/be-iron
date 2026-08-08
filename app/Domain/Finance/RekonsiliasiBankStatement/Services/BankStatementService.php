@@ -245,7 +245,9 @@ class BankStatementService
         if ($invoice || $isMulti) {
             $total = $this->computeKelebihanTotal($pembayaran, $d);
             if ($total > 0) {
-                $dialokasi = (float) $pembayaran->alokasiKelebihan->sum('jumlah_pembayaran');
+                $dialokasi = (float) $pembayaran->alokasiKelebihan
+                    ->filter(fn($p) => !str_contains($p->no_referensi ?? '', '/OB-'))
+                    ->sum('jumlah_pembayaran');
                 $pdm       = PendapatanDiMuka::where('sumber_pembayaran_ar_id', $pembayaran->id)->first();
                 $kelebihanBayar = [
                     'total'           => $total,
@@ -616,7 +618,12 @@ class BankStatementService
 
         $inv   = $pembayaran->invoice;
         $total = $this->computeKelebihanTotal($pembayaran, $detail);
-        $sudah = (float) $pembayaran->alokasiKelebihan()->sum('jumlah_pembayaran');
+        $sudah = (float) $pembayaran->alokasiKelebihan()
+            ->where(function ($q) {
+                $q->whereNull('no_referensi')
+                  ->orWhere('no_referensi', 'NOT LIKE', '%/OB-%');
+            })
+            ->sum('jumlah_pembayaran');
         $sisa  = max(0, round($total - $sudah, 2));
 
         abort_if($jumlah <= 0, 422, 'Jumlah harus lebih dari 0.');
@@ -1000,6 +1007,14 @@ class BankStatementService
         $inv = $pembayaran->invoice;
         if (!$inv) {
             return 0.0;
+        }
+
+        // Invoice OB: subtotal bisa berubah menjadi 0 oleh syncOpeningBalanceSnapshots()
+        // setelah invoice reguler di dalamnya dilunasi via settleOriginalsFromOpeningBalance().
+        // Gunakan hanya kelebihanFromBank agar tidak menghasilkan nilai semu dari
+        // total_pembayaran - 0.
+        if ($inv->is_opening_balance) {
+            return max(0, round((float) $detail->kredit - (float) $pembayaran->jumlah_pembayaran, 2));
         }
 
         $kelebihanFromInvoice = max(0, round((float) $inv->total_pembayaran - (float) $inv->subtotal + (float) $inv->total_penyesuaian, 2));

@@ -23,14 +23,26 @@ class PendapatanDiMukaService
         $inv = $pembayaran->invoice;
         abort_if(!$inv, 422, 'Pembayaran tidak memiliki invoice.');
 
-        // Hitung sisa kelebihan — sama persis dengan logika di BankStatementService::getDetail().
-        // total_penyesuaian (CN/DN) ikut ditambahkan karena Credit Note mengurangi
-        // outstanding invoice dengan cara yang sama seperti pembayaran.
-        $kelebihanFromInvoice = max(0, round((float) $inv->total_pembayaran - (float) $inv->total_tagihan + (float) $inv->total_penyesuaian, 2));
-        $kelebihanFromBank    = max(0, round((float) $detail->kredit - (float) $pembayaran->jumlah_pembayaran, 2));
-        $total                = max($kelebihanFromInvoice, $kelebihanFromBank);
-        $dialokasi            = (float) $pembayaran->alokasiKelebihan()->sum('jumlah_pembayaran');
-        $sisa                 = max(0, round($total - $dialokasi, 2));
+        // Hitung sisa kelebihan — selaras dengan BankStatementService::computeKelebihanTotal().
+        // Invoice OB: subtotal bisa berubah menjadi 0 setelah invoice reguler di dalamnya
+        // dilunasi, jadi gunakan hanya kelebihanFromBank.
+        if ($inv->is_opening_balance) {
+            $total = max(0, round((float) $detail->kredit - (float) $pembayaran->jumlah_pembayaran, 2));
+        } else {
+            $kelebihanFromInvoice = max(0, round((float) $inv->total_pembayaran - (float) $inv->subtotal + (float) $inv->total_penyesuaian, 2));
+            $kelebihanFromBank    = max(0, round((float) $detail->kredit - (float) $pembayaran->jumlah_pembayaran, 2));
+            $total                = max($kelebihanFromInvoice, $kelebihanFromBank);
+        }
+
+        // Child payments /OB-N adalah pelunasan invoice reguler dari dana OB,
+        // bukan alokasi kelebihan bank — kecualikan dari perhitungan.
+        $dialokasi = (float) $pembayaran->alokasiKelebihan()
+            ->where(function ($q) {
+                $q->whereNull('no_referensi')
+                  ->orWhere('no_referensi', 'NOT LIKE', '%/OB-%');
+            })
+            ->sum('jumlah_pembayaran');
+        $sisa = max(0, round($total - $dialokasi, 2));
 
         abort_if($sisa <= 0.01, 422, 'Tidak ada sisa kelebihan bayar untuk dicatat sebagai Pendapatan di Muka.');
         abort_if(
@@ -161,7 +173,7 @@ class PendapatanDiMukaService
         $detail = $sumber->bankStatementDetail;
 
         $kelebihanFromInvoice = $inv
-            ? max(0, round((float) $inv->total_pembayaran - (float) $inv->total_tagihan + (float) $inv->total_penyesuaian, 2))
+            ? max(0, round((float) $inv->total_pembayaran - (float) $inv->subtotal + (float) $inv->total_penyesuaian, 2))
             : 0.0;
         $kelebihanFromBank = $detail
             ? max(0, round((float) $detail->kredit - (float) $sumber->jumlah_pembayaran, 2))
@@ -171,7 +183,10 @@ class PendapatanDiMukaService
         $aloNonPdm = (float) $sumber->alokasiKelebihan()
             ->where(function ($q) {
                 $q->whereNull('no_referensi')
-                  ->orWhere('no_referensi', 'NOT LIKE', '%/PDM-%');
+                  ->orWhere(function ($q2) {
+                      $q2->where('no_referensi', 'NOT LIKE', '%/PDM-%')
+                         ->where('no_referensi', 'NOT LIKE', '%/OB-%');
+                  });
             })
             ->sum('jumlah_pembayaran');
 
