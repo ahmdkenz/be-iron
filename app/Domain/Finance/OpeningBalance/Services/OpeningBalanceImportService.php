@@ -2,6 +2,7 @@
 
 namespace App\Domain\Finance\OpeningBalance\Services;
 
+use App\Domain\Finance\EndingBalance\Services\EndingBalanceSyncBatcher;
 use App\Domain\Finance\Invoice\Services\InvoiceService;
 use App\Models\Barang;
 use App\Models\Invoice;
@@ -9,6 +10,7 @@ use App\Models\KlienAr;
 use App\Models\OpeningBalanceImportBatch;
 use App\Models\Resto;
 use App\Support\Helpers\ImportDateParser;
+use Carbon\Carbon;
 use Illuminate\Support\Facades\Storage;
 use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
 use PhpOffice\PhpSpreadsheet\IOFactory;
@@ -163,64 +165,99 @@ class OpeningBalanceImportService
             ->pluck('klien_ar_id')
             ->flip();
 
-        $bucketIndex = 0;
-        foreach ($buckets as $bucket) {
-            $klien = $bucket['klien'];
+        // 1 query whereIn untuk kandidat carryover-cascade SEMUA klien di batch ini, bukan 1
+        // Invoice::where('klien_ar_id', ...)->get() per klien di dalam cascadeCarryoverToNext()
+        // (dipicu propagateCarryover() karena bypassApproval: true di bawah). Semua bucket di 1
+        // batch import berbagi $cutoverDate yang sama (baris ~90), jadi monthStart-nya juga sama
+        // untuk semua klien — cukup 1 preload, bukan per-klien. orderBy HARUS identik dengan
+        // query live di cascadeCarryoverToNext() karena traversalnya bergantung urutan ini.
+        $carryoverMonthStart = Carbon::parse($cutoverDate)->startOfMonth()->toDateString();
+        $carryoverCandidatesByKlien = Invoice::whereIn('klien_ar_id', array_keys($buckets))
+            ->where('tanggal_invoice', '>=', $carryoverMonthStart)
+            ->orderBy('tanggal_invoice')
+            ->orderBy('id')
+            ->get()
+            ->groupBy('klien_ar_id');
 
-            $bucketIndex++;
-            if ($bucketIndex % 50 === 0) {
-                $batch->update([
-                    'inserted_ob' => $insertedOb,
-                    'skipped_ob' => $skippedOb,
-                    'failed_ob' => $failedOb,
-                    'inserted_detail' => $insertedDetail,
-                    'inserted_item' => $insertedItem,
-                ]);
+        // Batching: sinkronisasi Ending Balance (via InvoiceObserver, dipicu update invoice
+        // downstream di dalam cascadeCarryoverToNext()) ditunda dan di-dedup, lalu di-flush
+        // sekali per klien+periode di akhir batch ini alih-alih recompute penuh berulang kali
+        // (mirror pola InvoiceImportService::applySafeChunk()).
+        EndingBalanceSyncBatcher::run(function () use (
+            $buckets, $batch, &$rawItems, $barangByKode, $barangByNama, &$errors,
+            $existingKlienIds, $cutoverDate, $carryoverCandidatesByKlien,
+            &$insertedOb, &$skippedOb, &$failedOb, &$insertedDetail, &$insertedItem,
+        ) {
+            $bucketIndex = 0;
+            foreach ($buckets as $bucket) {
+                $klien = $bucket['klien'];
+
+                $bucketIndex++;
+                if ($bucketIndex % 50 === 0) {
+                    $batch->update([
+                        'inserted_ob' => $insertedOb,
+                        'skipped_ob' => $skippedOb,
+                        'failed_ob' => $failedOb,
+                        'inserted_detail' => $insertedDetail,
+                        'inserted_item' => $insertedItem,
+                    ]);
+                }
+
+                $built = $this->buildDetailsForGroup($bucket['rows'], $rawItems, $barangByKode, $barangByNama, $errors);
+                if ($built === null) {
+                    $errors[] = [
+                        'sheet' => $bucket['sheet'],
+                        'row' => $bucket['source_row'],
+                        'message' => "Klien '{$klien->nama_klien}': tidak ada baris valid untuk membentuk Opening Balance (semua baris gagal validasi no_invoice_asal/tanggal_invoice_asal).",
+                    ];
+                    $failedOb++;
+
+                    continue;
+                }
+
+                if (isset($existingKlienIds[$klien->id])) {
+                    $skippedOb++;
+
+                    continue;
+                }
+
+                try {
+                    $data = [
+                        'no_invoice' => $this->invoiceService->generateOpeningBalanceNoInvoice($klien, $cutoverDate),
+                        'tanggal' => $cutoverDate,
+                        'klien_ar_id' => $klien->id,
+                        'saldo_awal' => $built['saldo_awal'],
+                        'keterangan' => $built['keterangan'] ?: 'Opening Balance (Import)',
+                        'details' => $built['details'],
+                    ];
+
+                    // eagerLoad: false — hasil create() tidak dipakai di sini (cuma counter),
+                    // jadi lewati findOrFail() 19-relasi di persistOpeningBalance(). klien: $klien
+                    // — sudah diresolusi Pass 1, hindari KlienAr::findOrFail() ulang per klien.
+                    // bypassApproval: true — akses Import Master Opening Balance sudah dibatasi
+                    // ke ADMIN/MANAGER/SUPERVISOR (role tepercaya), jadi OB hasil import langsung
+                    // APPROVED, tidak perlu direview ulang lewat antrian approval manual.
+                    // preloadedCarryoverCandidates: WAJIB '?? collect()' (bukan null) — klien baru
+                    // tanpa histori invoice (kasus PALING UMUM saat OB import) resolve ke null dari
+                    // ->get(), dan kalau null diteruskan, cascadeCarryoverToNext() akan diam-diam
+                    // fallback ke live query per klien — menghilangkan manfaat preload di atas.
+                    $this->invoiceService->createOpeningBalance(
+                        $data,
+                        notify: false,
+                        eagerLoad: false,
+                        klien: $klien,
+                        bypassApproval: true,
+                        preloadedCarryoverCandidates: $carryoverCandidatesByKlien->get($klien->id) ?? collect(),
+                    );
+                    $insertedOb++;
+                    $insertedDetail += count($built['details']);
+                    $insertedItem += array_sum(array_map(fn ($d) => count($d['items']), $built['details']));
+                } catch (Throwable $e) {
+                    $errors[] = ['sheet' => $bucket['sheet'], 'row' => $bucket['source_row'], 'message' => 'Gagal menyimpan: '.$e->getMessage()];
+                    $failedOb++;
+                }
             }
-
-            $built = $this->buildDetailsForGroup($bucket['rows'], $rawItems, $barangByKode, $barangByNama, $errors);
-            if ($built === null) {
-                $errors[] = [
-                    'sheet' => $bucket['sheet'],
-                    'row' => $bucket['source_row'],
-                    'message' => "Klien '{$klien->nama_klien}': tidak ada baris valid untuk membentuk Opening Balance (semua baris gagal validasi no_invoice_asal/tanggal_invoice_asal).",
-                ];
-                $failedOb++;
-
-                continue;
-            }
-
-            if (isset($existingKlienIds[$klien->id])) {
-                $skippedOb++;
-
-                continue;
-            }
-
-            try {
-                $data = [
-                    'no_invoice' => $this->invoiceService->generateOpeningBalanceNoInvoice($klien, $cutoverDate),
-                    'tanggal' => $cutoverDate,
-                    'klien_ar_id' => $klien->id,
-                    'saldo_awal' => $built['saldo_awal'],
-                    'keterangan' => $built['keterangan'] ?: 'Opening Balance (Import)',
-                    'details' => $built['details'],
-                ];
-
-                // eagerLoad: false — hasil create() tidak dipakai di sini (cuma counter),
-                // jadi lewati findOrFail() 19-relasi di persistOpeningBalance(). klien: $klien
-                // — sudah diresolusi Pass 1, hindari KlienAr::findOrFail() ulang per klien.
-                // bypassApproval: true — akses Import Master Opening Balance sudah dibatasi
-                // ke ADMIN/MANAGER/SUPERVISOR (role tepercaya), jadi OB hasil import langsung
-                // APPROVED, tidak perlu direview ulang lewat antrian approval manual.
-                $this->invoiceService->createOpeningBalance($data, notify: false, eagerLoad: false, klien: $klien, bypassApproval: true);
-                $insertedOb++;
-                $insertedDetail += count($built['details']);
-                $insertedItem += array_sum(array_map(fn ($d) => count($d['items']), $built['details']));
-            } catch (Throwable $e) {
-                $errors[] = ['sheet' => $bucket['sheet'], 'row' => $bucket['source_row'], 'message' => 'Gagal menyimpan: '.$e->getMessage()];
-                $failedOb++;
-            }
-        }
+        });
 
         // Item yang no_urut+no_invoice_asal tidak cocok baris manapun (di grup manapun) → orphan.
         foreach ($rawItems as $orphanItems) {

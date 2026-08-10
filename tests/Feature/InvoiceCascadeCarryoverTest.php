@@ -234,4 +234,148 @@ class InvoiceCascadeCarryoverTest extends TestCase
         $invC = Invoice::find($idC);
         $this->assertEquals(999.0, (float) $invC->tagihan_periode_sebelumnya, 'C tidak boleh tersentuh — cascade berhenti di B.');
     }
+
+    /**
+     * Regresi 2026-08-10: OpeningBalanceImportService memberi cascadeCarryoverToNext()
+     * Collection $preloadedCandidates opsional (dibangun 1x per batch, bukan 1 query
+     * per klien) supaya bypassApproval OB import tidak memicu ribuan live query baru
+     * (lihat memory project_ob_ar_import_bypass_approval). Test ini membuktikan HASIL
+     * AKHIR jalur preloaded identik dengan jalur live-query lama untuk skenario cascade
+     * yang sama, dijalankan berdampingan pada 2 klien terpisah dengan data identik.
+     */
+    public function test_propagateCarryover_dengan_preloaded_candidates_menghasilkan_hasil_identik_dengan_live_query(): void
+    {
+        $this->seedSchema();
+        $this->insertKlien(1, 'Klien Live');
+        $this->insertKlien(2, 'Klien Preload');
+
+        $scenario = fn (int $klienId) => [
+            'a' => $this->insertInvoice([
+                'klien_ar_id' => $klienId,
+                'tanggal_invoice' => '2026-07-05 00:00:00',
+                'subtotal' => 100000, 'total_pembayaran' => 30000, 'total_penyesuaian' => 0,
+                'tagihan_periode_sebelumnya' => 0, 'total_tagihan' => 100000, 'sisa_tagihan' => 70000,
+                'status' => 'SEBAGIAN',
+            ]),
+            'b' => $this->insertInvoice([
+                'klien_ar_id' => $klienId,
+                'tanggal_invoice' => '2026-07-20 00:00:00',
+                'subtotal' => 50000, 'total_pembayaran' => 0, 'total_penyesuaian' => 0,
+                'tagihan_periode_sebelumnya' => 999, 'total_tagihan' => 50999, 'sisa_tagihan' => 50999,
+                'status' => 'TERKIRIM',
+            ]),
+        ];
+
+        $klien1 = $scenario(1);
+        $klien2 = $scenario(2);
+
+        $service = $this->invoiceService();
+
+        // Klien 1: parameter ke-2 diomit — replikasi persis caller lama (live query).
+        $service->propagateCarryover(Invoice::find($klien1['a']));
+
+        // Klien 2: preloaded, dibangun manual meniru query live cascadeCarryoverToNext()
+        // persis (where + orderBy yang sama) — inilah yang dilakukan OpeningBalanceImportService
+        // 1x untuk seluruh batch, bukan per klien.
+        $preloaded = Invoice::where('klien_ar_id', 2)
+            ->where('tanggal_invoice', '>=', '2026-07-01')
+            ->orderBy('tanggal_invoice')
+            ->orderBy('id')
+            ->get();
+        $service->propagateCarryover(Invoice::find($klien2['a']), $preloaded);
+
+        $invB1 = Invoice::find($klien1['b']);
+        $invB2 = Invoice::find($klien2['b']);
+
+        $this->assertEquals(70000.0, (float) $invB2->tagihan_periode_sebelumnya);
+        $this->assertEquals((float) $invB1->tagihan_periode_sebelumnya, (float) $invB2->tagihan_periode_sebelumnya);
+        $this->assertEquals((float) $invB1->total_tagihan, (float) $invB2->total_tagihan);
+        $this->assertEquals((float) $invB1->sisa_tagihan, (float) $invB2->sisa_tagihan);
+        $this->assertSame($invB1->status, $invB2->status);
+    }
+
+    public function test_propagateCarryover_dengan_preloaded_candidates_tidak_melakukan_query_tambahan(): void
+    {
+        $this->seedSchema();
+        $this->insertKlien(1, 'Klien Uji');
+
+        $idA = $this->insertInvoice([
+            'tanggal_invoice' => '2026-07-05 00:00:00',
+            'subtotal' => 100000, 'total_pembayaran' => 30000, 'total_penyesuaian' => 0,
+            'tagihan_periode_sebelumnya' => 0, 'total_tagihan' => 100000, 'sisa_tagihan' => 70000,
+            'status' => 'SEBAGIAN',
+        ]);
+        $this->insertInvoice([
+            'tanggal_invoice' => '2026-07-20 00:00:00',
+            'subtotal' => 50000, 'total_pembayaran' => 0, 'total_penyesuaian' => 0,
+            'tagihan_periode_sebelumnya' => 999, 'total_tagihan' => 50999, 'sisa_tagihan' => 50999,
+            'status' => 'TERKIRIM',
+        ]);
+
+        $service = $this->invoiceService();
+        $preloaded = Invoice::where('klien_ar_id', 1)
+            ->where('tanggal_invoice', '>=', '2026-07-01')
+            ->orderBy('tanggal_invoice')
+            ->orderBy('id')
+            ->get();
+
+        DB::enableQueryLog();
+
+        DB::flushQueryLog();
+        $service->propagateCarryover(Invoice::find($idA), $preloaded);
+        $queriesWithPreload = $this->countCandidateQueries(DB::getQueryLog());
+
+        DB::flushQueryLog();
+        $service->propagateCarryover(Invoice::find($idA));
+        $queriesWithoutPreload = $this->countCandidateQueries(DB::getQueryLog());
+
+        DB::disableQueryLog();
+
+        $this->assertSame(0, $queriesWithPreload, 'Preloaded candidates seharusnya tidak memicu query "next invoice" tambahan.');
+        $this->assertGreaterThanOrEqual(1, $queriesWithoutPreload, 'Tanpa preload (null), cascade harus tetap fallback ke live query seperti sebelumnya.');
+    }
+
+    /**
+     * Kasus PALING UMUM saat Import Master Opening Balance: klien baru tanpa histori invoice
+     * sama sekali. $carryoverCandidatesByKlien->get($klien->id) resolve ke null untuk klien
+     * ini — call site WAJIB kirim '?? collect()', bukan biarkan null lewat, supaya tidak
+     * diam-diam fallback ke live query justru di kasus yang paling sering terjadi.
+     */
+    public function test_propagateCarryover_dengan_empty_collection_untuk_klien_tanpa_histori_tidak_fallback_live_query(): void
+    {
+        $this->seedSchema();
+        $this->insertKlien(1, 'Klien Baru');
+
+        $idOb = $this->insertInvoice([
+            'tanggal_invoice' => '2026-07-05 00:00:00',
+            'is_opening_balance' => true,
+            'subtotal' => 100000, 'total_pembayaran' => 0, 'total_penyesuaian' => 0,
+            'tagihan_periode_sebelumnya' => 0, 'total_tagihan' => 100000, 'sisa_tagihan' => 100000,
+            'status' => 'TERKIRIM',
+        ]);
+
+        $service = $this->invoiceService();
+
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        $service->propagateCarryover(Invoice::find($idOb), collect());
+        $candidateQueries = $this->countCandidateQueries(DB::getQueryLog());
+        DB::disableQueryLog();
+
+        $this->assertSame(0, $candidateQueries, 'Collection kosong (klien tanpa histori) tidak boleh diam-diam fallback ke live query.');
+
+        $invOb = Invoice::find($idOb);
+        $this->assertEquals(0.0, (float) $invOb->tagihan_periode_sebelumnya);
+        $this->assertEquals(100000.0, (float) $invOb->sisa_tagihan);
+    }
+
+    /** @param  array<int, array{query: string}>  $log */
+    private function countCandidateQueries(array $log): int
+    {
+        return count(array_filter($log, function ($entry) {
+            $sql = strtolower($entry['query']);
+
+            return str_starts_with($sql, 'select') && str_contains($sql, 'tb_invoice') && str_contains($sql, 'klien_ar_id');
+        }));
+    }
 }

@@ -5,6 +5,7 @@ namespace App\Domain\Finance\Invoice\Jobs;
 use App\Domain\Finance\Invoice\Services\InvoiceImportService;
 use App\Models\InvoiceImportBatch;
 use App\Models\User;
+use App\Support\Jobs\Middleware\LogsImportQueryStats;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Queue\InteractsWithQueue;
@@ -31,6 +32,11 @@ class ClassifyInvoiceImportJob implements ShouldQueue
     public function __construct(private readonly string $batchId)
     {
         $this->onQueue('invoice-import');
+    }
+
+    public function middleware(): array
+    {
+        return [new LogsImportQueryStats()];
     }
 
     public function handle(InvoiceImportService $service): void

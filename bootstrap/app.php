@@ -42,14 +42,21 @@ return Application::configure(basePath: dirname(__DIR__))
         // antrian sedang ramai/besar). withoutOverlapping() per baris HANYA mengunci
         // instance dirinya sendiri (nama command berbeda), jadi kedua worker ini tetap
         // bisa berjalan BERSAMAAN sebagai 2 proses OS terpisah.
+        // runInBackground() WAJIB — tanpa ini, Schedule::run() menjalankan kedua command
+        // queue:work di bawah SECARA BERURUTAN dalam 1 proses schedule:run (bukan paralel
+        // seperti komentar di atas mengklaim): kalau bank-statement sedang sibuk (mis. import
+        // Rekening Koran 1 tahun data), invoice-import (tempat Import Master Invoice/Opening
+        // Balance antre) baru mulai setelah command pertama keluar dalam tick yang sama.
         $schedule->command('queue:work database --queue=bank-statement --stop-when-empty --tries=1 --timeout=1800')
             ->everyMinute()
-            ->withoutOverlapping();
+            ->withoutOverlapping()
+            ->runInBackground();
 
         // Import master data, import master invoice, import opening balance, cetak PDF.
         $schedule->command('queue:work database --queue=invoice-import,invoice-print,default --stop-when-empty --tries=1 --timeout=1800')
             ->everyMinute()
-            ->withoutOverlapping();
+            ->withoutOverlapping()
+            ->runInBackground();
 
         // Menggantikan pemanggilan failStale()/cancelAbandonedConfirmations() yang
         // sebelumnya inline di BankStatementController: dipanggil di setiap request

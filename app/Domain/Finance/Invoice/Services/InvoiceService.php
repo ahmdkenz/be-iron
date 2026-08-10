@@ -432,14 +432,14 @@ class InvoiceService
      * @param  ?KlienAr  $klien  klien yang sudah diresolusi caller (hindari refetch KlienAr::findOrFail()
      *                           saat caller — mis. import — sudah punya objeknya di memori).
      */
-    public function createOpeningBalance(array $data, bool $notify = true, bool $eagerLoad = true, ?KlienAr $klien = null, bool $bypassApproval = false): Invoice
+    public function createOpeningBalance(array $data, bool $notify = true, bool $eagerLoad = true, ?KlienAr $klien = null, bool $bypassApproval = false, ?Collection $preloadedCarryoverCandidates = null): Invoice
     {
         $user = auth()->user()->loadMissing('karyawan');
         abort_if(! $user?->karyawan?->id, 422, 'User tidak terhubung dengan data karyawan');
 
         $klien ??= KlienAr::findOrFail($data['klien_ar_id']);
 
-        return DB::transaction(fn () => $this->persistOpeningBalance($data, $klien, $user, $notify, $eagerLoad, $bypassApproval));
+        return DB::transaction(fn () => $this->persistOpeningBalance($data, $klien, $user, $notify, $eagerLoad, $bypassApproval, $preloadedCarryoverCandidates));
     }
 
     /**
@@ -472,7 +472,7 @@ class InvoiceService
      *                                masuk antrian approval PENDING. Jalur manual (Ajukan Opening
      *                                Balance) TIDAK memakai parameter ini — selalu default false.
      */
-    private function persistOpeningBalance(array $data, KlienAr $klien, User $user, bool $notify, bool $eagerLoad = true, bool $bypassApproval = false): Invoice
+    private function persistOpeningBalance(array $data, KlienAr $klien, User $user, bool $notify, bool $eagerLoad = true, bool $bypassApproval = false, ?Collection $preloadedCarryoverCandidates = null): Invoice
     {
         $saldoAwal = ! empty($data['details'])
             ? collect($data['details'])->sum(fn ($d) => (float) ($d['sisa_tagihan_asal'] ?? 0))
@@ -521,7 +521,7 @@ class InvoiceService
         if ($bypassApproval) {
             // Samakan efek samping dengan approveOpeningBalance() — OB langsung APPROVED
             // tetap harus cascade carryover ke invoice reguler periode berikutnya.
-            $this->propagateCarryover($submitted);
+            $this->propagateCarryover($submitted, $preloadedCarryoverCandidates);
 
             if ($notify) {
                 $this->financeNotificationService->obArApproved($submitted);
@@ -935,9 +935,9 @@ class InvoiceService
         $ob->update($updateData);
     }
 
-    public function propagateCarryover(Invoice $invoice): void
+    public function propagateCarryover(Invoice $invoice, ?Collection $preloadedCandidates = null): void
     {
-        $this->cascadeCarryoverToNext($invoice);
+        $this->cascadeCarryoverToNext($invoice, $preloadedCandidates);
     }
 
     /**
@@ -1284,11 +1284,11 @@ class InvoiceService
      * langkah cascade sebelumnya dan mempengaruhi filter status di sum langkah
      * berikutnya — lihat sumOwnSisaFromCandidates().
      */
-    private function cascadeCarryoverToNext(Invoice $invoice): void
+    private function cascadeCarryoverToNext(Invoice $invoice, ?Collection $preloadedCandidates = null): void
     {
         $monthStart = Carbon::parse($invoice->tanggal_invoice)->startOfMonth();
 
-        $candidates = Invoice::where('klien_ar_id', $invoice->klien_ar_id)
+        $candidates = $preloadedCandidates ?? Invoice::where('klien_ar_id', $invoice->klien_ar_id)
             ->where('tanggal_invoice', '>=', $monthStart->toDateString())
             ->orderBy('tanggal_invoice')
             ->orderBy('id')
