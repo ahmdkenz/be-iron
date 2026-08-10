@@ -47,6 +47,13 @@ class EndingBalanceService
                 };
                 $q->whereHas('klienAr', fn($q) => $q->withTrashed()->whereIn('tipe_klien', $types));
             })
+            ->when($filters['search'] ?? null, fn($q, $v) => $q->whereHas('klienAr', fn($q) => $q
+                ->withTrashed()
+                ->where(fn($q2) => $q2
+                    ->where('nama_klien', 'like', "%{$v}%")
+                    ->orWhereHas('resto', fn($q3) => $q3->where('nama_resto', 'like', "%{$v}%"))
+                )
+            ))
             ->orderByDesc('periode_akhir')
             ->orderBy('klien_ar_id')
             ->paginate($perPage);

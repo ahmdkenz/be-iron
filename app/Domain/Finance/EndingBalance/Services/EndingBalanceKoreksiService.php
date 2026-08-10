@@ -176,7 +176,7 @@ class EndingBalanceKoreksiService
      * Approval EB kini satu tahap: koreksi menunggu di status PENDING_MANAGER dan
      * bisa diproses oleh Manager, Supervisor, maupun Admin. AR tidak melihat inbox ini.
      */
-    public function pendingForUser(string $role): \Illuminate\Database\Eloquent\Collection
+    public function pendingForUser(string $role, ?string $search = null): \Illuminate\Database\Eloquent\Collection
     {
         $canApprove = in_array(strtoupper($role), ['MANAGER', 'SUPERVISOR', 'ADMIN'], true);
 
@@ -186,6 +186,12 @@ class EndingBalanceKoreksiService
 
         return EndingBalanceKoreksi::with(['endingBalance.klienAr.resto', 'klienAr.resto', 'submittedBy', 'invoice', 'items'])
             ->where('status', 'PENDING_MANAGER')
+            ->when($search, fn($q, $v) => $q->whereHas('klienAr', fn($q) => $q
+                ->where(fn($q2) => $q2
+                    ->where('nama_klien', 'like', "%{$v}%")
+                    ->orWhereHas('resto', fn($q3) => $q3->where('nama_resto', 'like', "%{$v}%"))
+                )
+            ))
             ->orderBy('submitted_at')
             ->get();
     }

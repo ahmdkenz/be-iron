@@ -192,13 +192,13 @@ class EndingBalanceKoreksiController extends Controller
     /**
      * Inbox: koreksi yang menunggu aksi dari user yang sedang login.
      */
-    public function pending(): JsonResponse
+    public function pending(Request $request): JsonResponse
     {
         $user  = auth()->user();
         $roles = $user->getRoleNames()->map(fn($r) => strtoupper($r));
         $role  = $roles->first(fn($r) => in_array($r, ['MANAGER', 'SUPERVISOR', 'ADMIN']));
 
-        $list = $this->service->pendingForUser($role ?? '');
+        $list = $this->service->pendingForUser($role ?? '', $request->query('search'));
 
         return $this->successResponse(
             $list->map(fn($k) => $this->formatKoreksi($k))->values()->all()
