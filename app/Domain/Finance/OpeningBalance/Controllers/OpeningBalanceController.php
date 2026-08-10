@@ -17,6 +17,7 @@ use App\Models\KlienAr;
 use App\Models\OpeningBalanceDetailItem;
 use App\Models\OpeningBalanceImportBatch;
 use App\Support\Helpers\ArFilterScope;
+use App\Support\Helpers\ImportEtaCalculator;
 use App\Support\Helpers\RoleHelper;
 use App\Support\Traits\ApiResponse;
 use Carbon\Carbon;
@@ -351,9 +352,20 @@ class OpeningBalanceController extends Controller
 
     private function formatImportStatus(OpeningBalanceImportBatch $batch): array
     {
+        // Pass 1 (resolusi grup) mengisi processed_ob; setelah pass 1 selesai
+        // nilainya beku di total_ob dan pass 2 (insert) lanjut lewat
+        // inserted_ob+skipped_ob+failed_ob — ambil yang terbesar supaya ETA
+        // otomatis ikut pass mana pun yang sedang berjalan.
+        $etaProcessed = max($batch->processed_ob, $batch->inserted_ob + $batch->skipped_ob + $batch->failed_ob);
+        $eta = ImportEtaCalculator::compute($batch->created_at, $etaProcessed, $batch->total_ob);
+
         return [
             'batch_id' => $batch->id,
             'status' => $batch->status,
+            'started_at' => optional($batch->created_at)->toIso8601String(),
+            'elapsed_seconds' => $eta['elapsed_seconds'],
+            'estimated_remaining_seconds' => $eta['estimated_remaining_seconds'],
+            'estimated_completion_at' => $eta['estimated_completion_at'],
             'cutover_date' => $batch->cutover_date?->format('Y-m-d'),
             'total_ob' => $batch->total_ob,
             'processed_ob' => $batch->processed_ob,

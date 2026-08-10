@@ -5,6 +5,7 @@ namespace App\Domain\Master\Unified\Controllers;
 use App\Domain\Master\Unified\Jobs\ImportMasterJob;
 use App\Http\Controllers\Controller;
 use App\Models\ImportMasterBatch;
+use App\Support\Helpers\ImportEtaCalculator;
 use App\Support\Helpers\RoleHelper;
 use App\Support\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
@@ -134,9 +135,20 @@ class UnifiedMasterController extends Controller
 
         $decoded = $this->decodeImportDetails($batch);
 
+        // Sheet MASTER BARANG baru diproses setelah sheet MASTER DATA selesai,
+        // jadi ETA dihitung dari sheet yang sedang aktif (bukan gabungan
+        // keduanya) supaya rate tidak tercampur antar sheet yang beda karakter.
+        $etaProcessed = $batch->barang_total > 0 ? $batch->barang_processed : $batch->master_processed;
+        $etaTotal = $batch->barang_total > 0 ? $batch->barang_total : $batch->master_total;
+        $eta = ImportEtaCalculator::compute($batch->created_at, $etaProcessed, $etaTotal);
+
         return $this->successResponse([
             'batch_id'          => $batch->id,
             'status'            => $batch->status,
+            'started_at'        => optional($batch->created_at)->toIso8601String(),
+            'elapsed_seconds'   => $eta['elapsed_seconds'],
+            'estimated_remaining_seconds' => $eta['estimated_remaining_seconds'],
+            'estimated_completion_at'     => $eta['estimated_completion_at'],
             'master_total'      => $batch->master_total,
             'master_processed'  => $batch->master_processed,
             'investor_inserted' => $batch->investor_inserted,

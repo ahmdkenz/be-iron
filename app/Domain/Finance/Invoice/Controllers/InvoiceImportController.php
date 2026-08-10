@@ -9,6 +9,7 @@ use App\Domain\Finance\Invoice\Services\InvoiceImportTemplateService;
 use App\Http\Controllers\Controller;
 use App\Models\InvoiceImportBatch;
 use App\Models\InvoiceImportGroup;
+use App\Support\Helpers\ImportEtaCalculator;
 use App\Support\Helpers\RoleHelper;
 use App\Support\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
@@ -307,6 +308,19 @@ class InvoiceImportController extends Controller
 
     private function statusPayload(InvoiceImportBatch $b): array
     {
+        // ETA dihitung dari pasangan processed/total & timestamp mulai yang
+        // relevan dengan fase yang sedang berjalan — parsing & classifying
+        // masih berbagi started_at yang sama (satu tahap kontinu), sementara
+        // apply punya applied_at sendiri karena baru mulai setelah user klik
+        // "Proses Data Aman", bisa jauh setelah parsing+classifying selesai.
+        [$etaProcessed, $etaTotal, $etaStart] = match (true) {
+            in_array($b->phase, ['parsing_file', 'parsing_rows', 'parsed'], true) => [$b->parsed_rows, $b->total_rows, $b->started_at],
+            $b->phase === 'classifying' => [$b->classified_groups, $b->total_groups, $b->started_at],
+            $b->phase === 'applying' => [$b->applied_processed, $b->applied_total, $b->applied_at],
+            default => [0, 0, null],
+        };
+        $eta = ImportEtaCalculator::compute($etaStart, $etaProcessed, $etaTotal);
+
         return [
             'batch_id'               => $b->id,
             'status'                 => $b->status,
@@ -316,6 +330,13 @@ class InvoiceImportController extends Controller
             'user_id'                => $b->user_id,
             'uploaded_by'            => $b->user?->karyawan?->nama_karyawan ?? $b->user?->username,
             'created_at'             => optional($b->created_at)->toIso8601String(),
+            'started_at'             => optional($b->started_at)->toIso8601String(),
+            'classified_at'          => optional($b->classified_at)->toIso8601String(),
+            'applied_at'             => optional($b->applied_at)->toIso8601String(),
+            'finished_at'            => optional($b->finished_at)->toIso8601String(),
+            'elapsed_seconds'        => $eta['elapsed_seconds'],
+            'estimated_remaining_seconds' => $eta['estimated_remaining_seconds'],
+            'estimated_completion_at'     => $eta['estimated_completion_at'],
             'total_rows'             => $b->total_rows,
             'parsed_rows'            => $b->parsed_rows,
             'total_groups'           => $b->total_groups,

@@ -14,6 +14,7 @@ use App\Models\Invoice;
 use App\Models\KlienAr;
 use App\Models\PendapatanDiMuka;
 use App\Models\TagihanAp;
+use App\Support\Helpers\ImportEtaCalculator;
 use App\Support\Helpers\RoleHelper;
 use App\Support\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
@@ -89,11 +90,25 @@ class BankStatementController extends Controller
 
         $this->authorizeBatchAccess($b);
 
+        // Cuma fase 'parsing' yang punya counter per-baris hidup; fase
+        // lain (validating/checking_overlap/saving/auto_matching) tidak
+        // pernah menaikkan processed_rows lagi sehingga tidak ada dasar
+        // rate yang valid untuk dihitung — sengaja tidak dipaksakan ETA
+        // palsu, FE cukup tampilkan elapsed time saja untuk fase-fase itu.
+        $etaProcessed = $b->phase === 'parsing' ? $b->processed_rows : 0;
+        $etaTotal = $b->phase === 'parsing' ? $b->total_rows : 0;
+        $eta = ImportEtaCalculator::compute($b->started_at, $etaProcessed, $etaTotal);
+
         return $this->successResponse([
             'batch_id'          => $b->id,
             'status'            => $b->status,
             'phase'             => $b->phase,
             'message'           => $b->message,
+            'started_at'        => optional($b->started_at)->toIso8601String(),
+            'finished_at'       => optional($b->finished_at)->toIso8601String(),
+            'elapsed_seconds'   => $eta['elapsed_seconds'],
+            'estimated_remaining_seconds' => $eta['estimated_remaining_seconds'],
+            'estimated_completion_at'     => $eta['estimated_completion_at'],
             'periode_awal'      => $b->periode_awal?->toDateString(),
             'periode_akhir'     => $b->periode_akhir?->toDateString(),
             'total_rows'        => $b->total_rows,
