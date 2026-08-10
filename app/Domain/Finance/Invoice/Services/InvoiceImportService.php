@@ -813,6 +813,13 @@ class InvoiceImportService
         $existingInvoiceMap = $this->buildApplyExistingMap($groups);
         $klienMap = $this->buildApplyKlienMap($groups);
         $carryoverMap = $this->buildApplyCarryoverMap($groups);
+        // Preload kandidat cascade-carryover (grup SAFE_UPDATE) sekali per chunk, lalu
+        // hydrate $existingInvoiceMap supaya kedua map berbagi instance objek untuk baris
+        // yang sama — WAJIB agar cascade antar-grup dalam 1 chunk saling melihat mutasi
+        // terbaru alih-alih objek stale. Lihat docblock buildApplyCascadeCandidatesMap()
+        // dan hydrateExistingInvoiceMapForCascade().
+        $cascadeCandidatesMap = $this->buildApplyCascadeCandidatesMap($groups);
+        $existingInvoiceMap = $this->hydrateExistingInvoiceMapForCascade($existingInvoiceMap, $cascadeCandidatesMap);
         // Preload rows semua grup dalam chunk ini sekali (mirror pola classify()'s
         // $rowsByGroup) — bukan 1 query rows() per grup di dalam applyGroup().
         $rowsByGroup = InvoiceImportRow::whereIn('group_id', $groups->pluck('id'))
@@ -829,13 +836,13 @@ class InvoiceImportService
         // ditunda dan di-dedup, lalu di-flush sekali per klien+periode di akhir
         // chunk ini alih-alih recompute penuh (+cascade 6 bulan) berulang kali.
         EndingBalanceSyncBatcher::run(function () use (
-            $groups, $lockedEbMap, $existingInvoiceMap, $klienMap, $carryoverMap, $rowsByGroup,
+            $groups, $lockedEbMap, $existingInvoiceMap, $klienMap, $carryoverMap, $cascadeCandidatesMap, $rowsByGroup,
             &$errors, &$groupUpdates, &$counterDeltas, $now,
         ) {
             foreach ($groups as $group) {
                 try {
                     $rows = $rowsByGroup->get($group->id, collect());
-                    $result = $this->applyGroup($group, $lockedEbMap, $existingInvoiceMap, $klienMap, $rows, $carryoverMap);
+                    $result = $this->applyGroup($group, $lockedEbMap, $existingInvoiceMap, $klienMap, $rows, $carryoverMap, $cascadeCandidatesMap);
                 } catch (\Throwable $e) {
                     Log::error('InvoiceImportService: gagal memproses grup', ['group_id' => $group->id, 'error' => $e->getMessage()]);
                     $result = ['status' => 'FAILED', 'message' => 'Error tak terduga: ' . $e->getMessage(), 'invoice_id' => null, 'no_invoice' => null];
@@ -952,6 +959,77 @@ class InvoiceImportService
             ->all();
     }
 
+    /**
+     * Preload klien_ar_id => Collection<Invoice> (SEMUA invoice klien tsb — status apa pun,
+     * termasuk Opening Balance, TIDAK difilter seperti buildApplyCarryoverMap() yang untuk
+     * tujuan lain) untuk klien yang tersentuh grup SAFE_UPDATE di chunk ini. Dipakai
+     * InvoiceService::recalculate() → cascadeCarryoverToNext() supaya cascade jalan
+     * in-memory, bukan 1 query "next invoice" + query sum per hop.
+     *
+     * Replika PERSIS filter/order query live di cascadeCarryoverToNext(): tanggal_invoice
+     * >= monthStart, orderBy tanggal_invoice, orderBy id. $minMonthStart pakai bulan
+     * paling awal di antara SEMUA grup SAFE_UPDATE chunk ini (1 lower bound global) —
+     * aman meski tanggal invoice per grup berbeda-beda karena cascadeCarryoverToNext()/
+     * sumOwnSisaFromCandidates() re-derive $monthStart dari invoice yang di-cascade
+     * sendiri; over-fetch (kandidat dari bulan lebih awal dari yang perlu) tidak masalah,
+     * under-fetch yang berbahaya.
+     *
+     * @return array<int, \Illuminate\Support\Collection>
+     */
+    private function buildApplyCascadeCandidatesMap($groups): array
+    {
+        $safeUpdateGroups = $groups->where('classification', 'SAFE_UPDATE');
+        $klienIds = $safeUpdateGroups->pluck('klien_ar_id')->filter()->unique()->values()->all();
+
+        if (empty($klienIds)) {
+            return [];
+        }
+
+        $minMonthStart = $safeUpdateGroups
+            ->map(fn($g) => $this->dateOrNull($g->tanggal_invoice))
+            ->filter()
+            ->map(fn($d) => Carbon::parse($d)->startOfMonth())
+            ->min();
+
+        if (!$minMonthStart) {
+            return [];
+        }
+
+        return Invoice::whereIn('klien_ar_id', $klienIds)
+            ->where('tanggal_invoice', '>=', $minMonthStart->toDateString())
+            ->orderBy('tanggal_invoice')
+            ->orderBy('id')
+            ->get()
+            ->groupBy('klien_ar_id')
+            ->all();
+    }
+
+    /**
+     * Timpa entry $existingInvoiceMap yang overlap dengan objek yang sama dari
+     * $cascadeCandidatesMap, supaya kedua map berbagi instance objek untuk baris DB yang
+     * sama. WAJIB — tanpa ini, 1 chunk dengan >1 grup SAFE_UPDATE untuk klien yang sama
+     * akan punya 2 objek PHP berbeda untuk baris invoice yang sama: cascade dari grup
+     * pertama memutasi satu objek, grup berikutnya (klien sama) membaca objek LAIN yang
+     * stale dari $existingInvoiceMap, menghasilkan sisa_tagihan/status salah secara diam-
+     * diam (tanpa exception). cascadeCarryoverToNext() memang butuh membaca objek yang
+     * sama yang dimutasi cascade sebelumnya — lihat docblock-nya di InvoiceService.
+     *
+     * @return array<string, Invoice>
+     */
+    private function hydrateExistingInvoiceMapForCascade(array $existingInvoiceMap, array $cascadeCandidatesMap): array
+    {
+        foreach ($cascadeCandidatesMap as $klienId => $collection) {
+            foreach ($collection as $candidate) {
+                $key = $klienId . '|' . Carbon::parse($candidate->tanggal_invoice)->toDateString();
+                if (array_key_exists($key, $existingInvoiceMap)) {
+                    $existingInvoiceMap[$key] = $candidate;
+                }
+            }
+        }
+
+        return $existingInvoiceMap;
+    }
+
     /** @return array{status: string, message: ?string, invoice_id: ?int, no_invoice: ?string} */
     private function applyGroup(
         InvoiceImportGroup $group,
@@ -960,6 +1038,7 @@ class InvoiceImportService
         array $klienMap = [],
         ?\Illuminate\Support\Collection $preloadedRows = null,
         array $carryoverMap = [],
+        array $cascadeCandidatesMap = [],
     ): array {
         $items = $this->rowsToItems($preloadedRows ?? $group->rows()->orderBy('row_number')->get());
 
@@ -987,7 +1066,7 @@ class InvoiceImportService
             ]);
         }
 
-        $result = $this->groupProcessor->processGroup($group->tipe_invoice, $headerData, $items, $lockedEbMap, $existingInvoiceMap, $klienMap, $carryoverMap);
+        $result = $this->groupProcessor->processGroup($group->tipe_invoice, $headerData, $items, $lockedEbMap, $existingInvoiceMap, $klienMap, $carryoverMap, $cascadeCandidatesMap);
 
         return match (true) {
             $result->isInserted(), $result->isUpdated() => [

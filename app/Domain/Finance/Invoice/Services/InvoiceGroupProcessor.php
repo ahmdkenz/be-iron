@@ -6,6 +6,8 @@ use App\Models\EndingBalance;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
 use App\Models\KlienAr;
+use Carbon\Carbon;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -54,6 +56,11 @@ class InvoiceGroupProcessor
      * @param  ?array $carryoverMap  Preloaded map klien_ar_id => Collection<Invoice> dari
      *                              InvoiceImportService::buildApplyCarryoverMap(). Null berarti
      *                              query per-grup seperti biasa (dipakai caller lain di luar import chunk).
+     * @param  ?array $cascadeCandidatesMap  Preloaded map klien_ar_id => Collection<Invoice> dari
+     *                              InvoiceImportService::buildApplyCascadeCandidatesMap() (sudah
+     *                              di-hydrate agar berbagi instance objek dengan $existingInvoiceMap).
+     *                              Null berarti cascadeCarryoverToNext() fallback ke live-query
+     *                              per-invoice seperti biasa (dipakai caller lain di luar import chunk).
      * @return ProcessGroupResult
      */
     public function processGroup(
@@ -64,6 +71,7 @@ class InvoiceGroupProcessor
         ?array $existingInvoiceMap = null,
         ?array $klienMap = null,
         ?array $carryoverMap = null,
+        ?array $cascadeCandidatesMap = null,
     ): ProcessGroupResult {
         $klienArId = (int) $headerData['klien_ar_id'];
         $tanggal   = $headerData['tanggal_invoice'];
@@ -84,7 +92,11 @@ class InvoiceGroupProcessor
                 return ProcessGroupResult::skipped("Invoice {$existingInvoice->no_invoice} sudah LUNAS");
             }
 
-            return $this->updateInvoice($existingInvoice, $items);
+            $preloadedCascadeCandidates = $cascadeCandidatesMap !== null
+                ? ($cascadeCandidatesMap[$klienArId] ?? collect())
+                : null;
+
+            return $this->updateInvoice($existingInvoice, $items, $preloadedCascadeCandidates);
         }
 
         return $this->createInvoice($tipeInvoice, $klienArId, $headerData, $items, $klienMap, $carryoverMap);
@@ -112,9 +124,30 @@ class InvoiceGroupProcessor
             }
         }
 
-        foreach ($firstByKlien as $firstInvoice) {
+        if (empty($firstByKlien)) {
+            return;
+        }
+
+        // Preload kandidat cascade SEMUA klien di batch ini sekali (mirror pola
+        // OpeningBalanceImportService::createOpeningBalance() bypassApproval) — bukan
+        // 1 query "next invoice" per klien di dalam cascadeCarryoverToNext(). Aman
+        // dipanggil TANPA hydrasi (beda dari applySafeChunk()) karena tiap klien di sini
+        // di-cascade TEPAT SEKALI per pemanggilan method ini (dedup $firstByKlien).
+        $minMonthStart = collect($firstByKlien)
+            ->map(fn(Invoice $inv) => Carbon::parse($inv->tanggal_invoice)->startOfMonth())
+            ->min();
+
+        $candidatesByKlien = Invoice::whereIn('klien_ar_id', array_keys($firstByKlien))
+            ->where('tanggal_invoice', '>=', $minMonthStart->toDateString())
+            ->orderBy('tanggal_invoice')
+            ->orderBy('id')
+            ->get()
+            ->groupBy('klien_ar_id');
+
+        foreach ($firstByKlien as $klienId => $firstInvoice) {
             try {
-                DB::transaction(fn() => $this->service->propagateCarryover($firstInvoice->fresh()));
+                $preloaded = $candidatesByKlien->get($klienId) ?? collect();
+                DB::transaction(fn() => $this->service->propagateCarryover($firstInvoice, $preloaded));
             } catch (\Throwable $e) {
                 Log::error('InvoiceGroupProcessor: propagateCarryover gagal', [
                     'invoice_id' => $firstInvoice->id,
@@ -206,10 +239,13 @@ class InvoiceGroupProcessor
                 'created_by'                 => auth()->id(),
             ]);
 
-            $this->insertItems($invoice, $items);
-            $this->recomputeSubtotal($invoice);
+            $subtotal = $this->insertItems($invoice, $items);
+            $this->recomputeSubtotal($invoice, $subtotal);
 
-            return ProcessGroupResult::inserted($invoice->fresh());
+            // fresh() dihapus: recomputeSubtotal() sudah men-set subtotal/total_tagihan/
+            // sisa_tagihan/updated_by di objek in-memory yang sama via update() Eloquent;
+            // tidak ada yang menulis balik ke baris ini di antara create() dan return.
+            return ProcessGroupResult::inserted($invoice);
         } catch (\Throwable $e) {
             return ProcessGroupResult::failed('Gagal membuat invoice: ' . $e->getMessage());
         }
@@ -219,17 +255,20 @@ class InvoiceGroupProcessor
     //  Private: update
     // ──────────────────────────────────────────────────────────────
 
-    private function updateInvoice(Invoice $existingInvoice, array $items): ProcessGroupResult
+    private function updateInvoice(Invoice $existingInvoice, array $items, ?Collection $preloadedCascadeCandidates = null): ProcessGroupResult
     {
         try {
             InvoiceItem::where('invoice_id', $existingInvoice->id)->delete();
-            $this->insertItems($existingInvoice, $items);
-            $this->recomputeSubtotal($existingInvoice);
+            $subtotal = $this->insertItems($existingInvoice, $items);
+            $this->recomputeSubtotal($existingInvoice, $subtotal);
 
-            $existingInvoice->refresh();
-
-            DB::transaction(fn() => $this->service->recalculate($existingInvoice));
-            $existingInvoice->refresh();
+            // refresh() dihapus: recomputeSubtotal() sudah update() objek ini in-memory;
+            // recalculate() di bawah membaca field yang sama objek ini (subtotal, carryover,
+            // klien_ar_id, tanggal_invoice) — tidak ada yang stale.
+            DB::transaction(fn() => $this->service->recalculate($existingInvoice, $preloadedCascadeCandidates));
+            // refresh() dihapus: recalculate() memutasi $existingInvoice in-place via
+            // update() miliknya sendiri (referensi objek yang sama); cascade di dalamnya
+            // hanya menulis invoice LAIN (ke depan), tidak pernah menulis balik baris ini.
 
             if ((float) $existingInvoice->total_pembayaran > (float) $existingInvoice->subtotal
                 && (float) $existingInvoice->subtotal > 0
@@ -239,7 +278,13 @@ class InvoiceGroupProcessor
 
             $this->service->recalculateDraftEndingBalance($existingInvoice);
 
-            return ProcessGroupResult::updated($existingInvoice->fresh());
+            // fresh() dihapus (lihat alasan di atas). Catatan: header-diff SAFE_UPDATE
+            // (tanggal_jatuh_tempo/no_surat_jalan/keterangan) ditulis applyGroup() lewat
+            // Invoice::whereKey()->update() TERPISAH sebelum processGroup() dipanggil —
+            // field itu sudah stale di objek ini sejak sebelum method ini berjalan (tidak
+            // berubah oleh perubahan ini). Aman karena ProcessGroupResult->invoice hanya
+            // dibaca untuk id/no_invoice oleh applyGroup(), tidak untuk field tsb.
+            return ProcessGroupResult::updated($existingInvoice);
         } catch (\Throwable $e) {
             return ProcessGroupResult::failed('Gagal mengupdate invoice: ' . $e->getMessage());
         }
@@ -249,16 +294,20 @@ class InvoiceGroupProcessor
     //  Private: shared helpers
     // ──────────────────────────────────────────────────────────────
 
-    private function insertItems(Invoice $invoice, array $items): void
+    /** @return float Total subtotal item yang baru diinsert (sum per-item, di-round 2dp sebelum diakumulasi — meniru rounding storage DECIMAL(15,2) MySQL — bukan raw product). */
+    private function insertItems(Invoice $invoice, array $items): float
     {
         if (empty($items)) {
-            return;
+            return 0.0;
         }
 
         $now  = now();
-        $rows = array_map(function (array $item) use ($invoice, $now) {
+        $subtotalSum = 0.0;
+        $rows = array_map(function (array $item) use ($invoice, $now, &$subtotalSum) {
             $qty   = (float) ($item['qty'] ?? 0);
             $harga = (float) ($item['harga_satuan'] ?? 0);
+            $itemSubtotal = $qty * $harga;
+            $subtotalSum += round($itemSubtotal, 2);
 
             return [
                 'invoice_id'       => $invoice->id,
@@ -268,7 +317,7 @@ class InvoiceGroupProcessor
                 'qty'              => $qty,
                 'satuan'           => $item['satuan'] ?? null,
                 'harga_satuan'     => $harga,
-                'subtotal'         => $qty * $harga,
+                'subtotal'         => $itemSubtotal,
                 'no_invoice_resto' => $item['no_invoice_resto'] ?? null,
                 'kode_resto'       => $item['kode_resto'] ?? null,
                 'nama_resto'       => $item['nama_resto'] ?? null,
@@ -278,11 +327,12 @@ class InvoiceGroupProcessor
         }, $items);
 
         InvoiceItem::insert($rows);
+
+        return round($subtotalSum, 2);
     }
 
-    private function recomputeSubtotal(Invoice $invoice): void
+    private function recomputeSubtotal(Invoice $invoice, float $subtotal): void
     {
-        $subtotal     = (float) $invoice->items()->sum('subtotal');
         $totalTagihan = $subtotal + (float) $invoice->tagihan_periode_sebelumnya;
         $invoice->update([
             'subtotal'      => $subtotal,

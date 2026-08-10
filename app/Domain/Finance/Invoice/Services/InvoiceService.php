@@ -798,7 +798,7 @@ class InvoiceService
         return $invoice->fresh();
     }
 
-    public function recalculate(Invoice $invoice): void
+    public function recalculate(Invoice $invoice, ?Collection $preloadedCascadeCandidates = null): void
     {
         // Aditif: pembayaran invoice-tunggal lama (header invoice_id terisi) TIDAK
         // PERNAH overlap dengan item Multi Payment (header invoice_id selalu NULL,
@@ -852,13 +852,22 @@ class InvoiceService
 
         $invoice->update($updateData);
 
-        $this->cascadeCarryoverToNext($invoice->fresh());
+        // fresh() dihapus: cascadeCarryoverToNext() hanya membaca tanggal_invoice/
+        // klien_ar_id dari $invoice (dipakai untuk WHERE/traversal), keduanya tidak ada
+        // di $updateData di atas dan tidak berubah setelah invoice dibuat/dibayar — jadi
+        // tidak pernah stale. $preloadedCascadeCandidates diteruskan agar caller dengan
+        // preload batch (mis. import) hindari query "next invoice" per hop.
+        $this->cascadeCarryoverToNext($invoice, $preloadedCascadeCandidates);
 
         // Invoice reguler bisa direferensikan oleh baris OB (snapshot statis) sebagai
         // "invoice periode sebelumnya". Sinkronkan snapshot tersebut agar nominal OB
         // ikut ter-recalculate saat invoice reguler dibayar / dibatalkan.
         if (! $invoice->is_opening_balance) {
-            $this->syncOpeningBalanceSnapshots($invoice->fresh());
+            // fresh() dihapus: cascadeCarryoverToNext() di atas tidak pernah menulis balik
+            // ke baris $invoice sendiri (hanya invoice LAIN, ke depan) — field yang dibaca
+            // syncOpeningBalanceSnapshots() (subtotal/total_pembayaran/total_penyesuaian/
+            // no_invoice/klien_ar_id) semuanya sudah akurat di objek ini.
+            $this->syncOpeningBalanceSnapshots($invoice);
         }
     }
 
