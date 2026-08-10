@@ -58,7 +58,7 @@ class BankStatementController extends Controller
     {
         $request->validate([
             'bank_type' => ['nullable', 'in:BCA,MANDIRI,CIMB,BSI,GENERAL'],
-            'file'      => ['required', 'file', 'mimes:xlsx,xls', 'max:10240'],
+            'file'      => ['required', 'file', 'mimes:xlsx,xls,csv,txt', 'max:10240'],
         ]);
 
         $path = $request->file('file')->store('bank-statement-imports');
