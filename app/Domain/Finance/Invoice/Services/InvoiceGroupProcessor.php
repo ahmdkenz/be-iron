@@ -51,6 +51,9 @@ class InvoiceGroupProcessor
      * @param  ?array $klienMap  Preloaded map klien_ar_id => KlienAr (with perusahaan) dari
      *                              InvoiceImportService::buildApplyKlienMap(). Null berarti
      *                              query per-grup seperti biasa (dipakai caller lain di luar import chunk).
+     * @param  ?array $carryoverMap  Preloaded map klien_ar_id => Collection<Invoice> dari
+     *                              InvoiceImportService::buildApplyCarryoverMap(). Null berarti
+     *                              query per-grup seperti biasa (dipakai caller lain di luar import chunk).
      * @return ProcessGroupResult
      */
     public function processGroup(
@@ -60,6 +63,7 @@ class InvoiceGroupProcessor
         array $lockedEbMap,
         ?array $existingInvoiceMap = null,
         ?array $klienMap = null,
+        ?array $carryoverMap = null,
     ): ProcessGroupResult {
         $klienArId = (int) $headerData['klien_ar_id'];
         $tanggal   = $headerData['tanggal_invoice'];
@@ -83,7 +87,7 @@ class InvoiceGroupProcessor
             return $this->updateInvoice($existingInvoice, $items);
         }
 
-        return $this->createInvoice($tipeInvoice, $klienArId, $headerData, $items, $klienMap);
+        return $this->createInvoice($tipeInvoice, $klienArId, $headerData, $items, $klienMap, $carryoverMap);
     }
 
     /**
@@ -166,13 +170,15 @@ class InvoiceGroupProcessor
         array  $headerData,
         array  $items,
         ?array $klienMap = null,
+        ?array $carryoverMap = null,
     ): ProcessGroupResult {
         try {
             $klien     = $klienMap !== null
                 ? ($klienMap[$klienArId] ?? KlienAr::with('perusahaan')->find($klienArId))
                 : KlienAr::with('perusahaan')->find($klienArId);
             $tanggal   = $headerData['tanggal_invoice'];
-            $carryover = $this->service->getMonthlyCarryover($klienArId, $tanggal);
+            $preloadedInvoices = $carryoverMap !== null ? ($carryoverMap[$klienArId] ?? collect()) : null;
+            $carryover = $this->service->getMonthlyCarryover($klienArId, $tanggal, $preloadedInvoices);
             $noInvoice = $tipeInvoice === 'B2B'
                 ? $this->service->generateConsolidatedInvoiceNo($klien, $tanggal)
                 : $this->service->generateNoInvoice($klien, $tanggal);

@@ -323,9 +323,26 @@ class InvoiceService
             ->value('total') ?? 0.0;
     }
 
-    public function getMonthlyCarryover(int $klienArId, string $tanggalInvoice): float
+    /**
+     * @param  ?Collection $preloadedInvoices  Invoice milik $klienArId (is_opening_balance=false,
+     *                              status TERKIRIM/SEBAGIAN) yang sudah di-preload caller —
+     *                              lihat InvoiceImportService::buildApplyCarryoverMap(). Null berarti
+     *                              query langsung ke DB seperti biasa (dipakai caller lain di luar import).
+     */
+    public function getMonthlyCarryover(int $klienArId, string $tanggalInvoice, ?Collection $preloadedInvoices = null): float
     {
         $monthStart = Carbon::parse($tanggalInvoice)->startOfMonth()->toDateString();
+
+        if ($preloadedInvoices !== null) {
+            return (float) $preloadedInvoices
+                ->filter(function ($inv) use ($monthStart, $tanggalInvoice) {
+                    $tgl = $inv->tanggal_invoice instanceof \DateTimeInterface
+                        ? $inv->tanggal_invoice->format('Y-m-d')
+                        : substr((string) $inv->tanggal_invoice, 0, 10);
+                    return $tgl >= $monthStart && $tgl <= $tanggalInvoice;
+                })
+                ->sum(fn ($inv) => max(0, (float) $inv->subtotal - (float) $inv->total_pembayaran - (float) $inv->total_penyesuaian));
+        }
 
         // Hanya invoice reguler — OB adalah dokumen terpisah dan tidak masuk tagihan_periode_sebelumnya
         return (float) Invoice::where('klien_ar_id', $klienArId)

@@ -812,6 +812,7 @@ class InvoiceImportService
 
         $existingInvoiceMap = $this->buildApplyExistingMap($groups);
         $klienMap = $this->buildApplyKlienMap($groups);
+        $carryoverMap = $this->buildApplyCarryoverMap($groups);
         // Preload rows semua grup dalam chunk ini sekali (mirror pola classify()'s
         // $rowsByGroup) — bukan 1 query rows() per grup di dalam applyGroup().
         $rowsByGroup = InvoiceImportRow::whereIn('group_id', $groups->pluck('id'))
@@ -828,13 +829,13 @@ class InvoiceImportService
         // ditunda dan di-dedup, lalu di-flush sekali per klien+periode di akhir
         // chunk ini alih-alih recompute penuh (+cascade 6 bulan) berulang kali.
         EndingBalanceSyncBatcher::run(function () use (
-            $groups, $lockedEbMap, $existingInvoiceMap, $klienMap, $rowsByGroup,
+            $groups, $lockedEbMap, $existingInvoiceMap, $klienMap, $carryoverMap, $rowsByGroup,
             &$errors, &$groupUpdates, &$counterDeltas, $now,
         ) {
             foreach ($groups as $group) {
                 try {
                     $rows = $rowsByGroup->get($group->id, collect());
-                    $result = $this->applyGroup($group, $lockedEbMap, $existingInvoiceMap, $klienMap, $rows);
+                    $result = $this->applyGroup($group, $lockedEbMap, $existingInvoiceMap, $klienMap, $rows, $carryoverMap);
                 } catch (\Throwable $e) {
                     Log::error('InvoiceImportService: gagal memproses grup', ['group_id' => $group->id, 'error' => $e->getMessage()]);
                     $result = ['status' => 'FAILED', 'message' => 'Error tak terduga: ' . $e->getMessage(), 'invoice_id' => null, 'no_invoice' => null];
@@ -926,6 +927,31 @@ class InvoiceImportService
         return KlienAr::with('perusahaan')->whereIn('id', $klienIds)->get()->keyBy('id')->all();
     }
 
+    /**
+     * Preload klien_ar_id => Collection<Invoice> (is_opening_balance=false, status
+     * TERKIRIM/SEBAGIAN) untuk InvoiceService::getMonthlyCarryover() dipanggil dari
+     * createInvoice() (grup NEW_INVOICE) — hindari 1 query SUM per grup.
+     *
+     * @return array<int, \Illuminate\Support\Collection>
+     */
+    private function buildApplyCarryoverMap($groups): array
+    {
+        $klienIds = $groups
+            ->where('classification', 'NEW_INVOICE')
+            ->pluck('klien_ar_id')->filter()->unique()->values()->all();
+
+        if (empty($klienIds)) {
+            return [];
+        }
+
+        return Invoice::whereIn('klien_ar_id', $klienIds)
+            ->where('is_opening_balance', false)
+            ->whereIn('status', ['TERKIRIM', 'SEBAGIAN'])
+            ->get(['klien_ar_id', 'tanggal_invoice', 'subtotal', 'total_pembayaran', 'total_penyesuaian'])
+            ->groupBy('klien_ar_id')
+            ->all();
+    }
+
     /** @return array{status: string, message: ?string, invoice_id: ?int, no_invoice: ?string} */
     private function applyGroup(
         InvoiceImportGroup $group,
@@ -933,6 +959,7 @@ class InvoiceImportService
         array $existingInvoiceMap = [],
         array $klienMap = [],
         ?\Illuminate\Support\Collection $preloadedRows = null,
+        array $carryoverMap = [],
     ): array {
         $items = $this->rowsToItems($preloadedRows ?? $group->rows()->orderBy('row_number')->get());
 
@@ -960,7 +987,7 @@ class InvoiceImportService
             ]);
         }
 
-        $result = $this->groupProcessor->processGroup($group->tipe_invoice, $headerData, $items, $lockedEbMap, $existingInvoiceMap, $klienMap);
+        $result = $this->groupProcessor->processGroup($group->tipe_invoice, $headerData, $items, $lockedEbMap, $existingInvoiceMap, $klienMap, $carryoverMap);
 
         return match (true) {
             $result->isInserted(), $result->isUpdated() => [
