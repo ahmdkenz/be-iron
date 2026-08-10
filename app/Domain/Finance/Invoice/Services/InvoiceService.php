@@ -432,14 +432,14 @@ class InvoiceService
      * @param  ?KlienAr  $klien  klien yang sudah diresolusi caller (hindari refetch KlienAr::findOrFail()
      *                           saat caller — mis. import — sudah punya objeknya di memori).
      */
-    public function createOpeningBalance(array $data, bool $notify = true, bool $eagerLoad = true, ?KlienAr $klien = null): Invoice
+    public function createOpeningBalance(array $data, bool $notify = true, bool $eagerLoad = true, ?KlienAr $klien = null, bool $bypassApproval = false): Invoice
     {
         $user = auth()->user()->loadMissing('karyawan');
         abort_if(! $user?->karyawan?->id, 422, 'User tidak terhubung dengan data karyawan');
 
         $klien ??= KlienAr::findOrFail($data['klien_ar_id']);
 
-        return DB::transaction(fn () => $this->persistOpeningBalance($data, $klien, $user, $notify, $eagerLoad));
+        return DB::transaction(fn () => $this->persistOpeningBalance($data, $klien, $user, $notify, $eagerLoad, $bypassApproval));
     }
 
     /**
@@ -465,7 +465,14 @@ class InvoiceService
         });
     }
 
-    private function persistOpeningBalance(array $data, KlienAr $klien, User $user, bool $notify, bool $eagerLoad = true): Invoice
+    /**
+     * @param  bool  $bypassApproval  true untuk jalur Import Master Opening Balance — akses import
+     *                                sudah dibatasi ke ADMIN/MANAGER/SUPERVISOR (role tepercaya) di
+     *                                controller, jadi OB hasil import langsung APPROVED, tidak perlu
+     *                                masuk antrian approval PENDING. Jalur manual (Ajukan Opening
+     *                                Balance) TIDAK memakai parameter ini — selalu default false.
+     */
+    private function persistOpeningBalance(array $data, KlienAr $klien, User $user, bool $notify, bool $eagerLoad = true, bool $bypassApproval = false): Invoice
     {
         $saldoAwal = ! empty($data['details'])
             ? collect($data['details'])->sum(fn ($d) => (float) ($d['sisa_tagihan_asal'] ?? 0))
@@ -483,17 +490,24 @@ class InvoiceService
             'total_tagihan' => $saldoAwal,
             'total_pembayaran' => 0,
             'sisa_tagihan' => $saldoAwal,
-            'status' => 'DRAFT',
-            'approval_status' => 'PENDING',
+            'status' => $bypassApproval ? 'TERKIRIM' : 'DRAFT',
+            'approval_status' => $bypassApproval ? 'APPROVED' : 'PENDING',
             'submitted_at' => now(),
             'submitted_by' => auth()->id(),
+            'approved_at' => $bypassApproval ? now() : null,
+            'approved_by' => $bypassApproval ? auth()->id() : null,
+            'approved_token' => $bypassApproval ? Str::uuid()->toString() : null,
             'is_opening_balance' => true,
             'keterangan' => $data['keterangan'] ?? 'Opening Balance',
             'prepared_token' => Str::uuid()->toString(),
             'created_by' => auth()->id(),
         ]);
 
-        $this->createApprovalLog($invoice, 'SUBMITTED');
+        $this->createApprovalLog(
+            $invoice,
+            $bypassApproval ? 'APPROVED' : 'SUBMITTED',
+            $bypassApproval ? 'Otomatis disetujui — Import Master Opening Balance' : null
+        );
 
         if (! empty($data['details'])) {
             $this->syncOpeningBalanceDetails($invoice, $data['details']);
@@ -504,7 +518,15 @@ class InvoiceService
         // (hindari ±15-20 query per Opening Balance yang dibuat, lihat OpeningBalanceImportService).
         $submitted = $eagerLoad ? $this->findOrFail($invoice->id) : $invoice;
 
-        if ($notify) {
+        if ($bypassApproval) {
+            // Samakan efek samping dengan approveOpeningBalance() — OB langsung APPROVED
+            // tetap harus cascade carryover ke invoice reguler periode berikutnya.
+            $this->propagateCarryover($submitted);
+
+            if ($notify) {
+                $this->financeNotificationService->obArApproved($submitted);
+            }
+        } elseif ($notify) {
             $this->financeNotificationService->obArSubmitted($submitted);
         }
 

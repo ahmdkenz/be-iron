@@ -209,7 +209,10 @@ class OpeningBalanceImportService
                 // eagerLoad: false — hasil create() tidak dipakai di sini (cuma counter),
                 // jadi lewati findOrFail() 19-relasi di persistOpeningBalance(). klien: $klien
                 // — sudah diresolusi Pass 1, hindari KlienAr::findOrFail() ulang per klien.
-                $this->invoiceService->createOpeningBalance($data, notify: false, eagerLoad: false, klien: $klien);
+                // bypassApproval: true — akses Import Master Opening Balance sudah dibatasi
+                // ke ADMIN/MANAGER/SUPERVISOR (role tepercaya), jadi OB hasil import langsung
+                // APPROVED, tidak perlu direview ulang lewat antrian approval manual.
+                $this->invoiceService->createOpeningBalance($data, notify: false, eagerLoad: false, klien: $klien, bypassApproval: true);
                 $insertedOb++;
                 $insertedDetail += count($built['details']);
                 $insertedItem += array_sum(array_map(fn ($d) => count($d['items']), $built['details']));

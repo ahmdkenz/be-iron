@@ -45,11 +45,12 @@ class FinanceNotificationService
 
     /**
      * Notifikasi agregat untuk hasil Import Master Opening Balance — dipakai sebagai
-     * pengganti obArSubmitted() per-baris (yang dibungkam via createOpeningBalance($data,
+     * pengganti obArApproved() per-baris (yang dibungkam via createOpeningBalance($data,
      * notify: false) saat dipanggil dari import) supaya approver tidak dibanjiri ratusan
-     * notifikasi individual untuk satu batch import.
+     * notifikasi individual untuk satu batch import. OB hasil import langsung APPROVED
+     * (bypassApproval), jadi ini sekadar info — bukan permintaan aksi seperti submitted.
      */
-    public function obArBulkSubmitted(int $count, ?int $actorId): void
+    public function obArBulkApproved(int $count, ?int $actorId): void
     {
         if ($count < 1) {
             return;
@@ -59,9 +60,9 @@ class FinanceNotificationService
             $this->recipients->approvers(),
             actorId: $actorId,
             category: 'opening_balance_ar',
-            severity: 'info',
-            title: 'Opening Balance AR menunggu persetujuan',
-            body: sprintf('%d opening balance baru hasil import menunggu persetujuan Anda.', $count),
+            severity: 'success',
+            title: 'Opening Balance AR diimpor & disetujui otomatis',
+            body: sprintf('%d opening balance baru hasil import telah otomatis disetujui.', $count),
             routeName: 'finance-opening-balance',
             entityType: 'opening_balance_ar',
             entityId: null,

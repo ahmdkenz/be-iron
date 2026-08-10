@@ -109,9 +109,11 @@ class ProcessOpeningBalanceImportJob implements ShouldQueue
 
             // Notifikasi agregat ke approver — createOpeningBalance() dipanggil dengan
             // notify: false per baris (lihat OpeningBalanceImportService) supaya approver
-            // tidak dibanjiri satu notifikasi per baris untuk satu batch import.
+            // tidak dibanjiri satu notifikasi per baris untuk satu batch import. OB hasil
+            // import langsung APPROVED (bypassApproval), jadi ini notifikasi info, bukan
+            // permintaan approval.
             if ($batch->inserted_ob > 0) {
-                $notifications->obArBulkSubmitted($batch->inserted_ob, $batch->user_id);
+                $notifications->obArBulkApproved($batch->inserted_ob, $batch->user_id);
             }
         } elseif ($batch->status === 'failed') {
             $notifications->importFailed('opening_balance', $batch->user_id, 'Import Master Opening Balance', $batch->message ?? 'Import Opening Balance gagal.');
