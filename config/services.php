@@ -53,4 +53,12 @@ return [
         'delay_ms' => env('FONNTE_BLAST_DELAY_MS', 300),
     ],
 
+    // Fitur Al-Qur'an + Murotal — proxy stateless ke API publik equran.id
+    // (teks Arab, terjemahan, audio). Tidak ada data yang disimpan di DB
+    // Iron; setiap request diteruskan live ke API ini.
+    'equran' => [
+        'base_url' => env('EQURAN_BASE_URL', 'https://equran.id/api/v2'),
+        'timeout' => env('EQURAN_TIMEOUT', 15),
+    ],
+
 ];
