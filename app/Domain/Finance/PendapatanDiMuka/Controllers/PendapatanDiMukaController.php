@@ -19,6 +19,7 @@ use PhpOffice\PhpSpreadsheet\Style\Border;
 use PhpOffice\PhpSpreadsheet\Style\Fill;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx as XlsxWriter;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class PendapatanDiMukaController extends Controller
 {
@@ -119,23 +120,85 @@ class PendapatanDiMukaController extends Controller
         return $this->successResponse(null, 'PDM berhasil digunakan untuk melunasi invoice.');
     }
 
-    public function exportExcel(Request $request): BinaryFileResponse|JsonResponse
+    private function exportFilterRules(): array
     {
-        if (!class_exists('ZipArchive')) {
-            return $this->errorResponse('Ekstensi PHP "zip" tidak aktif. Aktifkan extension=zip pada php.ini lalu restart server.', 500);
-        }
-
-        $request->validate([
+        return [
             'tanggal_dari'   => ['nullable', 'date'],
             'tanggal_sampai' => ['nullable', 'date', 'after_or_equal:tanggal_dari'],
             'investor_id'    => ['nullable', 'integer', 'exists:tb_investor,id'],
             'klien_ar_id'    => ['nullable', 'integer', 'exists:tb_klien_ar,id'],
             'status'         => ['nullable', 'in:AKTIF,DIBATALKAN,TERPAKAI'],
-        ]);
+        ];
+    }
+
+    /**
+     * Jumlah baris yang akan dihasilkan export untuk filter yang sama — dipakai
+     * FE untuk peringatan real-time XLSX vs CSV di modal Export.
+     */
+    public function exportRowCount(Request $request): JsonResponse
+    {
+        $request->validate($this->exportFilterRules());
+
+        $filters = $request->only(['tanggal_dari', 'tanggal_sampai', 'investor_id', 'klien_ar_id', 'status']);
+        $this->applyPicArScope($filters, $request);
+
+        return $this->successResponse(['row_count' => $this->service->countAll($filters)]);
+    }
+
+    public function exportExcel(Request $request): BinaryFileResponse|StreamedResponse|JsonResponse
+    {
+        $request->validate($this->exportFilterRules());
 
         $filters = $request->only(['tanggal_dari', 'tanggal_sampai', 'investor_id', 'klien_ar_id', 'status']);
         $this->applyPicArScope($filters, $request);
         $rows    = $this->service->getAll($filters);
+
+        $format = strtolower((string) $request->query('format', 'xlsx'));
+
+        return $format === 'csv'
+            ? $this->streamCsvExport($filters, $rows)
+            : $this->streamXlsxExport($filters, $rows);
+    }
+
+    /**
+     * Export CSV — kolom persis sama seperti sheet XLSX-nya (streamXlsxExport()),
+     * plus baris total di akhir.
+     */
+    private function streamCsvExport(array $filters, \Illuminate\Database\Eloquent\Collection $rows): StreamedResponse
+    {
+        $totalAktif = $rows->where('status', 'AKTIF')->sum('jumlah');
+        $headers    = ['No', 'Tanggal Pencatatan', 'Klien', 'Investor', 'No Ref Sumber', 'Jumlah PDM', 'Status', 'Keterangan'];
+
+        return response()->streamDownload(function () use ($rows, $headers, $totalAktif) {
+            $handle = fopen('php://output', 'w');
+            fprintf($handle, chr(0xEF) . chr(0xBB) . chr(0xBF)); // UTF-8 BOM
+            fputcsv($handle, $headers, ';');
+
+            foreach ($rows as $i => $pdm) {
+                fputcsv($handle, [
+                    $i + 1,
+                    $pdm->tanggal_pencatatan?->format('Y-m-d') ?? '',
+                    $pdm->klienAr?->nama_klien ?? '',
+                    $pdm->investor?->nama_investor ?? '-',
+                    $pdm->sumberPembayaran?->no_referensi ?? '',
+                    (float) $pdm->jumlah,
+                    $pdm->status,
+                    $pdm->keterangan ?? '',
+                ], ';');
+            }
+
+            fputcsv($handle, ['', '', '', '', 'TOTAL PDM AKTIF', $totalAktif, '', ''], ';');
+            fclose($handle);
+        }, 'pendapatan-di-muka-' . now()->format('Ymd') . '.csv', [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+        ]);
+    }
+
+    private function streamXlsxExport(array $filters, \Illuminate\Database\Eloquent\Collection $rows): BinaryFileResponse|JsonResponse
+    {
+        if (!class_exists('ZipArchive')) {
+            return $this->errorResponse('Ekstensi PHP "zip" tidak aktif. Aktifkan extension=zip pada php.ini lalu restart server.', 500);
+        }
 
         $totalAktif = $rows->where('status', 'AKTIF')->sum('jumlah');
 

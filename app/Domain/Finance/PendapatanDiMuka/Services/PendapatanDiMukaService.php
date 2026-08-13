@@ -312,8 +312,24 @@ class PendapatanDiMukaService
 
     public function getAll(array $filters): \Illuminate\Database\Eloquent\Collection
     {
-        return PendapatanDiMuka::query()
+        return $this->filteredQuery($filters)
             ->with(['klienAr', 'investor', 'sumberPembayaran', 'createdBy.karyawan'])
+            ->latest('tanggal_pencatatan')
+            ->get();
+    }
+
+    /**
+     * Jumlah baris yang akan dihasilkan export untuk filter yang sama — dipakai
+     * FE untuk peringatan real-time XLSX vs CSV di modal Export.
+     */
+    public function countAll(array $filters): int
+    {
+        return $this->filteredQuery($filters)->count();
+    }
+
+    private function filteredQuery(array $filters): Builder
+    {
+        return PendapatanDiMuka::query()
             ->when(
                 $filters['tanggal_dari'] ?? null,
                 fn(Builder $q, string $v) => $q->whereDate('tanggal_pencatatan', '>=', $v)
@@ -337,9 +353,7 @@ class PendapatanDiMukaService
             ->when(
                 $filters['pic_ar_karyawan_id'] ?? null,
                 fn(Builder $q, int $v) => $q->whereHas('klienAr', fn($q) => $q->where('karyawan_ar_id', $v))
-            )
-            ->latest('tanggal_pencatatan')
-            ->get();
+            );
     }
 
     private function formatRow(PendapatanDiMuka $pdm): array

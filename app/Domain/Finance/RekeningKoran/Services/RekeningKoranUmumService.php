@@ -53,6 +53,15 @@ class RekeningKoranUmumService
             ->all();
     }
 
+    /**
+     * Jumlah baris yang akan dihasilkan export untuk filter yang sama — dipakai
+     * FE untuk peringatan real-time XLSX vs CSV di modal Export.
+     */
+    public function countAllRows(array $filters = []): int
+    {
+        return $this->buildQuery($filters)->count();
+    }
+
     public function getSummary(array $filters = []): array
     {
         $base = fn() => $this->buildQuery($filters);

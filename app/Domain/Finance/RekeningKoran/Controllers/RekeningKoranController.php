@@ -10,6 +10,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx as XlsxWriter;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class RekeningKoranController extends Controller
 {
@@ -33,22 +34,44 @@ class RekeningKoranController extends Controller
         return $this->successResponse($report);
     }
 
+    private const EXPORT_FILTER_KEYS = ['pic_ar_id', 'periode_awal', 'periode_akhir', 'bank_type', 'dk', 'status_posting_1', 'status_posting_2'];
+
     /**
-     * Export resmi Rekening Koran. Memakai workbook service yang sama dengan
-     * Export Data supaya kolom & format sheet-nya identik, baik diminta dari
-     * halaman laporan ini maupun dari pusat Export Data.
+     * Jumlah baris yang akan dihasilkan export untuk filter yang sama — dipakai
+     * FE untuk peringatan real-time XLSX vs CSV di modal Export.
      */
-    public function exportExcel(Request $request): BinaryFileResponse|JsonResponse
+    public function exportRowCount(Request $request): JsonResponse
     {
+        $this->validateFilters($request);
+
+        $rowCount = $this->service->countAllRows($request->only(self::EXPORT_FILTER_KEYS));
+
+        return $this->successResponse(['row_count' => $rowCount]);
+    }
+
+    /**
+     * Export resmi Rekening Koran. XLSX memakai workbook service yang sama dengan
+     * Export Data supaya kolom & format sheet-nya identik, baik diminta dari
+     * halaman laporan ini maupun dari pusat Export Data. CSV di-stream langsung
+     * dari data source yang sama untuk dataset besar.
+     */
+    public function exportExcel(Request $request): BinaryFileResponse|StreamedResponse|JsonResponse
+    {
+        $this->validateFilters($request);
+
+        $format = strtolower((string) $request->query('format', 'xlsx'));
+
+        if ($format === 'csv') {
+            return $this->streamCsvExport($request->only(self::EXPORT_FILTER_KEYS));
+        }
+
         if (!class_exists('ZipArchive')) {
             return $this->errorResponse('Ekstensi PHP "zip" tidak aktif. Aktifkan extension=zip pada php.ini lalu restart server.', 500);
         }
 
-        $this->validateFilters($request);
-
         $spreadsheet = $this->exportService->build(
             ['rekening_koran'],
-            $request->only(['pic_ar_id', 'periode_awal', 'periode_akhir', 'bank_type', 'dk', 'status_posting_1', 'status_posting_2']),
+            $request->only(self::EXPORT_FILTER_KEYS),
             $request->user(),
         );
 
@@ -60,6 +83,49 @@ class RekeningKoranController extends Controller
                 'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             ])
             ->deleteFileAfterSend(true);
+    }
+
+    /**
+     * Export CSV — kolom persis sama seperti sheet Rekening Koran di
+     * ExportDataWorkbookService::rekeningKoranSection(), supaya CSV & XLSX tidak
+     * pernah berbeda isi.
+     */
+    private function streamCsvExport(array $filters): StreamedResponse
+    {
+        $rows = $this->service->getAllRows($filters);
+
+        $headers = ['No', 'TRXID', 'Tanggal', 'Waktu', 'Bank', 'D/K', 'Mutasi', 'Saldo', 'Deskripsi', 'Status Posting 1', 'No Dokumen AR', 'Selisih', 'Status Posting 2', 'PIC AR', 'Posted By', 'Posted At'];
+
+        return response()->streamDownload(function () use ($rows, $headers) {
+            $handle = fopen('php://output', 'w');
+            fprintf($handle, chr(0xEF) . chr(0xBB) . chr(0xBF)); // UTF-8 BOM
+            fputcsv($handle, $headers, ';');
+
+            foreach ($rows as $i => $row) {
+                fputcsv($handle, [
+                    $i + 1,
+                    $row['no_referensi'] ?? '',
+                    $row['tanggal'] ?? '',
+                    $row['waktu_transaksi'] ?? '',
+                    $row['bank_type'] ?? '',
+                    $row['dk'] ?? '',
+                    $row['mutasi'] ?? 0,
+                    $row['saldo'] ?? 0,
+                    $row['keterangan'] ?? '',
+                    $row['status_posting_1'] ?? '',
+                    $row['no_dokumen_ar'] ?? '',
+                    $row['selisih'] ?? 0,
+                    $row['status_posting_2'] ?? '',
+                    $row['pic_ar'] ?? '',
+                    $row['posted_by'] ?? '',
+                    $row['posted_at'] ?? '',
+                ], ';');
+            }
+
+            fclose($handle);
+        }, 'rekening-koran-' . now()->format('Ymd-His') . '.csv', [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+        ]);
     }
 
     public function picArList(): JsonResponse

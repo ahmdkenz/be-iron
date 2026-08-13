@@ -114,6 +114,7 @@ Route::get('/mutasi-piutang/export-count', [MutasiPiutangController::class, 'exp
 // export laporan lain, bukan di sini.
 Route::get('/rekening-koran',                          [RekeningKoranController::class, 'index'])->middleware('role:ADMIN|MANAGER|SUPERVISOR');
 Route::get('/rekening-koran/pic-ar-list',              [RekeningKoranController::class, 'picArList'])->middleware('role:ADMIN|MANAGER|SUPERVISOR');
+Route::get('/rekening-koran/export-count',             [RekeningKoranController::class, 'exportRowCount'])->middleware('role:ADMIN|MANAGER|SUPERVISOR');
 
 // ─── Jatuh Tempo ──────────────────────────────────────────────────
 Route::get('/jatuh-tempo', [JatuhTempoController::class, 'index']);
@@ -167,6 +168,7 @@ Route::prefix('rekonsiliasi-bank')->middleware('role:ADMIN|MANAGER|SUPERVISOR|AR
 // dobel di sini.
 Route::middleware('role:ADMIN|MANAGER|SUPERVISOR|AR')->group(function () {
     Route::get('/pendapatan-di-muka',                           [PendapatanDiMukaController::class, 'index']);
+    Route::get('/pendapatan-di-muka/export-count',              [PendapatanDiMukaController::class, 'exportRowCount']);
     Route::post('/pendapatan-di-muka/detail/{detail}/catat',    [PendapatanDiMukaController::class, 'store']);
     Route::delete('/pendapatan-di-muka/{pdm}/batal',            [PendapatanDiMukaController::class, 'cancel']);
     Route::post('/pendapatan-di-muka/{pdm}/gunakan',            [PendapatanDiMukaController::class, 'gunakan']);
