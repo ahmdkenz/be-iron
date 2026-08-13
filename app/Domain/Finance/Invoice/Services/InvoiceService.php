@@ -783,11 +783,13 @@ class InvoiceService
             "Invoice tidak dapat diubah dari status {$invoice->status} ke {$status}"
         );
 
-        $invoice->update(['status' => $status, 'updated_by' => auth()->id()]);
+        return DB::transaction(function () use ($invoice, $status) {
+            $invoice->update(['status' => $status, 'updated_by' => auth()->id()]);
 
-        $this->cascadeCarryoverToNext($invoice->fresh());
+            $this->cascadeCarryoverToNext($invoice->fresh());
 
-        return $invoice->fresh();
+            return $invoice->fresh();
+        });
     }
 
     public function recalculate(Invoice $invoice, ?Collection $preloadedCascadeCandidates = null): void
