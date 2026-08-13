@@ -18,9 +18,50 @@ class AuthController extends Controller
 {
     use ApiResponse;
 
-    private const MAX_ATTEMPTS      = 5;
-    private const LOCKOUT_MINUTES   = 15;
-    private const REFRESH_TOKEN_TTL = 60 * 24 * 30; // 30 hari dalam menit
+    private const MAX_ATTEMPTS            = 5;
+    private const LOCKOUT_MINUTES         = 15;
+    private const REFRESH_TOKEN_TTL       = 60 * 24 * 30; // 30 hari dalam menit — dipakai saat remember=true
+    private const REFRESH_TOKEN_TTL_SHORT = 60; // 1 jam dalam menit — backstop server-side saat remember=false
+
+    // Refresh token dibungkus payload bertanda-tangan (bukan kolom DB baru) supaya expiry
+    // & pilihan "remember" bisa ditegakkan di server tanpa migration. Signature pakai APP_KEY
+    // sehingga payload (exp, rem) tidak bisa dipalsukan dari sisi client.
+    private function buildRefreshToken(bool $remember): string
+    {
+        $ttlMinutes = $remember ? self::REFRESH_TOKEN_TTL : self::REFRESH_TOKEN_TTL_SHORT;
+
+        $payload = base64_encode(json_encode([
+            'r'   => Str::random(40),
+            'exp' => now()->addMinutes($ttlMinutes)->timestamp,
+            'rem' => $remember,
+        ]));
+
+        $signature = hash_hmac('sha256', $payload, config('app.key'));
+
+        return $payload . '.' . $signature;
+    }
+
+    private function parseRefreshToken(?string $token): ?array
+    {
+        if (!$token || !str_contains($token, '.')) {
+            return null;
+        }
+
+        [$payload, $signature] = explode('.', $token, 2);
+        $expectedSignature = hash_hmac('sha256', $payload, config('app.key'));
+
+        if (!hash_equals($expectedSignature, $signature)) {
+            return null;
+        }
+
+        $data = json_decode(base64_decode($payload), true);
+
+        if (!is_array($data) || !isset($data['exp'], $data['rem']) || $data['exp'] < now()->timestamp) {
+            return null;
+        }
+
+        return $data;
+    }
 
     public function login(LoginRequest $request): JsonResponse
     {
@@ -65,13 +106,19 @@ class AuthController extends Controller
             'ip'       => $request->ip(),
         ]);
 
+        $remember = $request->boolean('remember');
+
         $accessToken  = $user->createToken('auth-token')->plainTextToken;
-        $refreshToken = Str::random(64);
+        $refreshToken = $this->buildRefreshToken($remember);
         $user->update(['refresh_token' => hash('sha256', $refreshToken)]);
 
+        // remember=false: cookie session-only (hilang saat browser ditutup), dibatasi juga
+        // oleh 'exp' di dalam refresh token (REFRESH_TOKEN_TTL_SHORT) sebagai backstop server.
         $isProduction   = app()->isProduction();
-        $accessCookie   = cookie('auth_token', $accessToken, 1440, '/api', null, $isProduction, true, false, 'Lax');
-        $refreshCookie  = cookie('refresh_token', $refreshToken, self::REFRESH_TOKEN_TTL, '/api/v1/auth', null, $isProduction, true, false, 'Lax');
+        $accessMinutes  = $remember ? 1440 : 0;
+        $refreshMinutes = $remember ? self::REFRESH_TOKEN_TTL : 0;
+        $accessCookie   = cookie('auth_token', $accessToken, $accessMinutes, '/api', null, $isProduction, true, false, 'Lax');
+        $refreshCookie  = cookie('refresh_token', $refreshToken, $refreshMinutes, '/api/v1/auth', null, $isProduction, true, false, 'Lax');
 
         return $this->successResponse([
             'user' => new UserResource($user),
@@ -81,8 +128,9 @@ class AuthController extends Controller
     public function refresh(Request $request): JsonResponse
     {
         $refreshToken = $request->cookie('refresh_token');
+        $payload      = $this->parseRefreshToken($refreshToken);
 
-        if (!$refreshToken) {
+        if (!$payload) {
             return $this->errorResponse('Refresh token tidak ditemukan.', 401);
         }
 
@@ -94,13 +142,17 @@ class AuthController extends Controller
 
         $user->tokens()->delete();
 
+        $remember = (bool) $payload['rem'];
+
         $newAccessToken  = $user->createToken('auth-token')->plainTextToken;
-        $newRefreshToken = Str::random(64);
+        $newRefreshToken = $this->buildRefreshToken($remember);
         $user->update(['refresh_token' => hash('sha256', $newRefreshToken)]);
 
-        $isProduction  = app()->isProduction();
-        $accessCookie  = cookie('auth_token', $newAccessToken, 1440, '/api', null, $isProduction, true, false, 'Lax');
-        $refreshCookie = cookie('refresh_token', $newRefreshToken, self::REFRESH_TOKEN_TTL, '/api/v1/auth', null, $isProduction, true, false, 'Lax');
+        $isProduction   = app()->isProduction();
+        $accessMinutes  = $remember ? 1440 : 0;
+        $refreshMinutes = $remember ? self::REFRESH_TOKEN_TTL : 0;
+        $accessCookie   = cookie('auth_token', $newAccessToken, $accessMinutes, '/api', null, $isProduction, true, false, 'Lax');
+        $refreshCookie  = cookie('refresh_token', $newRefreshToken, $refreshMinutes, '/api/v1/auth', null, $isProduction, true, false, 'Lax');
 
         return $this->successResponse(null, 'Token diperbarui')->withCookie($accessCookie)->withCookie($refreshCookie);
     }
@@ -142,7 +194,7 @@ class AuthController extends Controller
         }
 
         $refreshToken = $request->cookie('refresh_token');
-        $hasValidRefreshToken = $refreshToken
+        $hasValidRefreshToken = $this->parseRefreshToken($refreshToken)
             && User::where('refresh_token', hash('sha256', $refreshToken))->where('status', true)->exists();
 
         if ($hasValidRefreshToken) {
