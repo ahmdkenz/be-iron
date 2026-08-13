@@ -65,50 +65,6 @@ class KlienArResource extends JsonResource
         ];
     }
 
-    private function resolveDisplayLabel(): string
-    {
-        if ($this->tipe_klien === 'RESTO') {
-            $resto      = $this->relationLoaded('resto') ? $this->resto : null;
-            $investor   = $resto && $resto->relationLoaded('investor') ? $resto->investor : null;
-            $primaryName = $investor->nama_investor ?? $this->nama_klien;
-
-            $label = $primaryName;
-            if ($resto?->nama_resto) {
-                $label .= " - {$resto->nama_resto}";
-            }
-            $kode = $resto->kode_resto ?? $this->kode_klien;
-            if ($kode) {
-                $label .= " ({$kode})";
-            }
-
-            return $label;
-        }
-
-        $label   = $this->nama_klien;
-        $perusahaan = $this->relationLoaded('perusahaan') ? $this->perusahaan : null;
-        $entitas = $perusahaan?->nama_singkatan_perusahaan ?: $perusahaan?->nama_perusahaan;
-        if ($entitas) {
-            $label .= " - {$entitas}";
-        }
-        if ($this->kode_klien) {
-            $label .= " ({$this->kode_klien})";
-        }
-
-        return $label;
-    }
-
-    private function resolveDisplaySubtitle(): string
-    {
-        $parts = array_filter([
-            $this->tipe_klien,
-            $this->kode_klien,
-            $this->relationLoaded('karyawanAr') && $this->karyawanAr
-                ? "PIC: {$this->karyawanAr->nama_karyawan}" : null,
-        ]);
-
-        return implode(' • ', $parts);
-    }
-
     private function resolveClientNpwp(): ?string
     {
         if ($this->tipe_klien === 'RESTO') {

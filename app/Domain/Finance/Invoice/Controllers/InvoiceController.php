@@ -733,7 +733,7 @@ class InvoiceController extends Controller
 
     public function changeStatus(Request $request, int $id): JsonResponse
     {
-        $request->validate(['status' => ['required', 'in:TERKIRIM,SEBAGIAN,LUNAS']]);
+        $request->validate(['status' => ['required', 'in:DRAFT,TERKIRIM']]);
         $invoice = $this->service->findOrFail($id);
         $updated = $this->service->changeStatus($invoice, $request->status);
         return $this->successResponse(new InvoiceResource($updated), 'Status invoice berhasil diubah');

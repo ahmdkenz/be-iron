@@ -774,9 +774,7 @@ class InvoiceService
 
         $allowedTransitions = [
             'DRAFT' => ['TERKIRIM'],
-            'TERKIRIM' => ['SEBAGIAN', 'LUNAS'],
-            'SEBAGIAN' => ['LUNAS'],
-            'LUNAS' => [],
+            'TERKIRIM' => ['DRAFT'],
         ];
 
         abort_if(
@@ -785,13 +783,7 @@ class InvoiceService
             "Invoice tidak dapat diubah dari status {$invoice->status} ke {$status}"
         );
 
-        $updateData = ['status' => $status, 'updated_by' => auth()->id()];
-
-        if ($status === 'LUNAS') {
-            $updateData['sisa_tagihan'] = 0;
-        }
-
-        $invoice->update($updateData);
+        $invoice->update(['status' => $status, 'updated_by' => auth()->id()]);
 
         $this->cascadeCarryoverToNext($invoice->fresh());
 

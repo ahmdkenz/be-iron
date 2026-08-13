@@ -36,6 +36,8 @@ class InvoiceResource extends JsonResource
                 'id'           => $this->klienAr->id,
                 'kode_klien'   => $this->klienAr->kode_klien,
                 'nama_klien'   => $this->klienAr->nama_klien,
+                'display_label'=> $this->klienAr->resolveDisplayLabel(),
+                'display_subtitle' => $this->klienAr->resolveDisplaySubtitle(),
                 'tipe_klien'   => $this->klienAr->tipe_klien,
                 'perusahaan_id'=> $this->klienAr->perusahaan_id,
                 'perusahaan'   => $this->klienAr->relationLoaded('perusahaan') && $this->klienAr->perusahaan ? [
