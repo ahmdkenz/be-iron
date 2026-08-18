@@ -32,6 +32,11 @@ class TagihanApRepository
         )->latest('tanggal_tagihan')->get();
     }
 
+    public function getExportIds(array $filters = []): \Illuminate\Support\Collection
+    {
+        return $this->applyFilters(TagihanAp::query(), $filters)->pluck('id');
+    }
+
     public function findById(int $id): ?TagihanAp
     {
         return TagihanAp::with([

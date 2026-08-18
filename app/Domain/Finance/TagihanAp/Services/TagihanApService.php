@@ -55,6 +55,11 @@ class TagihanApService
         return $this->repository->getAll($filters, $with);
     }
 
+    public function getExportIds(array $filters = []): \Illuminate\Support\Collection
+    {
+        return $this->repository->getExportIds($filters);
+    }
+
     public function getSummary(array $filters = []): array
     {
         return $this->repository->getSummary($filters);
