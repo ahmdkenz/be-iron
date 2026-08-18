@@ -4,6 +4,7 @@ use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
+use Illuminate\Http\Request;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -74,6 +75,19 @@ return Application::configure(basePath: dirname(__DIR__))
             ->withoutOverlapping();
     })
     ->withMiddleware(function (Middleware $middleware): void {
+        // App hanya reachable lewat reverse proxy (tidak ada jalur langsung ke PHP-FPM
+        // dari internet), jadi at: '*' aman — tidak ada klien luar yang bisa memalsukan
+        // X-Forwarded-For langsung ke app. Dibutuhkan supaya $request->ip()/->secure()
+        // di AuthController (lockout key, cookie secure flag) dan SecurityHeaders (HSTS
+        // gate) membaca data request asli, bukan data reverse proxy.
+        $middleware->trustProxies(
+            at: '*',
+            headers: Request::HEADER_X_FORWARDED_FOR
+                | Request::HEADER_X_FORWARDED_HOST
+                | Request::HEADER_X_FORWARDED_PORT
+                | Request::HEADER_X_FORWARDED_PROTO,
+        );
+
         $middleware->append(\App\Http\Middleware\SecurityHeaders::class);
 
         $middleware->api(prepend: [
@@ -85,7 +99,6 @@ return Application::configure(basePath: dirname(__DIR__))
             'role'               => \Spatie\Permission\Middleware\RoleMiddleware::class,
             'permission'         => \Spatie\Permission\Middleware\PermissionMiddleware::class,
             'role_or_permission' => \Spatie\Permission\Middleware\RoleOrPermissionMiddleware::class,
-            'auth.query_token'   => \App\Http\Middleware\AuthenticateByQueryToken::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

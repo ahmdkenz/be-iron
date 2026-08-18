@@ -41,6 +41,28 @@ class AuthController extends Controller
         return $payload . '.' . $signature;
     }
 
+    // Kunci lockout = username + IP request, bukan username saja — supaya penyerang
+    // yang tahu username korban tidak bisa mengunci korban dari IP manapun (self-DoS/
+    // account-lockout attack). Penyerang yang mendistribusikan percobaan lewat banyak
+    // IP tetap dibatasi MAX_ATTEMPTS per-IP di sini, dan throttle:10,1 di routes/api/
+    // auth.php jadi lapisan pembatas per-IP terpisah untuk itu.
+    private function lockKey(Request $request): string
+    {
+        return 'login_lock:' . $request->username . ':' . $request->ip();
+    }
+
+    // SESSION_SECURE_COOKIE eksplisit (terpisah dari APP_ENV) jadi sumber utama —
+    // supaya salah/lupa setting APP_ENV (mis. APP_ENV=staging di server yang aslinya
+    // HTTPS) tidak diam-diam mematikan flag Secure di cookie auth. Kalau env itu
+    // tidak pernah di-set (null), fallback ke skema request sebenarnya (butuh
+    // trustProxies di bootstrap/app.php supaya akurat di balik reverse proxy).
+    private function secureCookie(Request $request): bool
+    {
+        $configured = config('session.secure');
+
+        return $configured === null ? $request->secure() : (bool) $configured;
+    }
+
     private function parseRefreshToken(?string $token): ?array
     {
         if (!$token || !str_contains($token, '.')) {
@@ -65,7 +87,7 @@ class AuthController extends Controller
 
     public function login(LoginRequest $request): JsonResponse
     {
-        $lockKey  = 'login_lock:' . $request->username;
+        $lockKey  = $this->lockKey($request);
         $attempts = (int) Cache::get($lockKey, 0);
 
         if ($attempts >= self::MAX_ATTEMPTS) {
@@ -114,11 +136,11 @@ class AuthController extends Controller
 
         // remember=false: cookie session-only (hilang saat browser ditutup), dibatasi juga
         // oleh 'exp' di dalam refresh token (REFRESH_TOKEN_TTL_SHORT) sebagai backstop server.
-        $isProduction   = app()->isProduction();
+        $secureCookie   = $this->secureCookie($request);
         $accessMinutes  = $remember ? 1440 : 0;
         $refreshMinutes = $remember ? self::REFRESH_TOKEN_TTL : 0;
-        $accessCookie   = cookie('auth_token', $accessToken, $accessMinutes, '/api', null, $isProduction, true, false, 'Lax');
-        $refreshCookie  = cookie('refresh_token', $refreshToken, $refreshMinutes, '/api/v1/auth', null, $isProduction, true, false, 'Lax');
+        $accessCookie   = cookie('auth_token', $accessToken, $accessMinutes, '/api', null, $secureCookie, true, false, 'Lax');
+        $refreshCookie  = cookie('refresh_token', $refreshToken, $refreshMinutes, '/api/v1/auth', null, $secureCookie, true, false, 'Lax');
 
         return $this->successResponse([
             'user' => new UserResource($user),
@@ -148,11 +170,11 @@ class AuthController extends Controller
         $newRefreshToken = $this->buildRefreshToken($remember);
         $user->update(['refresh_token' => hash('sha256', $newRefreshToken)]);
 
-        $isProduction   = app()->isProduction();
+        $secureCookie   = $this->secureCookie($request);
         $accessMinutes  = $remember ? 1440 : 0;
         $refreshMinutes = $remember ? self::REFRESH_TOKEN_TTL : 0;
-        $accessCookie   = cookie('auth_token', $newAccessToken, $accessMinutes, '/api', null, $isProduction, true, false, 'Lax');
-        $refreshCookie  = cookie('refresh_token', $newRefreshToken, $refreshMinutes, '/api/v1/auth', null, $isProduction, true, false, 'Lax');
+        $accessCookie   = cookie('auth_token', $newAccessToken, $accessMinutes, '/api', null, $secureCookie, true, false, 'Lax');
+        $refreshCookie  = cookie('refresh_token', $newRefreshToken, $refreshMinutes, '/api/v1/auth', null, $secureCookie, true, false, 'Lax');
 
         return $this->successResponse(null, 'Token diperbarui')->withCookie($accessCookie)->withCookie($refreshCookie);
     }
@@ -163,9 +185,9 @@ class AuthController extends Controller
         $user->update(['refresh_token' => null]);
         $user->currentAccessToken()->delete();
 
-        $isProduction  = app()->isProduction();
-        $expiredAccess  = cookie('auth_token', '', -1, '/api', null, $isProduction, true, false, 'Lax');
-        $expiredRefresh = cookie('refresh_token', '', -1, '/api/v1/auth', null, $isProduction, true, false, 'Lax');
+        $secureCookie   = $this->secureCookie($request);
+        $expiredAccess  = cookie('auth_token', '', -1, '/api', null, $secureCookie, true, false, 'Lax');
+        $expiredRefresh = cookie('refresh_token', '', -1, '/api/v1/auth', null, $secureCookie, true, false, 'Lax');
 
         return $this->successResponse(null, 'Logout berhasil')->withCookie($expiredAccess)->withCookie($expiredRefresh);
     }

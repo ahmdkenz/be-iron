@@ -210,7 +210,7 @@ class PembayaranApService
         $periode    = optional($pembayaran->tanggal_pembayaran)->format('Y/m') ?? now()->format('Y/m');
         $refSegment = $this->sanitizePathSegment($pembayaran->no_referensi, "voucher-{$pembayaran->id}");
 
-        $ext      = $file->getClientOriginalExtension();
+        $ext      = $this->sanitizeExtension($file);
         $fileName = "pembayaran-{$pembayaran->id}-" . Str::uuid()->toString() . ($ext ? ".{$ext}" : '');
 
         // Voucher bisa lintas vendor, jadi path tidak lagi dinamai per-vendor
@@ -226,6 +226,26 @@ class PembayaranApService
         $segment = trim($segment, " .-");
 
         return $segment !== '' ? $segment : $fallback;
+    }
+
+    private const ALLOWED_BUKTI_EXTENSIONS = ['pdf', 'jpg', 'jpeg', 'png'];
+
+    // Ekstensi dari nama file yang dikirim client tidak bisa dipercaya untuk membangun
+    // path penyimpanan (bisa "shell.php" walau isi filenya PNG asli — validasi FormRequest
+    // 'mimes:pdf,jpg,jpeg,png' mengecek KONTEN file, bukan nama file). Cocokkan ke allowlist
+    // yang sama dengan aturan mimes: itu; kalau ekstensi klien di luar allowlist, tebak dari
+    // MIME type asli hasil deteksi konten file sebagai fallback.
+    private function sanitizeExtension(UploadedFile $file): string
+    {
+        $clientExt = strtolower((string) $file->getClientOriginalExtension());
+
+        if (in_array($clientExt, self::ALLOWED_BUKTI_EXTENSIONS, true)) {
+            return $clientExt;
+        }
+
+        $guessedExt = strtolower((string) $file->extension());
+
+        return in_array($guessedExt, self::ALLOWED_BUKTI_EXTENSIONS, true) ? $guessedExt : 'bin';
     }
 
     public function delete(PembayaranAp $pembayaran): void
