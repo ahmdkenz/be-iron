@@ -484,6 +484,17 @@ class InvoiceImportServiceTest extends TestCase
     }
 
     /**
+     * B2C fallback: nama_klien boleh dikosongkan di baris Excel selama kode_resto
+     * terisi & valid — sistem percaya kode_resto saja, tidak mengecek kecocokan nama.
+     */
+    public function test_validasi_b2c_meloloskan_nama_klien_kosong_jika_kode_resto_valid(): void
+    {
+        $map = ['KD-001' => ['tipe_klien' => 'RESTO', 'nama_klien' => 'F1022383 (Cinangka Baru)', 'klien_id' => 3]];
+
+        $this->assertNull($this->service->validateRowAgainstMasterData('B2C', '', 'KD-001', $map));
+    }
+
+    /**
      * Regresi FB257/Veteran — kalau MASTER DATA sudah menyatakan outlet itu PT,
      * baris invoice B2C untuk kode_resto tsb wajib gagal, bukan diam-diam ter-resolve
      * ke Client AR RESTO lama (mis. "Ian Rizky Kurniawan").
@@ -554,6 +565,16 @@ class InvoiceImportServiceTest extends TestCase
         [$klien, $error] = $this->resolveKlien('B2C', 'Investor X', 'kd-b', [], ['KD-A' => $outletA, 'KD-B' => $outletB], [], []);
 
         $this->assertSame($outletB, $klien);
+        $this->assertNull($error);
+    }
+
+    public function test_resolve_b2c_nama_klien_kosong_tetap_resolve_via_kode_resto(): void
+    {
+        $outlet = $this->makeKlien(10, 'F1022383 (Cinangka Baru)', 'RESTO');
+
+        [$klien, $error] = $this->resolveKlien('B2C', '', 'KD-A', [], ['KD-A' => $outlet], [], []);
+
+        $this->assertSame($outlet, $klien);
         $this->assertNull($error);
     }
 

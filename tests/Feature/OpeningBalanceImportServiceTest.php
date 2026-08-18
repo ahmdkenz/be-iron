@@ -612,6 +612,26 @@ class OpeningBalanceImportServiceTest extends TestCase
         $this->assertEmpty($obRows, 'Kedua baris contoh (baris pertama & kelanjutannya) harus diabaikan.');
     }
 
+    /**
+     * B2C fallback: nama_klien boleh dikosongkan di baris pertama grup selama
+     * tipe_klien=RESTO — beda dengan PT yang tetap wajib.
+     */
+    public function test_parse_ob_sheet_resto_boleh_kosongkan_nama_klien(): void
+    {
+        $spreadsheet = new Spreadsheet;
+        $this->fillObSheet($spreadsheet, [
+            ['', 'KD-001', '', '', '', '1000000', '', '', 'RESTO', '1'],
+        ]);
+
+        $errors = [];
+        $obRows = $this->invokeRef('parseObSheet', [$spreadsheet, &$errors]);
+
+        $this->assertEmpty($errors);
+        $this->assertCount(1, $obRows);
+        $this->assertSame('RESTO', $obRows['1'][0]['tipe_klien']);
+        $this->assertSame('', $obRows['1'][0]['nama_klien']);
+    }
+
     public function test_parse_ob_sheet_sisa_tagihan_asal_wajib_lebih_dari_nol(): void
     {
         $spreadsheet = new Spreadsheet;
@@ -812,6 +832,29 @@ class OpeningBalanceImportServiceTest extends TestCase
             $this->assertEmpty($obRows);
             $this->assertCount(1, $errors);
             $this->assertStringContainsString('nama_klien', $errors[0]['message']);
+        } finally {
+            @unlink($path);
+        }
+    }
+
+    /**
+     * B2C fallback: nama_klien boleh dikosongkan di baris pertama grup selama
+     * tipe_klien=RESTO — beda dengan PT yang tetap wajib (test di atas).
+     */
+    public function test_parse_csv_resto_boleh_kosongkan_nama_klien(): void
+    {
+        $path = $this->writeTempCsv([
+            self::CSV_HEADER,
+            $this->csvRow(['tipe_baris' => 'OB', 'no_urut' => '1', 'tipe_klien' => 'RESTO', 'kode_resto' => 'KD-001', 'sisa_tagihan_asal' => '1000000']),
+        ]);
+
+        try {
+            [$obRows, , $errors] = $this->invoke('parseCsv', $path);
+
+            $this->assertEmpty($errors);
+            $this->assertCount(1, $obRows);
+            $this->assertSame('RESTO', $obRows['1'][0]['tipe_klien']);
+            $this->assertSame('', $obRows['1'][0]['nama_klien']);
         } finally {
             @unlink($path);
         }

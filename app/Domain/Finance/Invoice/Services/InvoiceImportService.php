@@ -262,23 +262,30 @@ class InvoiceImportService
         $tanggal     = $this->importDate($row[self::COL_TANGGAL_INVOICE] ?? '');
         $kodeResto   = $this->importValue($row[self::COL_KODE_RESTO] ?? '');
 
-        if (!$tipeInvoice || !$namaKlien || !$tanggal) {
-            $errors[] = ['row' => $lineNumber, 'message' => 'tipe_invoice, nama_klien, dan tanggal_invoice wajib diisi.'];
+        if (!$tipeInvoice || !$tanggal) {
+            $errors[] = ['row' => $lineNumber, 'message' => 'tipe_invoice dan tanggal_invoice wajib diisi.'];
             return true;
         }
         if (!in_array($tipeInvoice, ['B2B', 'B2C'], true)) {
             $errors[] = ['row' => $lineNumber, 'message' => "tipe_invoice '{$tipeInvoice}' tidak valid. Harus 'B2B' atau 'B2C'."];
             return true;
         }
+        // nama_klien wajib untuk B2B (resolve via nama) dan B2C tanpa kode_resto (tidak ada
+        // acuan lain). B2C DENGAN kode_resto boleh kosong — resolve murni via kode_resto ke
+        // MASTER DATA (lihat validateRowAgainstMasterData()/resolveKlienForRow()).
+        if (!$namaKlien && !($tipeInvoice === 'B2C' && $kodeResto)) {
+            $errors[] = ['row' => $lineNumber, 'message' => 'nama_klien wajib diisi' . ($tipeInvoice === 'B2C' ? ' (atau isi kode_resto).' : '.')];
+            return true;
+        }
 
-        $masterError = $this->validateRowAgainstMasterData($tipeInvoice, $namaKlien, $kodeResto, $maps['restoMasterMap']);
+        $masterError = $this->validateRowAgainstMasterData($tipeInvoice, $namaKlien ?? '', $kodeResto, $maps['restoMasterMap']);
         if ($masterError) {
             $errors[] = ['row' => $lineNumber, 'message' => $masterError];
             return true;
         }
 
         [$klien, $klienError] = $this->resolveKlienForRow(
-            $tipeInvoice, $namaKlien, $kodeResto,
+            $tipeInvoice, $namaKlien ?? '', $kodeResto,
             $maps['namaMap'], $maps['restoMap'], $maps['restoNameMap'], $maps['restoNameCount'],
         );
         if (!$klien) {
@@ -1429,7 +1436,10 @@ class InvoiceImportService
             return "kode_resto '{$kodeResto}' terdaftar sebagai {$entry['tipe_klien']} di MASTER DATA — tipe_invoice seharusnya '{$expected}', bukan '{$tipeInvoice}'.";
         }
 
-        if (strtolower($namaKlien) !== strtolower($entry['nama_klien'])) {
+        // nama_klien kosong (B2C dikirim tanpa isi manual) -> percaya kode_resto saja,
+        // lewati pengecekan kecocokan nama. Kalau diisi, tetap harus cocok (melindungi
+        // dari typo/salah klien).
+        if ($namaKlien !== '' && strtolower($namaKlien) !== strtolower($entry['nama_klien'])) {
             return "nama_klien '{$namaKlien}' tidak sesuai MASTER DATA untuk kode_resto '{$kodeResto}' (seharusnya '{$entry['nama_klien']}').";
         }
 

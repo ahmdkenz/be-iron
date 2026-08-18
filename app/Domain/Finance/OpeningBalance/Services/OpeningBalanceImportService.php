@@ -665,7 +665,7 @@ class OpeningBalanceImportService
 
                         continue;
                     }
-                    if ($namaKlien === '') {
+                    if ($namaKlien === '' && $tipeKlien !== 'RESTO') {
                         $errors[] = ['sheet' => 'Data Opening Balance', 'row' => $lineNumber, 'message' => 'nama_klien wajib diisi (baris pertama untuk no_urut ini).'];
 
                         continue;
@@ -863,7 +863,7 @@ class OpeningBalanceImportService
 
                     return;
                 }
-                if ($namaKlien === '') {
+                if ($namaKlien === '' && $tipeKlien !== 'RESTO') {
                     $errors[] = ['sheet' => 'Data Opening Balance', 'row' => $lineNumber, 'message' => 'nama_klien wajib diisi (baris pertama untuk no_urut ini).'];
 
                     return;

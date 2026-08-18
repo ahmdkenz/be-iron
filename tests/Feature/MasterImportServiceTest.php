@@ -1027,4 +1027,33 @@ class MasterImportServiceTest extends TestCase
 
         $this->assertStringContainsString('kolom B', $message, 'Huruf kolom harus cocok dengan posisi fisik di file Excel (index 1 = kolom B).');
     }
+
+    // ──────────────────────────────────────────────────────────────
+    //  buildFallbackKlienArName — fallback nama Client AR RESTO/B2C saat
+    //  nama_investor kosong
+    // ──────────────────────────────────────────────────────────────
+
+    public function test_build_fallback_klien_ar_name_uses_kode_dan_nama(): void
+    {
+        $result = $this->invoke('buildFallbackKlienArName', 'F1022383', 'Cinangka Baru');
+
+        $this->assertSame('F1022383 (Cinangka Baru)', $result);
+    }
+
+    public function test_build_fallback_klien_ar_name_kode_resto_kosong_pakai_nama_saja(): void
+    {
+        $result = $this->invoke('buildFallbackKlienArName', null, 'Cinangka Baru');
+
+        $this->assertSame('Cinangka Baru', $result);
+    }
+
+    public function test_build_fallback_klien_ar_name_dipotong_150_char(): void
+    {
+        $namaResto = str_repeat('A', 200);
+
+        $result = $this->invoke('buildFallbackKlienArName', 'KD-001', $namaResto);
+
+        $this->assertSame(150, mb_strlen($result));
+        $this->assertStringStartsWith('KD-001 (', $result);
+    }
 }

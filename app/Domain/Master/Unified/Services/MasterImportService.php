@@ -576,7 +576,12 @@ class MasterImportService
                         } elseif ($investorFailed) {
                             $rowErrors[] = "Dilewati: Investor baris ini gagal tersimpan — nama Client AR tidak dapat ditentukan";
                         } else {
-                            $rowErrors[] = "Resto '{$namaCabang}' tidak memiliki investor — tidak dapat menentukan nama Client AR";
+                            // nama_investor kosong (bukan gagal simpan) — B2C fallback: pakai
+                            // kode_resto (nama_resto) supaya outlet tetap punya Client AR yang
+                            // bisa dicetak, tanpa membuat Investor palsu.
+                            $fallbackKodeResto = $restoForInv?->kode_resto ?: ($kodeResto ?: null);
+                            $fallbackNamaResto = $restoForInv?->nama_resto ?: $namaCabang;
+                            $namaKlien = $this->buildFallbackKlienArName($fallbackKodeResto, $fallbackNamaResto);
                         }
                     }
 
@@ -954,6 +959,19 @@ class MasterImportService
     private function restoDedupKeyByNama(string $namaResto): string
     {
         return strtolower($namaResto);
+    }
+
+    /**
+     * Fallback nama Client AR RESTO/B2C ketika nama_investor kosong di baris MASTER
+     * DATA (bukan gagal simpan — genuinely tidak diisi). Format: "{kode_resto}
+     * ({nama_resto})". Dipotong ke 150 char (batas validasi KlienAr.nama_klien) supaya
+     * nama_resto yang sangat panjang tidak menggagalkan baris.
+     */
+    private function buildFallbackKlienArName(?string $kodeResto, string $namaResto): string
+    {
+        $label = $kodeResto ? "{$kodeResto} ({$namaResto})" : $namaResto;
+
+        return mb_strlen($label) > 150 ? mb_substr($label, 0, 150) : $label;
     }
 
     private function klienDedupKeyByPerusahaan(int $perusahaanId): string
