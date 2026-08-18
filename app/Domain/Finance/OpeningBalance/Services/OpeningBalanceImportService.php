@@ -54,7 +54,9 @@ use Throwable;
  */
 class OpeningBalanceImportService
 {
-    private const MAX_STORED_ERRORS = 200;
+    private const MAX_STORED_FAILED = 200;
+
+    private const MAX_STORED_SKIPPED = 200;
 
     /**
      * Kode error kalkulasi Excel standar → penjelasan bahasa awam. Rumus yang gagal (mis. =A1/0)
@@ -156,14 +158,78 @@ class OpeningBalanceImportService
         // yang sama (itu benar, bukan bug).
         $insertedOb = $skippedOb = 0;
         $insertedDetail = $insertedItem = 0;
+        $skippedRows = [];
 
         // 1 query whereIn untuk semua klien di batch ini, bukan 1 exists() per bucket
-        // (~1.240 query terpisah sebelum fix ini, untuk data dummy OB).
+        // (~1.240 query terpisah sebelum fix ini, untuk data dummy OB). ->get() (bukan
+        // pluck->flip()) supaya ada data OB lama untuk dilaporkan ke user (lihat $skippedRows).
         $existingKlienIds = Invoice::whereIn('klien_ar_id', array_keys($buckets))
             ->where('is_opening_balance', true)
             ->whereDate('tanggal_invoice', $cutoverDate)
-            ->pluck('klien_ar_id')
-            ->flip();
+            ->get(['id', 'no_invoice', 'klien_ar_id', 'tanggal_invoice'])
+            ->keyBy('klien_ar_id');
+
+        // Fase deteksi konflik — HANYA jalan kalau belum ada keputusan user (resolution
+        // masih null) DAN ada bentrok. Berhenti di sini SEBELUM apapun ditulis ke
+        // tb_invoice: status batch tetap 'processing' (bukan enum baru — lihat
+        // OpeningBalanceImportBatch::failStale()), awaiting_confirmation jadi penanda
+        // sub-state-nya. User memilih Ganti/Lewati/Batal lewat endpoint baru di
+        // OpeningBalanceController, yang men-dispatch ulang job ini (file upload tetap
+        // dipertahankan, lihat ProcessOpeningBalanceImportJob::cleanupFile()) — run
+        // berikutnya baca $batch->errors['resolution'] yang sudah terisi dan lanjut ke
+        // fase tulis di bawah, bukan berhenti lagi di sini.
+        $resolution = $batch->errors['resolution'] ?? null;
+
+        if ($resolution === null && $existingKlienIds->isNotEmpty()) {
+            $conflicts = [];
+            foreach ($existingKlienIds as $klienId => $existing) {
+                $bucket = $buckets[$klienId] ?? null;
+                $klien = $bucket['klien'] ?? null;
+                $conflicts[] = [
+                    'klien_ar_id' => $klienId,
+                    'nama_klien' => $klien->nama_klien ?? '-',
+                    'kode_resto' => $klien?->resto?->kode_resto,
+                    'existing_invoice_id' => $existing->id,
+                    'existing_no_invoice' => $existing->no_invoice,
+                    'existing_tanggal_invoice' => optional($existing->tanggal_invoice)->toDateString(),
+                    'source_row' => $bucket['source_row'] ?? null,
+                    'sheet' => $bucket['sheet'] ?? null,
+                ];
+            }
+
+            $batch->update([
+                'errors' => [
+                    'failed' => [],
+                    'skipped' => [],
+                    'conflicts' => $conflicts,
+                    'resolution' => null,
+                    'awaiting_confirmation' => true,
+                ],
+                'message' => sprintf('%d klien bentrok dengan Opening Balance yang sudah ada pada tanggal cutover ini — menunggu konfirmasi.', count($conflicts)),
+            ]);
+
+            return;
+        }
+
+        // Fase "Ganti Data Lama" — all-or-nothing per batch (dikonfirmasi user, bukan
+        // per-klien): coba hapus SEMUA OB lama yang bentrok. Yang gagal dihapus (mis.
+        // sudah ada pembayaran) TETAP ada di $existingKlienIds supaya fase tulis di
+        // bawah men-skip klien itu (bukan malah dipaksa jadi duplikat) — alasan gagalnya
+        // dicatat di $replaceFailureReasons untuk pesan skip yang spesifik.
+        $replaceFailureReasons = [];
+        if ($resolution === 'replace' && $existingKlienIds->isNotEmpty()) {
+            foreach ($existingKlienIds as $klienId => $existing) {
+                try {
+                    $this->invoiceService->deleteOpeningBalance(
+                        $existing,
+                        'Digantikan oleh Import Opening Balance ulang (batch '.$batch->id.').'
+                    );
+                    $existingKlienIds->forget($klienId);
+                } catch (Throwable $e) {
+                    $replaceFailureReasons[$klienId] = $e->getMessage();
+                }
+            }
+        }
 
         // 1 query whereIn untuk kandidat carryover-cascade SEMUA klien di batch ini, bukan 1
         // Invoice::where('klien_ar_id', ...)->get() per klien di dalam cascadeCarryoverToNext()
@@ -185,8 +251,8 @@ class OpeningBalanceImportService
         // (mirror pola InvoiceImportService::applySafeChunk()).
         EndingBalanceSyncBatcher::run(function () use (
             $buckets, $batch, &$rawItems, $barangByKode, $barangByNama, &$errors,
-            $existingKlienIds, $cutoverDate, $carryoverCandidatesByKlien,
-            &$insertedOb, &$skippedOb, &$failedOb, &$insertedDetail, &$insertedItem,
+            $existingKlienIds, $cutoverDate, $carryoverCandidatesByKlien, $replaceFailureReasons,
+            &$insertedOb, &$skippedOb, &$failedOb, &$insertedDetail, &$insertedItem, &$skippedRows,
         ) {
             $bucketIndex = 0;
             foreach ($buckets as $bucket) {
@@ -215,8 +281,25 @@ class OpeningBalanceImportService
                     continue;
                 }
 
-                if (isset($existingKlienIds[$klien->id])) {
+                if ($existing = $existingKlienIds->get($klien->id)) {
                     $skippedOb++;
+                    if (count($skippedRows) < self::MAX_STORED_SKIPPED) {
+                        $replaceFailureReason = $replaceFailureReasons[$klien->id] ?? null;
+                        $message = $replaceFailureReason
+                            ? "Klien '{$klien->nama_klien}': Opening Balance lama ({$existing->no_invoice}) GAGAL diganti — {$replaceFailureReason} Baris ini dilewati, data lama tetap dipakai."
+                            : "Klien '{$klien->nama_klien}' sudah memiliki Opening Balance ({$existing->no_invoice}) pada tanggal cutover ini — baris dilewati.";
+
+                        $skippedRows[] = [
+                            'sheet' => $bucket['sheet'],
+                            'row' => $bucket['source_row'],
+                            'no_urut' => $bucket['rows'][0]['no_urut'] ?? null,
+                            'klien' => $klien->nama_klien,
+                            'kode_resto' => $klien->resto?->kode_resto,
+                            'existing_invoice_id' => $existing->id,
+                            'existing_no_invoice' => $existing->no_invoice,
+                            'message' => $message,
+                        ];
+                    }
 
                     continue;
                 }
@@ -270,8 +353,11 @@ class OpeningBalanceImportService
             }
         }
 
-        if (count($errors) > self::MAX_STORED_ERRORS) {
-            $errors = array_slice($errors, 0, self::MAX_STORED_ERRORS);
+        if (count($errors) > self::MAX_STORED_FAILED) {
+            $errors = array_slice($errors, 0, self::MAX_STORED_FAILED);
+        }
+        if (count($skippedRows) > self::MAX_STORED_SKIPPED) {
+            $skippedRows = array_slice($skippedRows, 0, self::MAX_STORED_SKIPPED);
         }
 
         $batch->update([
@@ -283,7 +369,15 @@ class OpeningBalanceImportService
             'inserted_detail' => $insertedDetail,
             'total_item' => $insertedItem,
             'inserted_item' => $insertedItem,
-            'errors' => $errors,
+            'errors' => [
+                'failed' => $errors,
+                'skipped' => $skippedRows,
+                // conflicts/resolution dipertahankan (bukan direset) sebagai jejak audit —
+                // kosong/null kalau batch ini tidak pernah melewati fase konfirmasi.
+                'conflicts' => $batch->errors['conflicts'] ?? [],
+                'resolution' => $resolution,
+                'awaiting_confirmation' => false,
+            ],
             'status' => 'completed',
             'message' => sprintf(
                 'Opening Balance +%d ⊘%d ✗%d | Rincian Invoice Asal +%d | Item +%d',

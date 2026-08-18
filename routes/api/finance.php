@@ -205,6 +205,7 @@ Route::prefix('opening-balance')->group(function () {
     Route::post('/', [OpeningBalanceController::class, 'store']);
     Route::post('/bulk', [OpeningBalanceController::class, 'storeBulk']);
     Route::put('/{invoice}', [OpeningBalanceController::class, 'update']);
+    Route::delete('/{invoice}', [OpeningBalanceController::class, 'destroy']);
     Route::get('/{invoice}/details', [OpeningBalanceController::class, 'details']);
     Route::patch('/bulk-approve', [OpeningBalanceController::class, 'bulkApprove'])->middleware('role:MANAGER|SUPERVISOR');
     Route::get('/bulk-approve/active', [OpeningBalanceController::class, 'bulkApproveActive'])->middleware('role:MANAGER|SUPERVISOR');

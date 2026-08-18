@@ -657,6 +657,32 @@ class InvoiceService
         });
     }
 
+    /**
+     * Hapus permanen (hard delete) Opening Balance yang salah ter-import/dicatat.
+     * Beda dari delete()/bulkDelete() invoice reguler (khusus DRAFT) — OB hasil import
+     * langsung APPROVED/TERKIRIM (bypassApproval) sehingga tidak pernah bisa DRAFT lagi;
+     * method ini satu-satunya jalur hapus untuk OB, digerbangi guard pembayaran & EB-lock,
+     * bukan status invoice.
+     */
+    public function deleteOpeningBalance(Invoice $invoice, string $alasan): void
+    {
+        $this->ensureOpeningBalance($invoice);
+
+        abort_if(
+            $invoice->pembayarans()->exists(),
+            422,
+            'Opening balance ini sudah memiliki pembayaran/pelunasan tercatat dan tidak dapat dihapus. Batalkan/pindahkan pembayarannya terlebih dahulu.'
+        );
+
+        $this->abortIfPeriodLocked($invoice);
+
+        DB::transaction(function () use ($invoice, $alasan) {
+            $this->createApprovalLog($invoice, 'DELETED', $alasan);
+            $invoice->openingBalanceDetails()->delete(); // item ikut cascade via FK
+            $invoice->forceDelete();
+        });
+    }
+
     public function approveOpeningBalance(Invoice $invoice, ?string $note = null): Invoice
     {
         $this->ensurePendingOpeningBalance($invoice);

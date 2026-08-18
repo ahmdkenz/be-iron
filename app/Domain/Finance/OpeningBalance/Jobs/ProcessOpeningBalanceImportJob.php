@@ -94,7 +94,8 @@ class ProcessOpeningBalanceImportJob implements ShouldQueue
     public function failed(Throwable $e): void
     {
         $batch = OpeningBalanceImportBatch::find($this->batchId);
-        if ($batch && $batch->status !== 'completed') {
+        $awaitingConfirmation = ($batch?->errors['awaiting_confirmation'] ?? false) === true;
+        if ($batch && $batch->status !== 'completed' && ! $awaitingConfirmation) {
             $batch->update([
                 'status' => 'failed',
                 'message' => 'Job import gagal: '.$e->getMessage(),
@@ -121,14 +122,21 @@ class ProcessOpeningBalanceImportJob implements ShouldQueue
             if ($batch->inserted_ob > 0) {
                 $notifications->obArBulkApproved($batch->inserted_ob, $batch->user_id);
             }
+        } elseif (($batch->errors['awaiting_confirmation'] ?? false) === true) {
+            $notifications->obImportNeedsConfirmation($batch->user_id, $batch->message ?? 'Import Opening Balance menunggu konfirmasi.');
         } elseif ($batch->status === 'failed') {
             $notifications->importFailed('opening_balance', $batch->user_id, 'Import Master Opening Balance', $batch->message ?? 'Import Opening Balance gagal.');
         }
     }
 
+    /** Jangan hapus file saat awaiting_confirmation — job akan didispatch ulang setelah user memutuskan (lihat OpeningBalanceImportService::process()) dan file masih dibutuhkan untuk re-parse. */
     private function cleanupFile(?OpeningBalanceImportBatch $batch): void
     {
-        if ($batch && $batch->file_path && Storage::disk('local')->exists($batch->file_path)) {
+        if (! $batch || ($batch->errors['awaiting_confirmation'] ?? false) === true) {
+            return;
+        }
+
+        if ($batch->file_path && Storage::disk('local')->exists($batch->file_path)) {
             Storage::disk('local')->delete($batch->file_path);
         }
     }

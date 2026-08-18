@@ -39,6 +39,9 @@ Route::middleware('role:ADMIN|MANAGER|SUPERVISOR')->group(function () {
     Route::post('/master-data/opening-balance/import', [OpeningBalanceController::class, 'import']);
     Route::get('/master-data/opening-balance/import/active', [OpeningBalanceController::class, 'importActive']);
     Route::get('/master-data/opening-balance/import/{batch}/status', [OpeningBalanceController::class, 'importStatus']);
+    Route::post('/master-data/opening-balance/import/{batch}/confirm-replace', [OpeningBalanceController::class, 'importConfirmReplace']);
+    Route::post('/master-data/opening-balance/import/{batch}/confirm-skip', [OpeningBalanceController::class, 'importConfirmSkip']);
+    Route::post('/master-data/opening-balance/import/{batch}/cancel', [OpeningBalanceController::class, 'importCancel']);
 });
 
 Route::apiResource('perusahaan', PerusahaanController::class);

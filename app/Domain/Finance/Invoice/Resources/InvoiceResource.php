@@ -163,6 +163,7 @@ class InvoiceResource extends JsonResource
             'can_approve'                => $this->canApprove($request->user()),
             'can_reject'                 => $this->canReject($request->user()),
             'can_edit'                   => $this->canEdit($request->user(), $isLocked),
+            'can_delete'                 => $this->canDelete($request->user()),
             'can_submit'                 => $this->canSubmit($request->user()),
             'can_record_payment'         => $this->isApprovedForFinanceFlow(),
             'can_print'                  => $this->isApprovedForFinanceFlow(),
@@ -232,6 +233,17 @@ class InvoiceResource extends JsonResource
     private function canSubmit(?User $user): bool
     {
         return $this->canBeResubmitted()
+            && RoleHelper::canOperateOpeningBalance($user);
+    }
+
+    /**
+     * Hanya OB (bukan invoice reguler) yang belum punya pembayaran tercatat — flag ini
+     * cuma hint UI, pengecekan otoritatif tetap di InvoiceService::deleteOpeningBalance().
+     */
+    private function canDelete(?User $user): bool
+    {
+        return $this->is_opening_balance === true
+            && (float) $this->total_pembayaran <= 0.0
             && RoleHelper::canOperateOpeningBalance($user);
     }
 }

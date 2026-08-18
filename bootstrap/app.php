@@ -68,6 +68,13 @@ return Application::configure(basePath: dirname(__DIR__))
             ->everyFiveMinutes()
             ->withoutOverlapping();
 
+        // Sama alasannya dengan bank-statement di atas — Import Opening Balance AR sekarang
+        // juga punya sub-state "menunggu konfirmasi" (lihat OpeningBalanceImportService::process())
+        // yang di-poll FE, jadi rawan risiko deadlock yang sama kalau failStale() dipanggil inline.
+        $schedule->command('opening-balance:cleanup-stale-imports')
+            ->everyFiveMinutes()
+            ->withoutOverlapping();
+
         // Baris tb_bulk_print_tokens (link publik "Kirim Bulk Investor") tidak
         // ada gunanya lagi setelah signed URL-nya sendiri kedaluwarsa (30 hari).
         $schedule->command('bulk-print-token:cleanup')
