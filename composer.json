@@ -19,6 +19,7 @@
         "spatie/laravel-permission": "*"
     },
     "require-dev": {
+        "andreaselia/laravel-api-to-postman": "^2.3",
         "fakerphp/faker": "^1.23",
         "laravel/pail": "^1.2.5",
         "laravel/pint": "^1.27",

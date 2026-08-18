@@ -3,13 +3,22 @@
         'name' => 'laravel/laravel',
         'pretty_version' => 'dev-main',
         'version' => 'dev-main',
-        'reference' => 'b946680b98c9d48d6f730f90e36c31cded4afc9a',
+        'reference' => '8f2d391c7808249c139e492ccfa0a6b01c7d4b22',
         'type' => 'project',
         'install_path' => __DIR__ . '/../../',
         'aliases' => array(),
         'dev' => true,
     ),
     'versions' => array(
+        'andreaselia/laravel-api-to-postman' => array(
+            'pretty_version' => 'v2.3.0',
+            'version' => '2.3.0.0',
+            'reference' => '5fefe94be1759240eadd0bde356c84a94f17c37d',
+            'type' => 'library',
+            'install_path' => __DIR__ . '/../andreaselia/laravel-api-to-postman',
+            'aliases' => array(),
+            'dev_requirement' => true,
+        ),
         'bacon/bacon-qr-code' => array(
             'pretty_version' => 'v3.1.1',
             'version' => '3.1.1.0',
@@ -499,7 +508,7 @@
         'laravel/laravel' => array(
             'pretty_version' => 'dev-main',
             'version' => 'dev-main',
-            'reference' => 'b946680b98c9d48d6f730f90e36c31cded4afc9a',
+            'reference' => '8f2d391c7808249c139e492ccfa0a6b01c7d4b22',
             'type' => 'project',
             'install_path' => __DIR__ . '/../../',
             'aliases' => array(),
@@ -798,6 +807,15 @@
             'install_path' => __DIR__ . '/../phpoption/phpoption',
             'aliases' => array(),
             'dev_requirement' => false,
+        ),
+        'phpstan/phpdoc-parser' => array(
+            'pretty_version' => '2.3.3',
+            'version' => '2.3.3.0',
+            'reference' => 'fb19eedd2bb67ff8cf7a5502ad329e701d6398a3',
+            'type' => 'library',
+            'install_path' => __DIR__ . '/../phpstan/phpdoc-parser',
+            'aliases' => array(),
+            'dev_requirement' => true,
         ),
         'phpunit/php-code-coverage' => array(
             'pretty_version' => '11.0.12',
