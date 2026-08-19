@@ -1216,9 +1216,12 @@ class MasterImportService
     /**
      * Parse identifier PIC (nama_pic / pic_ar) menjadi [nama, nik]. Format yang didukung:
      *   "Nama", "NIK", "Nama / NIK", "Nama - NIK", "Nama (NIK)".
-     * NIK dikenali sebagai token 6-30 digit angka murni (NIK Indonesia = 16 digit; rentang
-     * dilebarkan sedikit untuk toleransi data lama). Kalau tidak ada token NIK yang cocok,
-     * seluruh identifier dianggap nama saja (perilaku lama tidak berubah).
+     * NIK dikenali sebagai token alfanumerik 4-30 karakter yang mengandung minimal 1 digit
+     * (mis. NIK KTP 16-digit, atau kode karyawan alfanumerik spt "FL0401780"). Syarat "minimal
+     * 1 digit" sengaja dipertahankan supaya nama gabungan yang kebetulan memakai "-"/"/" (mis.
+     * "Budi - Santoso") tidak salah kebaca sebagai NIK — nama praktis tidak pernah mengandung
+     * digit. Kalau tidak ada token NIK yang cocok, seluruh identifier dianggap nama saja
+     * (perilaku lama tidak berubah).
      *
      * @return array{nama: ?string, nik: ?string}
      */
@@ -1229,15 +1232,17 @@ class MasterImportService
             return ['nama' => null, 'nik' => null];
         }
 
-        if (preg_match('/^\d{6,30}$/', $identifier)) {
+        $nikToken = '(?=[A-Za-z0-9]*\d)[A-Za-z0-9]{4,30}';
+
+        if (preg_match("/^{$nikToken}$/", $identifier)) {
             return ['nama' => null, 'nik' => $identifier];
         }
 
-        if (preg_match('/^(.+?)\s*\(\s*(\d{6,30})\s*\)$/', $identifier, $m)) {
+        if (preg_match("/^(.+?)\\s*\\(\\s*({$nikToken})\\s*\\)$/", $identifier, $m)) {
             return ['nama' => trim($m[1]) !== '' ? trim($m[1]) : null, 'nik' => $m[2]];
         }
 
-        if (preg_match('/^(.+?)\s*[\/\-]\s*(\d{6,30})$/', $identifier, $m)) {
+        if (preg_match("/^(.+?)\\s*[\\/\\-]\\s*({$nikToken})$/", $identifier, $m)) {
             return ['nama' => trim($m[1]) !== '' ? trim($m[1]) : null, 'nik' => $m[2]];
         }
 
@@ -1255,7 +1260,7 @@ class MasterImportService
         $parsed = $this->parsePicIdentifier($identifier);
 
         if ($parsed['nik'] !== null) {
-            return $karyawanNikMap[$parsed['nik']] ?? null;
+            return $karyawanNikMap[strtolower($parsed['nik'])] ?? null;
         }
 
         return $karyawanMap[strtolower($parsed['nama'] ?? '')] ?? null;

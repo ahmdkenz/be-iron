@@ -658,6 +658,16 @@ class MasterImportServiceTest extends TestCase
         $this->assertNull($this->invoke('resolveKaryawanIdByNameOrNik', 'Andi Wijaya / 9999999999999999', $karyawanMap, $karyawanNikMap));
     }
 
+    public function test_resolve_karyawan_by_nama_dash_nik_alfanumerik_case_insensitive(): void
+    {
+        // karyawanNikMap dibangun via buildLowerMap() → key selalu lowercase. Identifier dari
+        // Excel bisa uppercase (mis. "FL0401780") — lookup harus tetap match (strtolower fix).
+        $karyawanMap    = ['gusti erwanda' => 3];
+        $karyawanNikMap = ['fl0401780' => 3];
+
+        $this->assertSame(3, $this->invoke('resolveKaryawanIdByNameOrNik', 'Gusti Erwanda - FL0401780', $karyawanMap, $karyawanNikMap));
+    }
+
     // ──────────────────────────────────────────────────────────────
     //  parsePicIdentifier
     // ──────────────────────────────────────────────────────────────
@@ -690,6 +700,37 @@ class MasterImportServiceTest extends TestCase
     public function test_parse_pic_identifier_empty_returns_null_pair(): void
     {
         $this->assertSame(['nama' => null, 'nik' => null], $this->invoke('parsePicIdentifier', ''));
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    //  parsePicIdentifier — NIK/kode karyawan alfanumerik
+    // ──────────────────────────────────────────────────────────────
+
+    public function test_parse_pic_identifier_nik_alfanumerik_only(): void
+    {
+        $this->assertSame(['nama' => null, 'nik' => 'FL0401780'], $this->invoke('parsePicIdentifier', 'FL0401780'));
+    }
+
+    public function test_parse_pic_identifier_nama_dash_nik_alfanumerik(): void
+    {
+        $this->assertSame(['nama' => 'Gusti Erwanda', 'nik' => 'FL0401780'], $this->invoke('parsePicIdentifier', 'Gusti Erwanda - FL0401780'));
+    }
+
+    public function test_parse_pic_identifier_nama_slash_nik_alfanumerik(): void
+    {
+        $this->assertSame(['nama' => 'Gusti Erwanda', 'nik' => 'FL0401780'], $this->invoke('parsePicIdentifier', 'Gusti Erwanda / FL0401780'));
+    }
+
+    public function test_parse_pic_identifier_nama_paren_nik_alfanumerik(): void
+    {
+        $this->assertSame(['nama' => 'Gusti Erwanda', 'nik' => 'FL0401780'], $this->invoke('parsePicIdentifier', 'Gusti Erwanda (FL0401780)'));
+    }
+
+    public function test_parse_pic_identifier_nama_dash_nama_tanpa_digit_tetap_dianggap_nama_utuh(): void
+    {
+        // Token setelah "-" wajib mengandung minimal 1 digit supaya dianggap NIK — nama
+        // gabungan yang kebetulan pakai "-" (mis. dua kata nama) tidak salah kebaca sbg NIK.
+        $this->assertSame(['nama' => 'Budi - Santoso', 'nik' => null], $this->invoke('parsePicIdentifier', 'Budi - Santoso'));
     }
 
     // ──────────────────────────────────────────────────────────────
