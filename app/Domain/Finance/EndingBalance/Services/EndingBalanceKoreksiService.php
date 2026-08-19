@@ -47,6 +47,20 @@ class EndingBalanceKoreksiService
 
         abort_if($eb->isLocked() && $eb->hasActiveKoreksi(), 422, 'Masih ada koreksi yang sedang dalam proses persetujuan.');
 
+        // Guard terpisah, invoice-scoped, TIDAK bergantung status locked EB — mencegah invoice
+        // yang sama diajukan koreksi dobel lewat 2 sumber independen (mis. 2 batch import invoice
+        // berbeda yang mengklasifikasi invoice sama sebelum salah satunya sempat submit, atau
+        // submit manual ganda) selama periode EB masih DRAFT (guard di atas tidak berlaku di situ).
+        if ($hasInvoice) {
+            abort_if(
+                EndingBalanceKoreksi::where('invoice_id', $data['invoice_id'])
+                    ->whereIn('status', ['PENDING_SPV', 'PENDING_MANAGER'])
+                    ->exists(),
+                422,
+                'Invoice ini sudah punya koreksi (Credit Note/Debit Note) yang sedang menunggu persetujuan. Selesaikan/batalkan koreksi tersebut dahulu sebelum mengajukan yang baru.',
+            );
+        }
+
         return DB::transaction(function () use ($eb, $data, $userId, $tipe) {
             $nilaiKoreksi = $this->resolveNilaiKoreksi($data);
             $noDokumen    = in_array($tipe, ['CREDIT_NOTE', 'DEBIT_NOTE'])

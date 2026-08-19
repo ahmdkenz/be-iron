@@ -167,6 +167,47 @@ class MasterImportServiceTest extends TestCase
     }
 
     // ──────────────────────────────────────────────────────────────
+    //  investorDedupKey — kode_cabang/id_cabang harus diprioritaskan di atas nama,
+    //  supaya koreksi typo nama_investor di re-import tetap match ke record lama
+    //  (bukan bikin duplikat). Lihat audit gap #1.
+    // ──────────────────────────────────────────────────────────────
+
+    public function test_investor_dedup_key_ignores_name_when_kode_cabang_present(): void
+    {
+        $keyLama = $this->invoke('investorDedupKey', 'Budi Santoso', 'JKT01', 'INV-001');
+        $keyBaru = $this->invoke('investorDedupKey', 'Budi Santoso Wijaya', 'JKT01', 'INV-001');
+
+        $this->assertSame($keyLama, $keyBaru, 'Koreksi nama_investor tidak boleh mengubah dedup key saat kode_cabang/id_cabang sama.');
+    }
+
+    public function test_investor_dedup_key_is_case_insensitive_for_kode_cabang(): void
+    {
+        $key1 = $this->invoke('investorDedupKey', 'Budi', 'JKT01', 'INV-001');
+        $key2 = $this->invoke('investorDedupKey', 'Budi', 'jkt01', 'inv-001');
+
+        $this->assertSame($key1, $key2);
+    }
+
+    public function test_investor_dedup_key_falls_back_to_name_when_no_kode(): void
+    {
+        $key1 = $this->invoke('investorDedupKey', 'Budi Santoso', null, null);
+        $key2 = $this->invoke('investorDedupKey', 'Budi Santoso', '', '');
+
+        $this->assertSame($key1, $key2, 'kode_cabang/id_cabang null vs string kosong harus dianggap sama-sama kosong.');
+
+        $key3 = $this->invoke('investorDedupKey', 'Budi Santoso Lain', null, null);
+        $this->assertNotSame($key1, $key3, 'Nama beda + sama-sama tanpa kode harus tetap dianggap investor berbeda (fallback lama).');
+    }
+
+    public function test_investor_dedup_key_different_kode_cabang_are_different_keys(): void
+    {
+        $key1 = $this->invoke('investorDedupKey', 'Budi', 'JKT01', 'INV-001');
+        $key2 = $this->invoke('investorDedupKey', 'Budi', 'JKT02', 'INV-001');
+
+        $this->assertNotSame($key1, $key2);
+    }
+
+    // ──────────────────────────────────────────────────────────────
     //  restoHasChanged
     // ──────────────────────────────────────────────────────────────
 

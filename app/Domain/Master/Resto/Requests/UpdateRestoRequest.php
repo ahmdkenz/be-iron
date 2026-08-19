@@ -10,7 +10,10 @@ class UpdateRestoRequest extends FormRequest
 
     public function rules(): array
     {
+        $id = $this->route('resto');
+
         return [
+            'kode_resto'    => ['required', 'string', 'max:100', "unique:tb_resto,kode_resto,{$id}"],
             'nama_resto'    => ['required', 'string', 'max:150'],
             'perusahaan_id' => ['nullable', 'integer', 'exists:tb_perusahaan,id'],
             'brand_id'      => ['nullable', 'integer', 'exists:tb_brand,id'],

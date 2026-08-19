@@ -468,9 +468,38 @@ class MasterImportService
                                         $this->pushDetail($details, 'MASTER DATA', $lineNumber, '[Resto] Data sudah sama persis dengan data tersimpan — tidak ada perubahan, baris dilewati.');
                                     }
                                 } else {
-                                    $resto = $this->restoService->create(RestoDTO::fromRequest($resData), eagerLoad: false);
-                                    $this->writeRestoDedupMaps($resto, $restoByKodeMap, $restoByNamaMap);
-                                    $resIns++;
+                                    // kode_resto tidak ketemu — sebelum insert, cek apakah nama_resto
+                                    // yang exact sama sudah terdaftar dengan kode LAIN (atau tanpa
+                                    // kode). Tapi nama_resto sama BUKAN berarti pasti outlet yang sama —
+                                    // dua cabang beda kota bisa punya nama sama persis (ini justru kasus
+                                    // asli yang diperbaiki commit 32d947ff, jangan direintroduce sebagai
+                                    // false-positive block). Jadi hanya ditolak keras kalau nama DAN kota
+                                    // sama-sama cocok (kuat indikasi outlet yang sama, kode_resto-nya
+                                    // yang salah ketik) — kalau kota beda/tidak diisi, cukup catat sebagai
+                                    // peringatan, tetap dibuat sebagai outlet baru.
+                                    $namaCollision = $restoByNamaMap[$this->restoDedupKeyByNama($namaCabang)] ?? null;
+                                    $kodeInfo = $namaCollision && $namaCollision->kode_resto
+                                        ? "dengan kode_resto berbeda ('{$namaCollision->kode_resto}')"
+                                        : 'tanpa kode_resto';
+                                    $sameKota = $namaCollision
+                                        && $resData['kota'] !== null && $namaCollision->kota !== null
+                                        && strtolower($resData['kota']) === strtolower($namaCollision->kota);
+
+                                    if ($namaCollision && $sameKota) {
+                                        $errors[] = [
+                                            'sheet' => 'MASTER DATA',
+                                            'row' => $lineNumber,
+                                            'message' => "[Resto] nama_resto '{$namaCabang}' di kota yang sama sudah terdaftar {$kodeInfo}. Jika ini koreksi/pelengkapan kode, ubah kode_resto lewat halaman Master Resto > Edit — bukan lewat import — untuk menghindari data terduplikat.",
+                                        ];
+                                        $resFail++;
+                                    } else {
+                                        $resto = $this->restoService->create(RestoDTO::fromRequest($resData), eagerLoad: false);
+                                        $this->writeRestoDedupMaps($resto, $restoByKodeMap, $restoByNamaMap);
+                                        $resIns++;
+                                        if ($namaCollision) {
+                                            $this->pushDetail($details, 'MASTER DATA', $lineNumber, "[Resto] Perhatian: nama_resto '{$namaCabang}' sudah dipakai outlet lain {$kodeInfo} (kota berbeda/tidak diisi) — dibuat sebagai outlet baru, cek manual kalau seharusnya ini outlet yang sama.");
+                                        }
+                                    }
                                 }
                             } catch (\Throwable $e) {
                                 $errors[] = ['sheet' => 'MASTER DATA', 'row' => $lineNumber, 'message' => '[Resto] Gagal menyimpan: ' . $e->getMessage()];
@@ -708,7 +737,9 @@ class MasterImportService
 
         $actingUserId = $batch->user_id;
         // Pre-scan sekali di awal — lihat komentar preloadMasterDataDedupMaps() untuk rasional.
-        $barangMap = $this->preloadBarangMap($sheet, $detected, $col);
+        $barangMaps    = $this->preloadBarangMap($sheet, $detected, $col);
+        $barangMap     = $barangMaps['by_kode'];
+        $barangByNamaMap = $barangMaps['by_nama'];
 
         $brgIns = $brgUpd = $brgSkip = $brgFail = 0;
         $processed  = 0;
@@ -721,7 +752,7 @@ class MasterImportService
             $this->chunkMasterRows($sheet, $detected['dataStart'], $detected['highestColumn'], self::PARSE_CHUNK,
                 function (array $row) use (
                     &$errors, &$details, &$inChunk, &$processed, &$lineNumber,
-                    &$brgIns, &$brgUpd, &$brgSkip, &$brgFail, &$barangMap,
+                    &$brgIns, &$brgUpd, &$brgSkip, &$brgFail, &$barangMap, &$barangByNamaMap,
                     $col, $batch, $actingUserId,
                 ) {
                 if ($inChunk >= self::CHUNK) {
@@ -799,13 +830,31 @@ class MasterImportService
                             $this->pushDetail($details, 'MASTER BARANG', $lineNumber, 'Data sudah sama persis dengan data tersimpan — tidak ada perubahan, baris dilewati.');
                         }
                     } else {
-                        $barangMap[$rawKode] = Barang::create([
+                        // kode_barang tidak ketemu — sebelum insert, cek apakah nama_barang yang
+                        // exact sama sudah terdaftar dengan kode LAIN. Kalau ya, ini kemungkinan
+                        // koreksi typo kode_barang, bukan barang baru — tolak & arahkan ke edit
+                        // manual (import sengaja tidak pernah menulis ulang kode_barang, lihat
+                        // barangDiff()/update di atas), supaya tidak jadi duplikat diam-diam.
+                        $namaCollision = $barangByNamaMap[$this->normalizeStrictName($data['nama_barang'])] ?? null;
+                        if ($namaCollision) {
+                            $errors[] = [
+                                'sheet' => 'MASTER BARANG',
+                                'row' => $lineNumber,
+                                'message' => "nama_barang '{$data['nama_barang']}' sudah terdaftar dengan kode_barang berbeda ('{$namaCollision->kode_barang}'). Jika ini koreksi kode yang salah ketik, ubah kode_barang lewat halaman Master Barang > Edit — bukan lewat import — untuk menghindari data terduplikat.",
+                            ];
+                            $brgFail++;
+                            return;
+                        }
+
+                        $barang = Barang::create([
                             'kode_barang' => $rawKode,
                             'nama_barang' => $data['nama_barang'],
                             'spesifikasi' => $data['spesifikasi'],
                             'keterangan'  => $data['keterangan'],
                             'status'      => $data['status'] ?? true,
                         ]);
+                        $barangMap[$rawKode] = $barang;
+                        $barangByNamaMap[$this->normalizeStrictName($barang->nama_barang)] = $barang;
                         $brgIns++;
                     }
                 } catch (\Throwable $e) {
@@ -946,9 +995,21 @@ class MasterImportService
     //  utama, supaya tidak ada drift logic.
     // ──────────────────────────────────────────────────────────────
 
+    /**
+     * kode_cabang/id_cabang diprioritaskan sebagai identitas Investor yang stabil — nama hanya
+     * dipakai untuk mencocokkan baris lama yang belum punya kode cabang sama sekali. Ini supaya
+     * koreksi typo nama_investor di re-import ter-update ke record lama, bukan bikin duplikat.
+     */
     private function investorDedupKey(string $namaInvestor, ?string $kodeCabang, ?string $idCabang): string
     {
-        return strtolower($namaInvestor) . '|' . strtolower((string) $kodeCabang) . '|' . strtolower((string) $idCabang);
+        $kodeCabang = trim((string) $kodeCabang);
+        $idCabang   = trim((string) $idCabang);
+
+        if ($kodeCabang !== '' || $idCabang !== '') {
+            return 'cabang:' . strtolower($kodeCabang) . '|' . strtolower($idCabang);
+        }
+
+        return 'nama:' . strtolower($namaInvestor);
     }
 
     private function restoDedupKeyByKode(string $kodeResto): string
@@ -1043,6 +1104,8 @@ class MasterImportService
         );
 
         $namaInvestorList     = [];
+        $kodeCabangList       = [];
+        $idCabangList         = [];
         $kodeRestoList        = [];
         $namaRestoFallbackList = [];
         $ptPerusahaanIdSet    = [];
@@ -1063,6 +1126,14 @@ class MasterImportService
 
             if ($namaInvestor !== '') {
                 $namaInvestorList[strtolower($namaInvestor)] = $namaInvestor;
+
+                // kode_cabang/id_cabang dipreload terpisah dari nama supaya Investor yang
+                // sudah punya kode bisa ditemukan meski nama_investor di baris ini berbeda
+                // dari yang tersimpan (lihat investorDedupKey()).
+                $kodeCabang = $this->importValue($col($row, 'kode_cabang')) ?? '';
+                $idCabang   = $this->importValue($col($row, 'id_cabang')) ?? '';
+                if ($kodeCabang !== '') $kodeCabangList[strtolower($kodeCabang)] = $kodeCabang;
+                if ($idCabang !== '') $idCabangList[strtolower($idCabang)] = $idCabang;
             }
 
             $parsedRows[] = [
@@ -1074,9 +1145,10 @@ class MasterImportService
             if ($namaCabang !== '') {
                 if ($kodeResto !== '') {
                     $kodeRestoList[strtolower($kodeResto)] = $kodeResto;
-                } else {
-                    $namaRestoFallbackList[strtolower($namaCabang)] = $namaCabang;
                 }
+                // Selalu dikumpulkan (bukan cuma saat kode_resto kosong) — dipakai juga untuk
+                // deteksi "kode baru tapi nama sama" di cabang insert (lihat pemakaian di bawah).
+                $namaRestoFallbackList[strtolower($namaCabang)] = $namaCabang;
 
                 if ($tipeKlien === 'PT' && $namaEntitas !== '') {
                     $pid = $perusahaanMap[strtolower($namaEntitas)] ?? null;
@@ -1086,8 +1158,12 @@ class MasterImportService
         }
 
         $investorMap = [];
-        if (! empty($namaInvestorList)) {
-            Investor::whereIn('nama_investor', array_values($namaInvestorList))
+        if (! empty($namaInvestorList) || ! empty($kodeCabangList) || ! empty($idCabangList)) {
+            Investor::where(function ($q) use ($namaInvestorList, $kodeCabangList, $idCabangList) {
+                    if (! empty($namaInvestorList)) $q->orWhereIn('nama_investor', array_values($namaInvestorList));
+                    if (! empty($kodeCabangList)) $q->orWhereIn('kode_cabang', array_values($kodeCabangList));
+                    if (! empty($idCabangList)) $q->orWhereIn('id_cabang', array_values($idCabangList));
+                })
                 ->orderBy('created_at')
                 ->get()
                 ->each(function (Investor $inv) use (&$investorMap) {
@@ -1165,12 +1241,17 @@ class MasterImportService
      * Pre-scan sheet MASTER BARANG (pola sama seperti preloadMasterDataDedupMaps()) supaya
      * lookup "kode_barang sudah ada atau belum" tidak query per baris.
      *
-     * @return array<string, Barang> kode_barang (uppercase) => Barang
+     * @return array{by_kode: array<string, Barang>, by_nama: array<string, Barang>}
+     *   by_kode: kode_barang (uppercase) => Barang — jalur matching utama (update-vs-insert).
+     *   by_nama: nama_barang ternormalisasi => Barang — HANYA untuk deteksi "kode baru tapi nama
+     *   sama" (kemungkinan kode_barang salah ketik dikoreksi), bukan jalur matching baru.
      */
     private function preloadBarangMap(\PhpOffice\PhpSpreadsheet\Worksheet\Worksheet $sheet, array $detected, callable $col): array
     {
+        $empty = ['by_kode' => [], 'by_nama' => []];
+
         if ($detected['highestRow'] < $detected['dataStart']) {
-            return [];
+            return $empty;
         }
 
         $rawRows = $sheet->rangeToArray(
@@ -1179,6 +1260,7 @@ class MasterImportService
         );
 
         $kodeSet = [];
+        $namaSet = [];
         foreach ($rawRows as $rawRow) {
             $row = array_map(fn ($c) => $this->xlsxRawValueToString($c), $rawRow);
 
@@ -1188,19 +1270,34 @@ class MasterImportService
 
             $kode = strtoupper(trim((string) $col($row, 'kode_barang')));
             if ($kode !== '') $kodeSet[$kode] = true;
+
+            $nama = $this->normalizeStrictName((string) $col($row, 'nama_barang'));
+            if ($nama !== '') $namaSet[$nama] = true;
         }
 
-        if (empty($kodeSet)) {
-            return [];
+        if (empty($kodeSet) && empty($namaSet)) {
+            return $empty;
         }
 
-        $map = [];
-        Barang::whereIn('kode_barang', array_keys($kodeSet))->get()
-            ->each(function (Barang $b) use (&$map) {
-                $map[strtoupper((string) $b->kode_barang)] = $b;
+        $byKode = [];
+        $byNama = [];
+        Barang::where(function ($q) use ($kodeSet, $namaSet) {
+                if (! empty($kodeSet)) $q->orWhereIn('kode_barang', array_keys($kodeSet));
+                if (! empty($namaSet)) $q->orWhereIn(DB::raw('UPPER(TRIM(nama_barang))'), array_keys($namaSet));
+            })
+            ->get()
+            ->each(function (Barang $b) use (&$byKode, &$byNama) {
+                $byKode[strtoupper((string) $b->kode_barang)] = $b;
+                $byNama[$this->normalizeStrictName((string) $b->nama_barang)] = $b;
             });
 
-        return $map;
+        return ['by_kode' => $byKode, 'by_nama' => $byNama];
+    }
+
+    /** Normalisasi ketat (trim+uppercase, TANPA fuzzy matching) untuk deteksi tabrakan nama exact. */
+    private function normalizeStrictName(string $value): string
+    {
+        return strtoupper(trim($value));
     }
 
     /**

@@ -54,6 +54,7 @@ class RestoService
     public function update(Resto $resto, RestoDTO $dto, bool $eagerLoad = true): Resto
     {
         $resto = $this->repository->update($resto, [
+            'kode_resto'      => $dto->kode_resto,
             'nama_resto'      => $dto->nama_resto,
             'perusahaan_id'   => $dto->perusahaan_id,
             'brand_id'        => $dto->brand_id,
