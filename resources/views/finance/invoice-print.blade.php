@@ -493,7 +493,7 @@
   @php
     $isOb = $invoice->is_opening_balance;
     $totalBerjalan = isset($totalSisaPeriode) ? (float)$totalSisaPeriode : 0;
-    $obGrandTotal  = $isOb ? ($obSubtotal + $totalBerjalan) : 0;
+    $obGrandTotal  = $isOb ? $obSubtotal : 0;
     $obSisaBayar   = $isOb ? max(0, $obGrandTotal - (float)$invoice->total_pembayaran - (float)$invoice->total_penyesuaian) : 0;
     $terbilangAmt  = $isOb ? $obGrandTotal : (float)$invoice->subtotal;
   @endphp
