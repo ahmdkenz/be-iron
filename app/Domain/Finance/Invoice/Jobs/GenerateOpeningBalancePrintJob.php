@@ -55,7 +55,7 @@ class GenerateOpeningBalancePrintJob implements ShouldQueue
                 'regularInvoicesSignatureData' => $regularInvoicesSignatureData,
             ];
 
-            $pdfBinary = $printCache->withBoostedMemoryLimit(
+            $pdfBinary = $printCache->withBoostedRenderLimits(
                 fn () => Pdf::loadView('finance.invoice-print', $viewData)
                     ->setPaper('a4', 'portrait')
                     ->setOptions([

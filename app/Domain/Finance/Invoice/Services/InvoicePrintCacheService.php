@@ -28,25 +28,38 @@ class InvoicePrintCacheService
      * Periode Sebelumnya") pernah menghabiskan default memory_limit PHP (512M) dan
      * membuat DomPDF fatal error saat menyusun tabel — dipakai di sekitar setiap
      * pemanggilan Pdf::loadView(...)->output() untuk cetak OB (lihat
-     * withBoostedMemoryLimit()).
+     * withBoostedRenderLimits()).
      */
     private const RENDER_MEMORY_LIMIT = '2048M';
+
+    /**
+     * OB super besar juga bisa melewati max_execution_time default PHP (30 detik)
+     * di production sebelum sempat selesai render — beda dari memory_limit, ini
+     * tetap berlaku walau job sudah punya $timeout=900 di level Laravel/worker,
+     * karena itu batas proses worker, bukan batas engine PHP itu sendiri. Diset di
+     * bawah 900 supaya job-level timeout tetap jadi batas akhir yang mengontrol.
+     */
+    private const RENDER_TIME_LIMIT_SECONDS = 850;
 
     public function __construct(private readonly InvoiceService $invoiceService) {}
 
     /**
-     * Naikkan memory_limit PHP sementara khusus untuk render PDF OB yang berat,
-     * lalu kembalikan ke nilai semula setelahnya — supaya tidak "bocor" ke
-     * pekerjaan lain yang berjalan di proses/worker yang sama.
+     * Naikkan memory_limit & max_execution_time PHP sementara khusus untuk render
+     * PDF OB yang berat, lalu kembalikan ke nilai semula setelahnya — supaya tidak
+     * "bocor" ke pekerjaan lain yang berjalan di proses/worker yang sama.
      */
-    public function withBoostedMemoryLimit(callable $callback): mixed
+    public function withBoostedRenderLimits(callable $callback): mixed
     {
         $originalMemoryLimit = ini_get('memory_limit');
+        $originalTimeLimit   = (int) ini_get('max_execution_time');
+
         ini_set('memory_limit', self::RENDER_MEMORY_LIMIT);
+        set_time_limit(self::RENDER_TIME_LIMIT_SECONDS);
 
         try {
             return $callback();
         } finally {
+            set_time_limit($originalTimeLimit);
             $this->restoreMemoryLimitSafely($originalMemoryLimit);
         }
     }

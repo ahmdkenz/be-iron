@@ -1218,7 +1218,7 @@ class InvoiceController extends Controller
             'regularInvoicesSignatureData' => $regularInvoicesSignatureData,
         ];
 
-        $pdfBinary = $this->printCache->withBoostedMemoryLimit(
+        $pdfBinary = $this->printCache->withBoostedRenderLimits(
             fn () => Pdf::loadView('finance.invoice-print', $viewData)
                 ->setPaper('a4', 'portrait')
                 ->setOptions([
