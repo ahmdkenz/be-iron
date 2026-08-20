@@ -61,7 +61,8 @@ class VendorApController extends Controller
     {
         $this->authorizeOperate();
 
-        $vendor  = $this->service->findOrFail($id);
+        $vendor = $this->service->findOrFail($id);
+        $this->authorizePicApVendor($vendor->karyawan_ap_id);
         $updated = $this->service->update($vendor, VendorApDTO::fromRequest($request->validated()));
         return $this->successResponse(new VendorApResource($updated), 'Vendor berhasil diperbarui');
     }
@@ -71,6 +72,7 @@ class VendorApController extends Controller
         $this->authorizeOperate();
 
         $vendor = $this->service->findOrFail($id);
+        $this->authorizePicApVendor($vendor->karyawan_ap_id);
         $this->service->delete($vendor);
         return $this->successResponse(null, 'Vendor berhasil dihapus');
     }

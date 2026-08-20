@@ -17,16 +17,11 @@ Route::middleware('role:ADMIN|MANAGER|SUPERVISOR')->group(function () {
     Route::apiResource('karyawan', KaryawanController::class);
 });
 
-Route::delete('/perusahaan/bulk', [PerusahaanController::class, 'bulkDestroy']);
-
 Route::get('/investor/export', [InvestorController::class, 'export']);
-Route::delete('/investor/bulk', [InvestorController::class, 'bulkDestroy']);
 
 Route::get('/resto/export', [RestoController::class, 'export']);
-Route::delete('/resto/bulk', [RestoController::class, 'bulkDestroy']);
 
 Route::get('/barang/external-catalog', [BarangController::class, 'externalCatalog']);
-Route::delete('/barang/bulk', [BarangController::class, 'bulkDestroy']);
 
 Route::middleware('role:ADMIN|MANAGER|SUPERVISOR')->group(function () {
     Route::get('/master-data/import-template', [UnifiedMasterController::class, 'importTemplate']);
@@ -42,14 +37,22 @@ Route::middleware('role:ADMIN|MANAGER|SUPERVISOR')->group(function () {
     Route::post('/master-data/opening-balance/import/{batch}/confirm-replace', [OpeningBalanceController::class, 'importConfirmReplace']);
     Route::post('/master-data/opening-balance/import/{batch}/confirm-skip', [OpeningBalanceController::class, 'importConfirmSkip']);
     Route::post('/master-data/opening-balance/import/{batch}/cancel', [OpeningBalanceController::class, 'importCancel']);
-});
 
-Route::apiResource('perusahaan', PerusahaanController::class);
-Route::apiResource('investor', InvestorController::class);
-Route::apiResource('resto', RestoController::class);
-
-Route::middleware('role:ADMIN|MANAGER|SUPERVISOR')->group(function () {
+    // Mutasi master data (Perusahaan/Investor/Resto/Barang) — sebelumnya tanpa
+    // role: middleware sama sekali (proteksi hanya di router Vue), siapapun yang
+    // login bisa create/update/delete. Baca (index/show/export) tetap terbuka.
+    Route::delete('/perusahaan/bulk', [PerusahaanController::class, 'bulkDestroy']);
+    Route::delete('/investor/bulk', [InvestorController::class, 'bulkDestroy']);
+    Route::delete('/resto/bulk', [RestoController::class, 'bulkDestroy']);
+    Route::delete('/barang/bulk', [BarangController::class, 'bulkDestroy']);
+    Route::apiResource('perusahaan', PerusahaanController::class)->only(['store', 'update', 'destroy']);
+    Route::apiResource('investor', InvestorController::class)->only(['store', 'update', 'destroy']);
+    Route::apiResource('resto', RestoController::class)->only(['store', 'update', 'destroy']);
+    Route::apiResource('barang', BarangController::class)->only(['store', 'update', 'destroy']);
     Route::apiResource('brand', BrandController::class);
 });
 
-Route::apiResource('barang', BarangController::class);
+Route::apiResource('perusahaan', PerusahaanController::class)->only(['index', 'show']);
+Route::apiResource('investor', InvestorController::class)->only(['index', 'show']);
+Route::apiResource('resto', RestoController::class)->only(['index', 'show']);
+Route::apiResource('barang', BarangController::class)->only(['index', 'show']);

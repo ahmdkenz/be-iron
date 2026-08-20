@@ -235,6 +235,7 @@ class TagihanApController extends Controller
         $this->authorizeView();
 
         $tagihan = $this->service->findOrFail($id);
+        $this->authorizeTagihanAccess($tagihan);
         return $this->successResponse(new TagihanApResource($tagihan));
     }
 
@@ -243,6 +244,7 @@ class TagihanApController extends Controller
         $this->authorizeView();
 
         $tagihan = $this->service->findForPrintOrFail($id);
+        $this->authorizeTagihanAccess($tagihan);
         $viewData = $this->buildPrintViewData($tagihan);
 
         $filename = 'Tagihan-AP-' . str_replace(['/', '\\', ' '], '-', $tagihan->no_tagihan) . '.pdf';
@@ -359,6 +361,7 @@ class TagihanApController extends Controller
         $this->authorizeOperate();
 
         $tagihan = $this->service->findOrFail($id);
+        $this->authorizeTagihanAccess($tagihan);
         $updated = $this->service->update($tagihan, TagihanApDTO::fromRequest($request->validated()));
         return $this->successResponse(new TagihanApResource($updated), 'Tagihan berhasil diperbarui');
     }
@@ -368,6 +371,7 @@ class TagihanApController extends Controller
         $this->authorizeView();
 
         $tagihan = TagihanAp::findOrFail($id);
+        $this->authorizeTagihanAccess($tagihan);
         $logs    = $tagihan->approvalLogs()->with('actor')->get();
 
         return $this->successResponse($logs->map(fn($log) => [
@@ -385,6 +389,7 @@ class TagihanApController extends Controller
         $this->authorizeView();
 
         $tagihan = TagihanAp::findOrFail($id);
+        $this->authorizeTagihanAccess($tagihan);
         $rows    = $tagihan->pembayaranApItems()->with('pembayaranAp.createdBy')->get();
 
         return $this->successResponse($rows->map(fn($item) => [
@@ -406,6 +411,7 @@ class TagihanApController extends Controller
         $this->authorizeOperate();
 
         $tagihan = $this->service->findOrFail($id);
+        $this->authorizeTagihanAccess($tagihan);
         $this->service->delete($tagihan);
         return $this->successResponse(null, 'Tagihan berhasil dihapus');
     }
@@ -435,6 +441,26 @@ class TagihanApController extends Controller
     private function authorizeOperate(): void
     {
         abort_if(!RoleHelper::canOperateTagihanAp(auth()->user()), 403, 'Tidak memiliki akses untuk mengelola tagihan');
+    }
+
+    /**
+     * Scoping akses tagihan per-vendor untuk AP staff (mirror
+     * VendorApController::authorizePicApVendor()) — authorizeView()/authorizeOperate()
+     * hanya mengecek role, bukan kepemilikan vendor, sehingga tanpa ini satu staff AP
+     * bisa lihat/ubah/hapus tagihan milik vendor yang ditugaskan ke staff AP lain.
+     */
+    private function authorizeTagihanAccess(TagihanAp $tagihan): void
+    {
+        $user = auth()->user();
+        if (!RoleHelper::isApStaff($user)) {
+            return;
+        }
+
+        abort_if(
+            (int) $user->karyawan_id !== (int) $tagihan->vendorAp?->karyawan_ap_id,
+            403,
+            'Anda hanya dapat mengakses tagihan vendor yang ditugaskan kepada Anda'
+        );
     }
 
 }

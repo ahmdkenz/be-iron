@@ -30,12 +30,18 @@ Route::prefix('klien-ar')->group(function () {
     Route::get('/all', [KlienArController::class, 'all']);
     Route::get('/preview-kode', [KlienArController::class, 'previewKode']);
     Route::get('/export', [KlienArController::class, 'export']);
-    Route::delete('/bulk', [KlienArController::class, 'bulkDestroy']);
-    Route::post('/', [KlienArController::class, 'store']);
     Route::get('/{klien_ar}', [KlienArController::class, 'show']);
-    Route::put('/{klien_ar}', [KlienArController::class, 'update']);
-    Route::patch('/{klien_ar}/wa', [KlienArController::class, 'updateNoWa']);
-    Route::delete('/{klien_ar}', [KlienArController::class, 'destroy']);
+
+    // Mutasi data klien AR — sebelumnya tanpa role: middleware sama sekali
+    // (proteksi hanya di router Vue), siapapun yang login bisa create/update/
+    // delete master data klien. Digating menyusul pola grup pembayaran/PDM di bawah.
+    Route::middleware('role:ADMIN|MANAGER|SUPERVISOR|AR')->group(function () {
+        Route::delete('/bulk', [KlienArController::class, 'bulkDestroy']);
+        Route::post('/', [KlienArController::class, 'store']);
+        Route::put('/{klien_ar}', [KlienArController::class, 'update']);
+        Route::patch('/{klien_ar}/wa', [KlienArController::class, 'updateNoWa']);
+        Route::delete('/{klien_ar}', [KlienArController::class, 'destroy']);
+    });
 });
 
 // ─── Invoice ──────────────────────────────────────────────────────
@@ -71,18 +77,26 @@ Route::prefix('invoices')->group(function () {
     Route::post('/bulk-b2c-investor/link', [InvoiceController::class, 'bulkB2CInvestorLink']);
     Route::post('/email-blast', [InvoiceController::class, 'emailBlast'])->middleware('throttle:15,1,email-blast');
     Route::get('/email-blast/{batch}/status', [InvoiceController::class, 'emailBlastStatus']);
-    Route::post('/', [InvoiceController::class, 'store']);
-    Route::delete('/bulk', [InvoiceController::class, 'bulkDestroy']);
+    // Mutasi invoice — sebelumnya tanpa role: middleware sama sekali (proteksi
+    // hanya di router Vue), siapapun yang login bisa create/update/hapus invoice
+    // manapun. Ownership per-klien (PIC AR) sendiri dicek di controller
+    // (authorizeInvoiceAccess).
+    Route::middleware('role:ADMIN|MANAGER|SUPERVISOR|AR')->group(function () {
+        Route::post('/', [InvoiceController::class, 'store']);
+        Route::delete('/bulk', [InvoiceController::class, 'bulkDestroy']);
+    });
     Route::get('/{invoice}/settleable-originals', [InvoiceController::class, 'settleableOriginals']);
     Route::get('/{invoice}/items', [InvoiceController::class, 'items']);
     Route::get('/{invoice}/pembayaran', [InvoiceController::class, 'pembayaran']);
     Route::get('/{invoice}/approval-logs', [InvoiceController::class, 'approvalLogs']);
     Route::get('/{invoice}/koreksi', [InvoiceController::class, 'koreksi']);
     Route::get('/{invoice}', [InvoiceController::class, 'show']);
-    Route::put('/{invoice}', [InvoiceController::class, 'update']);
-    Route::delete('/{invoice}', [InvoiceController::class, 'destroy']);
-    Route::patch('/{invoice}/status', [InvoiceController::class, 'changeStatus']);
-    Route::patch('/{invoice}/recalculate', [InvoiceController::class, 'recalculate']);
+    Route::middleware('role:ADMIN|MANAGER|SUPERVISOR|AR')->group(function () {
+        Route::put('/{invoice}', [InvoiceController::class, 'update']);
+        Route::delete('/{invoice}', [InvoiceController::class, 'destroy']);
+        Route::patch('/{invoice}/status', [InvoiceController::class, 'changeStatus']);
+        Route::patch('/{invoice}/recalculate', [InvoiceController::class, 'recalculate']);
+    });
 });
 
 // ─── Pembayaran ───────────────────────────────────────────────────

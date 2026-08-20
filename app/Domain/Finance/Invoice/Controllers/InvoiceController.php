@@ -728,6 +728,7 @@ class InvoiceController extends Controller
     public function update(UpdateInvoiceRequest $request, int $id): JsonResponse
     {
         $invoice = $this->service->findOrFail($id);
+        $this->authorizeInvoiceAccess($invoice);
         $updated = $this->service->update($invoice, InvoiceDTO::fromRequest($request->validated()));
         return $this->successResponse(new InvoiceResource($updated), 'Invoice berhasil diperbarui');
     }
@@ -736,12 +737,14 @@ class InvoiceController extends Controller
     {
         $request->validate(['status' => ['required', 'in:DRAFT,TERKIRIM']]);
         $invoice = $this->service->findOrFail($id);
+        $this->authorizeInvoiceAccess($invoice);
         $updated = $this->service->changeStatus($invoice, $request->status);
         return $this->successResponse(new InvoiceResource($updated), 'Status invoice berhasil diubah');
     }
 
     public function recalculate(Invoice $invoice): JsonResponse
     {
+        $this->authorizeInvoiceAccess($invoice);
         $this->service->recalculate($invoice->fresh());
         return $this->successResponse(
             new InvoiceResource($this->service->findOrFail($invoice->id)),
@@ -752,6 +755,7 @@ class InvoiceController extends Controller
     public function destroy(int $id): JsonResponse
     {
         $invoice = $this->service->findOrFail($id);
+        $this->authorizeInvoiceAccess($invoice);
         $this->service->delete($invoice);
         return $this->successResponse(null, 'Invoice berhasil dihapus');
     }
@@ -762,6 +766,10 @@ class InvoiceController extends Controller
             'ids'   => ['required', 'array', 'min:1'],
             'ids.*' => ['integer'],
         ]);
+
+        foreach ($request->ids as $id) {
+            $this->authorizeInvoiceAccess($this->service->findOrFail($id));
+        }
 
         $deleted = $this->service->bulkDelete($request->ids);
 
