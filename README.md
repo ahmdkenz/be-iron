@@ -45,13 +45,13 @@ Boost provides your agent 15+ tools and skills that help agents build Laravel ap
 
 Fitur import (Import Master Data, Import Rekening Koran, dsb.) berjalan sebagai background job (`QUEUE_CONNECTION=database`). Tanpa worker aktif, job hanya akan tertahan di status `queued`/`processing` dan tidak pernah selesai.
 
-Import Rekening Koran (Rekonsiliasi Bank) dijalankan di queue bernama `bank-statement`, dan Import Master Invoice di queue `invoice-import` (keduanya terpisah dari `default`) — worker **wajib** menyertakan `--queue=bank-statement,invoice-import,default`, kalau tidak job import terkait tidak akan pernah diambil.
+Import Rekening Koran (Rekonsiliasi Bank) dijalankan di queue bernama `bank-statement`, Import Master Invoice/Opening Balance & cetak PDF OB di queue `invoice-import`/`invoice-print`, dan kirim email Invoice/OB ke klien AR di queue `invoice-email` (semuanya terpisah dari `default`) — worker **wajib** menyertakan `--queue=bank-statement,invoice-import,invoice-print,invoice-email,default`, kalau tidak job terkait tidak akan pernah diambil.
 
 Selain worker, project ini juga punya **Laravel Scheduler** (`bootstrap/app.php` → `withSchedule()`) untuk task terjadwal lain (mis. sinkron PO/Terima PO SHZ360 tiap 5 menit). Worker queue di atas **juga didaftarkan lewat scheduler yang sama** (`queue:work ... --stop-when-empty` tiap menit) — jadi di produksi cukup **satu** cron job (`schedule:run`) yang menjalankan semuanya, tidak perlu cron job terpisah untuk worker.
 
 **Lokal (development):**
-- Cara termudah: `composer run dev` — sudah menyalakan `queue:listen --queue=bank-statement,invoice-import,default` bersama server & vite (langsung, tanpa lewat scheduler).
-- Atau manual di terminal terpisah: `php artisan queue:work database --queue=bank-statement,invoice-import,default --tries=1 --timeout=1800`
+- Cara termudah: `composer run dev` — sudah menyalakan `queue:listen --queue=bank-statement,invoice-import,invoice-print,invoice-email,default` bersama server & vite (langsung, tanpa lewat scheduler).
+- Atau manual di terminal terpisah: `php artisan queue:work database --queue=bank-statement,invoice-import,invoice-print,invoice-email,default --tries=1 --timeout=1800`
 - Untuk mengecek/testing scheduler lokal: `php artisan schedule:list` (lihat semua task terjadwal) atau `php artisan schedule:work` (jalankan scheduler terus-menerus di lokal).
 
 **Produksi (cPanel / shared hosting):**

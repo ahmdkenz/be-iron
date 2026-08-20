@@ -27,13 +27,17 @@ class UserService
     public function create(UserDTO $dto): User
     {
         $data = [
-            'username'     => $dto->username,
-            'email'        => $dto->email,
-            'password'     => Hash::make($dto->password),
-            'karyawan_id'  => $dto->karyawan_id,
-            'no_hp'        => $dto->no_hp,
-            'status'       => $dto->status,
-            'fonnte_token' => $dto->fonnte_token,
+            'username'        => $dto->username,
+            'email'           => $dto->email,
+            'password'        => Hash::make($dto->password),
+            'karyawan_id'     => $dto->karyawan_id,
+            'no_hp'           => $dto->no_hp,
+            'status'          => $dto->status,
+            'smtp_host'       => $dto->smtp_host,
+            'smtp_port'       => $dto->smtp_port,
+            'smtp_username'   => $dto->smtp_username,
+            'smtp_password'   => $dto->smtp_password,
+            'smtp_encryption' => $dto->smtp_encryption,
         ];
 
         $user = $this->repository->create($data);
@@ -54,8 +58,15 @@ class UserService
             'status'      => $dto->status,
         ], fn($v) => $v !== null);
 
-        $data['email'] = $dto->email;
-        $data['fonnte_token'] = $dto->fonnte_token;
+        $data['email']           = $dto->email;
+        $data['smtp_host']       = $dto->smtp_host;
+        $data['smtp_port']       = $dto->smtp_port;
+        $data['smtp_username']   = $dto->smtp_username;
+        $data['smtp_encryption'] = $dto->smtp_encryption;
+
+        if ($dto->smtp_password) {
+            $data['smtp_password'] = $dto->smtp_password;
+        }
 
         if ($dto->password) {
             $data['password'] = Hash::make($dto->password);

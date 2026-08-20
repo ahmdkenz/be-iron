@@ -21,7 +21,11 @@ class StoreUserRequest extends FormRequest
             'role_id'     => ['required', 'integer', 'exists:tb_role,id'],
             'no_hp'       => ['nullable', 'string', 'max:20'],
             'status'      => ['nullable', 'boolean'],
-            'fonnte_token' => ['nullable', 'string', 'max:255'],
+            'smtp_host'       => ['nullable', 'string', 'max:255'],
+            'smtp_port'       => ['nullable', 'integer', 'min:1', 'max:65535'],
+            'smtp_username'   => ['nullable', 'string', 'max:255'],
+            'smtp_password'   => ['nullable', 'string', 'max:255'],
+            'smtp_encryption' => ['nullable', 'in:tls,ssl'],
         ];
     }
 

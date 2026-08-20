@@ -53,8 +53,10 @@ return Application::configure(basePath: dirname(__DIR__))
             ->withoutOverlapping()
             ->runInBackground();
 
-        // Import master data, import master invoice, import opening balance, cetak PDF.
-        $schedule->command('queue:work database --queue=invoice-import,invoice-print,default --stop-when-empty --tries=1 --timeout=1800')
+        // Import master data, import master invoice, import opening balance, cetak PDF,
+        // kirim email Invoice/OB ke klien AR (invoice-email, SMTP per PIC AR bisa lambat
+        // jadi sengaja tidak digabung ke antrian bank-statement yang sudah padat).
+        $schedule->command('queue:work database --queue=invoice-import,invoice-print,invoice-email,default --stop-when-empty --tries=1 --timeout=1800')
             ->everyMinute()
             ->withoutOverlapping()
             ->runInBackground();

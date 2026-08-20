@@ -24,14 +24,18 @@ class User extends Authenticatable
         'karyawan_id',
         'refresh_token',
         'no_hp',
-        'fonnte_token',
+        'smtp_host',
+        'smtp_port',
+        'smtp_username',
+        'smtp_password',
+        'smtp_encryption',
         'status',
     ];
 
     protected $hidden = [
         'password',
         'refresh_token',
-        'fonnte_token',
+        'smtp_password',
     ];
 
     protected function casts(): array
@@ -42,7 +46,7 @@ class User extends Authenticatable
         ];
     }
 
-    protected function fonnteToken(): Attribute
+    protected function smtpPassword(): Attribute
     {
         return Attribute::make(
             get: function (?string $value) {
@@ -58,6 +62,15 @@ class User extends Authenticatable
             },
             set: fn (?string $value) => $value === null ? null : Crypt::encryptString($value),
         );
+    }
+
+    /**
+     * Kredensial SMTP lengkap milik user ini, atau null kalau belum di-setup
+     * (host kosong dianggap belum di-setup meski field lain terisi sebagian).
+     */
+    public function hasSmtpConfigured(): bool
+    {
+        return filled($this->smtp_host) && filled($this->smtp_username) && filled($this->smtp_password);
     }
 
     public function karyawan()

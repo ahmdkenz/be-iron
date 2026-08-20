@@ -58,6 +58,12 @@ class OpeningBalanceController extends Controller
 
         $list = $this->service->paginate($filters, with: [
             'klienAr' => fn ($q) => $q->withTrashed(),
+            // Perlu dinested eksplisit di sini (bukan cuma 'klienAr' di atas) supaya
+            // KlienAr::resolveContactPhone()/resolveContactEmail() bisa resolve nomor
+            // WA/email investor asli untuk klien RESTO — tanpa ini keduanya diam-diam
+            // fallback ke null/no_wa manual karena relationLoaded('resto') gagal.
+            'klienAr.resto.investor',
+            'klienAr.perusahaan',
             'resto', 'perusahaan', 'karyawan.perusahaan',
             'submittedBy', 'createdBy', 'updatedBy',
         ]);

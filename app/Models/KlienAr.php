@@ -84,6 +84,30 @@ class KlienAr extends Model
         return $this->no_wa ?: null;
     }
 
+    // Alamat email yang dipakai untuk kirim Invoice/OB via email. Beda dari
+    // resolveContactPhone(): tidak ada fallback manual per-klien di sini —
+    // RESTO 1 investor = 1 email untuk semua resto/outletnya (isi di Data
+    // Investor), PT pakai email tb_perusahaan yang sudah ada.
+    public function resolveContactEmail(): ?string
+    {
+        if ($this->tipe_klien === 'RESTO') {
+            $investor = $this->relationLoaded('resto') && $this->resto
+                && $this->resto->relationLoaded('investor')
+                ? $this->resto->investor
+                : null;
+
+            return $investor?->email ?: null;
+        }
+
+        if ($this->tipe_klien === 'PT') {
+            $perusahaan = $this->relationLoaded('perusahaan') ? $this->perusahaan : null;
+
+            return $perusahaan?->email ?: null;
+        }
+
+        return null;
+    }
+
     public function resolveDisplayLabel(): string
     {
         if ($this->tipe_klien === 'RESTO') {

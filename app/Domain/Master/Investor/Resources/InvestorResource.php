@@ -17,6 +17,7 @@ class InvestorResource extends JsonResource
             'no_hp'           => $this->no_hp,
             'pengelola'       => $this->pengelola,
             'no_hp_pengelola' => $this->no_hp_pengelola,
+            'email'           => $this->email,
             'kode_cabang'     => $this->kode_cabang,
             'id_cabang'       => $this->id_cabang,
             'status'          => $this->status,

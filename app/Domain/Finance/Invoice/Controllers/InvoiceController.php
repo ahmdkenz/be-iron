@@ -9,7 +9,8 @@ use App\Domain\Finance\Invoice\Resources\InvoiceItemResource;
 use App\Domain\Finance\Invoice\Resources\InvoiceListResource;
 use App\Domain\Finance\Invoice\Resources\InvoiceResource;
 use App\Domain\Finance\Invoice\Jobs\GenerateOpeningBalancePrintJob;
-use App\Domain\Finance\Invoice\Services\FonnteApiClient;
+use App\Domain\Finance\Invoice\Jobs\SendKlienArEmailBatchJob;
+use App\Domain\Finance\Invoice\Services\EmailBlastCacheService;
 use App\Domain\Finance\Invoice\Services\InvoicePrintCacheService;
 use App\Domain\Finance\Invoice\Services\InvoiceService;
 use App\Http\Controllers\Controller;
@@ -51,8 +52,8 @@ class InvoiceController extends Controller
 
     public function __construct(
         private readonly InvoiceService $service,
-        private readonly FonnteApiClient $fonnte,
         private readonly InvoicePrintCacheService $printCache,
+        private readonly EmailBlastCacheService $emailBlastCache,
     ) {}
 
     public function index(Request $request): JsonResponse
@@ -1346,79 +1347,54 @@ class InvoiceController extends Controller
     }
 
     /**
-     * Blast pesan WA ke banyak penerima sekaligus lewat Fonnte. Pesan sudah
-     * dibangun penuh di FE (template Bahasa Indonesia tetap di client) — di
-     * sini backend cuma jadi proxy server-side supaya token Fonnte tidak
-     * pernah terekspos ke browser, lalu loop 1 call per penerima karena tiap
-     * penerima punya isi pesan berbeda (Fonnte hanya mendukung 1 message yang
-     * sama untuk semua target dalam 1 call).
-     *
-     * Token yang dipakai per penerima BUKAN 1 token perusahaan bersama —
-     * setiap klien punya PIC AR sendiri (klien_ar.karyawan_ar_id), dan tiap
-     * PIC punya device WA (token Fonnte) pribadinya sendiri. Klien yang
-     * PIC-nya belum setup device di-skip (bukan fallback ke token lain).
+     * Kirim Invoice/OB ke email klien AR, satu request per klien lewat SMTP
+     * milik PIC AR yang menangani klien tsb — pengganti WA blast Fonnte lama.
+     * Alamat email & kredensial SMTP di-resolve di server (bukan dari FE)
+     * supaya tidak bisa dipalsukan; FE cuma mengirim klien_ar_id + invoice_ids.
+     * Diproses async (SendKlienArEmailBatchJob) karena SMTP jauh lebih lambat
+     * dari API Fonnte lama — sinkron berisiko timeout untuk banyak penerima.
      */
-    public function shareBlast(Request $request): JsonResponse
+    public function emailBlast(Request $request): JsonResponse
     {
         $data = $request->validate([
-            'recipients'                  => ['required', 'array', 'min:1', 'max:30'],
-            'recipients.*.target'         => ['required', 'string', 'regex:/^\d{8,15}$/'],
-            'recipients.*.message'        => ['required', 'string', 'max:60000'],
-            'recipients.*.label'          => ['nullable', 'string', 'max:255'],
-            'recipients.*.klien_ar_id'    => ['nullable', 'integer'],
-            'recipients.*.invoice_ids'    => ['nullable', 'array'],
-            'recipients.*.invoice_ids.*'  => ['integer'],
+            'recipients'                 => ['required', 'array', 'min:1', 'max:30'],
+            'recipients.*.klien_ar_id'   => ['required', 'integer'],
+            'recipients.*.invoice_ids'   => ['required', 'array', 'min:1'],
+            'recipients.*.invoice_ids.*' => ['integer'],
         ]);
 
-        Log::info('WA blast diminta', [
-            'user_id'    => auth()->id(),
-            'recipients' => array_map(
-                fn ($r) => [
-                    'target' => $r['target'],
-                    'label' => $r['label'] ?? null,
-                    'klien_ar_id' => $r['klien_ar_id'] ?? null,
-                    'invoice_ids' => $r['invoice_ids'] ?? [],
-                ],
-                $data['recipients']
-            ),
-        ]);
-
-        $klienArIds = collect($data['recipients'])->pluck('klien_ar_id')->filter()->unique()->values();
-        $tokenByKlienArId = KlienAr::whereIn('id', $klienArIds)
-            ->with(['karyawanAr:id', 'karyawanAr.user:id,karyawan_id,fonnte_token'])
-            ->get()
-            ->mapWithKeys(fn ($k) => [$k->id => $k->karyawanAr?->user?->fonnte_token])
-            ->all();
-
-        $toSend  = [];
-        $skipped = [];
-        foreach ($data['recipients'] as $r) {
-            $token = $tokenByKlienArId[$r['klien_ar_id'] ?? 0] ?? null;
-
-            if (!$token) {
-                $skipped[] = [
-                    'target'    => $r['target'],
-                    'label'     => $r['label'] ?? $r['target'],
-                    'success'   => false,
-                    'detail'    => 'PIC AR untuk klien ini belum setup device WhatsApp (token Fonnte kosong)',
-                    'fonnte_id' => null,
-                ];
-
-                continue;
-            }
-
-            $toSend[] = [...$r, 'token' => $token];
+        foreach ($data['recipients'] as $recipient) {
+            $this->authorizeKlienArOwnership((int) $recipient['klien_ar_id']);
         }
 
-        $results = array_merge($this->fonnte->blast($toSend), $skipped);
-        $sent    = count(array_filter($results, fn ($r) => $r['success']));
+        if ($this->emailBlastCache->activeBatchId(auth()->id())) {
+            return $this->errorResponse('Masih ada proses kirim email yang berjalan untuk Anda. Tunggu sampai selesai.', 409);
+        }
+
+        $batchId = $this->emailBlastCache->startBatch(auth()->id(), count($data['recipients']));
+
+        SendKlienArEmailBatchJob::dispatch($batchId, $data['recipients'], auth()->id());
 
         return $this->successResponse([
-            'total'   => count($results),
-            'sent'    => $sent,
-            'failed'  => count($results) - $sent,
-            'results' => $results,
-        ], 'Blast selesai');
+            'batch_id' => $batchId,
+            'status'   => 'queued',
+            'total'    => count($data['recipients']),
+        ], 'Permintaan kirim email diterima. Sedang diproses di latar belakang.', 202);
+    }
+
+    public function emailBlastStatus(string $batch): JsonResponse
+    {
+        $progress = $this->emailBlastCache->progress($batch);
+        if (!$progress) {
+            return $this->notFoundResponse('Batch kirim email tidak ditemukan atau sudah kedaluwarsa');
+        }
+
+        $user = auth()->user();
+        if ((int) $progress['user_id'] !== $user->id && !RoleHelper::hasGlobalArAccess($user)) {
+            return $this->unauthorizedResponse();
+        }
+
+        return $this->successResponse($progress);
     }
 
     /**

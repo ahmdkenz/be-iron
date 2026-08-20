@@ -47,6 +47,7 @@ class InvoiceResource extends JsonResource
                 ] : null,
                 'no_npwp'      => $this->klienAr->no_npwp,
                 'no_wa'        => $this->klienAr->resolveContactPhone(),
+                'email'        => $this->klienAr->resolveContactEmail(),
                 'client_npwp'  => $this->resolveKlienNpwp($this->klienAr),
                 'karyawan_ar'  => $this->klienAr->relationLoaded('karyawanAr') ? [
                     'id'           => $this->klienAr->karyawanAr?->id,

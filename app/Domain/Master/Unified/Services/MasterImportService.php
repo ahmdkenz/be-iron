@@ -79,6 +79,7 @@ class MasterImportService
         'no_hp'           => 'No. HP',
         'pengelola'       => 'Pengelola',
         'no_hp_pengelola' => 'No. HP Pengelola',
+        'email'           => 'Email',
         'kode_cabang'     => 'Kode Cabang',
         'id_cabang'       => 'ID Cabang',
         'status'          => 'Status',
@@ -328,6 +329,16 @@ class MasterImportService
                     } else {
                         $investorKey = $this->investorDedupKey($invData['nama_investor'], $invData['kode_cabang'], $invData['id_cabang']);
                         $existing = $investorMap[$investorKey] ?? null;
+
+                        // Di luar $validator di atas dengan sengaja: format email salah TIDAK
+                        // boleh menggagalkan seluruh baris Investor (dan Resto/Client AR yang
+                        // ikut bergantung padanya) — cuma kolom email-nya saja yang diabaikan.
+                        $invData['email'] = $this->resolveInvestorEmail(
+                            $this->importValue($col($row, 'email')),
+                            $existing,
+                            $details,
+                            $lineNumber
+                        );
 
                         try {
                             if ($existing) {
@@ -1653,6 +1664,36 @@ class MasterImportService
         }
     }
 
+    /**
+     * Resolve email Investor untuk 1 baris — "1 investor = 1 email" yang
+     * konsisten di seluruh file (dan tidak pernah tertimpa kosong saat
+     * re-import): baris kosong, format tidak valid, atau berbeda dengan yang
+     * sudah tercatat TIDAK PERNAH menimpa nilai lama — hanya email pertama
+     * yang valid & belum ada konflik yang benar-benar tersimpan. Semua kasus
+     * di luar itu dicatat sebagai info (pushDetail, bukan $errors) supaya
+     * tidak ikut menggagalkan Investor/Resto/Client AR lain di baris yang sama.
+     */
+    private function resolveInvestorEmail(?string $raw, ?Investor $existing, array &$details, int $lineNumber): ?string
+    {
+        $current = $existing?->email;
+
+        if ($raw === null) {
+            return $current;
+        }
+
+        if (!filter_var($raw, FILTER_VALIDATE_EMAIL)) {
+            $this->pushDetail($details, 'MASTER DATA', $lineNumber, "[Investor] Email \"{$raw}\" formatnya tidak valid — dilewati.");
+            return $current;
+        }
+
+        if ($current && strcasecmp($current, $raw) !== 0) {
+            $this->pushDetail($details, 'MASTER DATA', $lineNumber, "[Investor] Email \"{$raw}\" berbeda dengan yang sudah tercatat ({$current}) — nilai lama dipertahankan.");
+            return $current;
+        }
+
+        return $raw;
+    }
+
     /** Format hasil *Diff() jadi pesan siap-tampil: "Label: lama → baru; Label2: lama2 → baru2". */
     private function formatDiffMessage(array $diff, array $fieldLabels): string
     {
@@ -1675,7 +1716,7 @@ class MasterImportService
     private function investorDiff(Investor $existing, array $import): array
     {
         $diff = [];
-        foreach (['nama_investor', 'ktp', 'npwp', 'no_hp', 'pengelola', 'no_hp_pengelola', 'kode_cabang', 'id_cabang'] as $f) {
+        foreach (['nama_investor', 'ktp', 'npwp', 'no_hp', 'pengelola', 'no_hp_pengelola', 'email', 'kode_cabang', 'id_cabang'] as $f) {
             $lama = $this->normalizeStr($existing->{$f});
             $baru = $this->normalizeStr($import[$f]);
             if ($lama !== $baru) {
