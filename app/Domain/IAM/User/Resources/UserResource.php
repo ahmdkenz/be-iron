@@ -18,6 +18,7 @@ class UserResource extends JsonResource
             'smtp_port'        => $this->smtp_port,
             'smtp_username'    => $this->smtp_username,
             'smtp_encryption'  => $this->smtp_encryption,
+            'smtp_from_email'  => $this->smtp_from_email,
             'status'           => $this->status,
             'karyawan_id'      => $this->karyawan_id,
             'karyawan'         => $this->whenLoaded('karyawan', fn() => [

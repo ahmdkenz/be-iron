@@ -38,6 +38,7 @@ class UserService
             'smtp_username'   => $dto->smtp_username,
             'smtp_password'   => $dto->smtp_password,
             'smtp_encryption' => $dto->smtp_encryption,
+            'smtp_from_email' => $dto->smtp_from_email,
         ];
 
         $user = $this->repository->create($data);
@@ -63,6 +64,7 @@ class UserService
         $data['smtp_port']       = $dto->smtp_port;
         $data['smtp_username']   = $dto->smtp_username;
         $data['smtp_encryption'] = $dto->smtp_encryption;
+        $data['smtp_from_email'] = $dto->smtp_from_email;
 
         if ($dto->smtp_password) {
             $data['smtp_password'] = $dto->smtp_password;

@@ -51,4 +51,12 @@ return [
         'timeout' => env('EQURAN_TIMEOUT', 15),
     ],
 
+    // Kirim email Invoice/OB ke klien AR (SendKlienArEmailBatchJob) — jeda antar
+    // pengiriman supaya tidak melewati rate limit per-detik provider SMTP (mis.
+    // Mailtrap sandbox "550 5.7.0 Too many emails per second"). Naikkan lewat
+    // .env kalau provider tertentu masih membatasi lebih ketat dari ini.
+    'email_blast' => [
+        'delay_ms' => env('EMAIL_BLAST_DELAY_MS', 1000),
+    ],
+
 ];

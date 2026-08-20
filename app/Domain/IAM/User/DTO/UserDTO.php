@@ -17,6 +17,7 @@ class UserDTO
         public readonly ?string $smtp_username = null,
         public readonly ?string $smtp_password = null,
         public readonly ?string $smtp_encryption = null,
+        public readonly ?string $smtp_from_email = null,
     ) {}
 
     public static function fromRequest(array $data): self
@@ -34,6 +35,7 @@ class UserDTO
             smtp_username:   $data['smtp_username'] ?? null,
             smtp_password:   $data['smtp_password'] ?? null,
             smtp_encryption: $data['smtp_encryption'] ?? null,
+            smtp_from_email: $data['smtp_from_email'] ?? null,
         );
     }
 }

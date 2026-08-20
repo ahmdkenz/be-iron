@@ -26,6 +26,7 @@ class StoreUserRequest extends FormRequest
             'smtp_username'   => ['nullable', 'string', 'max:255'],
             'smtp_password'   => ['nullable', 'string', 'max:255'],
             'smtp_encryption' => ['nullable', 'in:tls,ssl'],
+            'smtp_from_email' => ['nullable', 'email', 'max:255'],
         ];
     }
 

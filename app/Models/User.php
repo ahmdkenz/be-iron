@@ -29,6 +29,7 @@ class User extends Authenticatable
         'smtp_username',
         'smtp_password',
         'smtp_encryption',
+        'smtp_from_email',
         'status',
     ];
 
@@ -67,10 +68,30 @@ class User extends Authenticatable
     /**
      * Kredensial SMTP lengkap milik user ini, atau null kalau belum di-setup
      * (host kosong dianggap belum di-setup meski field lain terisi sebagian).
+     * Wajib juga punya alamat "From" yang valid (lihat resolveSmtpFromEmail())
+     * — banyak provider SMTP (mis. Mailtrap, SendGrid) pakai username berupa
+     * token/API key, BUKAN alamat email, jadi tidak bisa dipakai sebagai From.
      */
     public function hasSmtpConfigured(): bool
     {
-        return filled($this->smtp_host) && filled($this->smtp_username) && filled($this->smtp_password);
+        return filled($this->smtp_host)
+            && filled($this->smtp_username)
+            && filled($this->smtp_password)
+            && $this->resolveSmtpFromEmail() !== null;
+    }
+
+    /**
+     * Alamat "From" untuk email yang dikirim lewat SMTP user ini. `smtp_username`
+     * HANYA dipakai sebagai fallback kalau kebetulan sudah berbentuk email valid
+     * (kasus umum: Gmail, di mana username = alamat email) — untuk provider lain
+     * (Mailtrap, SendGrid, dsb. yang username-nya token/API key) WAJIB isi
+     * `smtp_from_email` secara eksplisit, kalau tidak dianggap belum siap kirim.
+     */
+    public function resolveSmtpFromEmail(): ?string
+    {
+        $candidate = $this->smtp_from_email ?: $this->smtp_username;
+
+        return filter_var($candidate, FILTER_VALIDATE_EMAIL) ? $candidate : null;
     }
 
     public function karyawan()

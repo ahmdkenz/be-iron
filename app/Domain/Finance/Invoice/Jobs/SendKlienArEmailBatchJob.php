@@ -49,6 +49,8 @@ class SendKlienArEmailBatchJob implements ShouldQueue
 
         $sent    = 0;
         $results = [];
+        $delayMs = (int) config('services.email_blast.delay_ms', 1000);
+        $lastIndex = array_key_last($this->recipients);
 
         try {
             foreach ($this->recipients as $index => $recipient) {
@@ -63,6 +65,13 @@ class SendKlienArEmailBatchJob implements ShouldQueue
                     'sent'      => $sent,
                     'results'   => $results,
                 ]);
+
+                // Jeda antar pengiriman — tanpa ini banyak provider SMTP (mis.
+                // Mailtrap sandbox) menolak dengan "550 5.7.0 Too many emails
+                // per second" karena request beruntun tanpa jeda sama sekali.
+                if ($index !== $lastIndex && $delayMs > 0) {
+                    usleep($delayMs * 1000);
+                }
             }
 
             $cache->update($this->batchId, ['status' => 'completed']);
@@ -142,7 +151,7 @@ class SendKlienArEmailBatchJob implements ShouldQueue
                 ->send(new InvoiceDocumentEmail(
                     klienNama: $klien->resolveDisplayLabel(),
                     documents: $documents,
-                    fromEmail: $picUser->smtp_username,
+                    fromEmail: $picUser->resolveSmtpFromEmail(),
                     fromName: $picUser->name,
                 ));
 
