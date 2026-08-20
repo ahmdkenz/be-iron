@@ -11,6 +11,14 @@ use Spatie\Permission\Models\Role as SpatieRole;
 class Role extends SpatieRole
 {
     use BlameableTrait;
+
+    // role_has_permissions sengaja dihapus (migration 2026_08_03_104519) karena fitur
+    // permission granular Spatie tidak dipakai — override no-op ini mencegah HasPermissions
+    // trait (dari parent SpatieRole) mencoba DELETE ke tabel yang sudah tidak ada saat role dihapus.
+    public static function bootHasPermissions()
+    {
+    }
+
     protected $table = 'tb_role';
 
     protected $fillable = [

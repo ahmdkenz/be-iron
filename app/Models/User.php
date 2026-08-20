@@ -15,6 +15,13 @@ class User extends Authenticatable
 {
     use HasFactory, Notifiable, HasApiTokens, HasRoles, BlameableTrait;
 
+    // model_has_permissions sengaja dihapus (migration 2026_08_03_104519) karena fitur
+    // permission granular Spatie tidak dipakai — override no-op ini mencegah HasRoles'
+    // bawaan HasPermissions trait mencoba DELETE ke tabel yang sudah tidak ada saat user dihapus.
+    public static function bootHasPermissions()
+    {
+    }
+
     protected $table = 'tb_users';
 
     protected $fillable = [
