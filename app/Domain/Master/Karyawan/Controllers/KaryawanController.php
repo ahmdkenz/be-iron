@@ -75,17 +75,18 @@ class KaryawanController extends Controller
         $nik = $request->get('nik', '');
         $excludeUserId = $request->get('exclude_user_id');
 
-        $results = Karyawan::where('nik', 'like', "%{$nik}%")
-            ->where('status', true)
-            ->where(function ($q) use ($excludeUserId) {
-                $q->whereDoesntHave('user');
-                if ($excludeUserId) {
-                    $q->orWhereHas('user', fn($u) => $u->where('id', $excludeUserId));
-                }
-            })
+        $results = Karyawan::where('status', true)
+            ->when($nik !== '', fn($q) => $q->where('nik', 'like', "%{$nik}%"))
+            ->with('user:id,karyawan_id')
             ->select('id', 'nik', 'nama_karyawan')
-            ->limit(10)
-            ->get();
+            ->orderBy('nik')
+            ->get()
+            ->map(fn($k) => [
+                'id'            => $k->id,
+                'nik'           => $k->nik,
+                'nama_karyawan' => $k->nama_karyawan,
+                'is_used'       => $k->user !== null && (int) $k->user->id !== (int) $excludeUserId,
+            ]);
 
         return $this->successResponse($results);
     }
