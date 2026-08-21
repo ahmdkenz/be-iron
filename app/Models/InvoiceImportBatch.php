@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\HasCancelableImport;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -10,7 +11,7 @@ use Illuminate\Support\Facades\Storage;
 
 class InvoiceImportBatch extends Model
 {
-    use HasUuids;
+    use HasUuids, HasCancelableImport;
 
     protected $table = 'tb_invoice_import_batches';
 
@@ -156,5 +157,7 @@ class InvoiceImportBatch extends Model
             'message'     => $message,
             'finished_at' => now(),
         ]);
+
+        $this->clearCancelRequest();
     }
 }

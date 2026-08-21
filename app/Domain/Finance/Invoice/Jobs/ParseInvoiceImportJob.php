@@ -84,6 +84,13 @@ class ParseInvoiceImportJob implements ShouldQueue
             return;
         }
 
+        // parse() sudah menangani pembatalan sendiri (memanggil $batch->cancel(), status
+        // jadi 'failed') kalau flag cancel_requested_at terdeteksi di tengah jalan — jangan
+        // lanjut ke fase klasifikasi kalau itu yang terjadi.
+        if ($batch->fresh()?->status === 'failed') {
+            return;
+        }
+
         ClassifyInvoiceImportJob::dispatch($batch->id);
     }
 

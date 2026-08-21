@@ -245,14 +245,19 @@ class InvoiceImportController extends Controller
     }
 
     /**
-     * Batalkan batch yang menggantung di awaiting_review supaya upload baru
-     * (yang diblokir mutex global di store()) bisa lanjut.
+     * Batalkan import. Dua jalur:
      *
-     * Sengaja HANYA diizinkan untuk awaiting_review: status queued/parsing/
-     * classifying punya job queue yang masih aktif jalan (membatalkan di
-     * tengah proses berisiko race — job bisa menimpa balik status atau
-     * menulis groups dari file yang sudah dihapus), dan processing sudah
-     * mulai menulis invoice sungguhan (tidak boleh diinterupsi).
+     *  - awaiting_review: tidak ada job yang aktif jalan (menunggu keputusan user) →
+     *    batal LANGSUNG (sinkron), staging dihapus, upload baru bisa lanjut segera.
+     *  - queued/parsing/classifying: job MASIH aktif jalan, langsung menghapus staging
+     *    dari sini berisiko race (job bisa menimpa balik status atau menulis groups
+     *    dari file yang sudah dihapus). Jadi cuma menitip flag "batal diminta" —
+     *    ParseInvoiceImportJob/ClassifyInvoiceImportJob & InvoiceImportService yang
+     *    sedang jalan akan mengecek flag ini di boundary chunk (tiap 100 baris/grup)
+     *    dan membersihkan diri sendiri begitu sadar. FE tetap polling status sampai
+     *    batch berhenti di failed/phase=canceled.
+     *  - processing: sudah mulai menulis invoice sungguhan — TIDAK boleh diinterupsi,
+     *    ditolak seperti sebelumnya.
      */
     public function cancel(string $batch): JsonResponse
     {
@@ -264,17 +269,28 @@ class InvoiceImportController extends Controller
         if (!$model) {
             return $this->notFoundResponse('Batch import tidak ditemukan');
         }
-        if ($model->status !== 'awaiting_review') {
-            return $this->errorResponse(
-                "Batch dengan status \"{$model->status}\" tidak bisa dibatalkan lewat sini. " .
-                'Hanya batch yang menunggu keputusan (awaiting_review) yang bisa dibatalkan — tunggu proses lain selesai.',
-                422,
+
+        if ($model->status === 'awaiting_review') {
+            $model->cancel(sprintf('Dibatalkan oleh %s.', auth()->user()?->username ?? 'pengguna'));
+
+            return $this->successResponse($this->statusPayload($model->fresh()), 'Import dibatalkan. Anda bisa mengunggah file baru sekarang.');
+        }
+
+        if (in_array($model->status, ['queued', 'parsing', 'classifying'], true)) {
+            $model->requestCancel(auth()->user()?->username ?? 'pengguna');
+
+            return $this->successResponse(
+                $this->statusPayload($model->fresh()),
+                'Permintaan pembatalan diterima — sedang dihentikan, mohon tunggu sebentar.',
+                202,
             );
         }
 
-        $model->cancel(sprintf('Dibatalkan oleh %s.', auth()->user()?->username ?? 'pengguna'));
-
-        return $this->successResponse($this->statusPayload($model->fresh()), 'Import dibatalkan. Anda bisa mengunggah file baru sekarang.');
+        return $this->errorResponse(
+            "Batch dengan status \"{$model->status}\" tidak bisa dibatalkan lewat sini. " .
+            'Import sudah mulai menyimpan data, tidak bisa dihentikan lagi — tunggu sampai selesai.',
+            422,
+        );
     }
 
     /** Ajukan / abaikan kandidat penyesuaian untuk baris REVIEW_REQUIRED. */
@@ -321,10 +337,16 @@ class InvoiceImportController extends Controller
         };
         $eta = ImportEtaCalculator::compute($etaStart, $etaProcessed, $etaTotal);
 
+        // Dipakai FE menampilkan/menonaktifkan tombol Batalkan — logic SAMA persis dengan
+        // gate di cancel(): awaiting_review (sinkron) & queued/parsing/classifying (optimis)
+        // boleh, processing (sudah mulai menulis invoice sungguhan) tidak boleh.
+        $cancelable = in_array($b->status, ['awaiting_review', 'queued', 'parsing', 'classifying'], true);
+
         return [
             'batch_id'               => $b->id,
             'status'                 => $b->status,
             'phase'                  => $b->phase,
+            'cancelable'             => $cancelable,
             'message'                => $b->message,
             'original_filename'      => $b->original_filename,
             'user_id'                => $b->user_id,

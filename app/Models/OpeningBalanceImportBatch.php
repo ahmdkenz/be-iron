@@ -2,13 +2,14 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\HasCancelableImport;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Storage;
 
 class OpeningBalanceImportBatch extends Model
 {
-    use HasUuids;
+    use HasUuids, HasCancelableImport;
 
     protected $table = 'tb_opening_balance_import_batches';
 
@@ -101,6 +102,9 @@ class OpeningBalanceImportBatch extends Model
         }
 
         $this->update(['status' => 'failed', 'message' => $message]);
+
+        $this->clearCancelRequest();
+        $this->clearCachedPhase();
     }
 
     /**

@@ -16,6 +16,7 @@ use App\Models\Karyawan;
 use App\Models\KlienAr;
 use App\Models\Perusahaan;
 use App\Models\Resto;
+use App\Support\Exceptions\ImportCancelledException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
@@ -127,6 +128,18 @@ class MasterImportService
         private readonly KlienArService  $klienArService,
     ) {}
 
+    /**
+     * Seluruh penulisan entitas (Investor/Resto/Client/Barang, dua sheet) dibungkus SATU
+     * transaksi besar — BUKAN commit tiap 100 baris seperti sebelumnya. Kalau user membatalkan
+     * di tengah jalan, transaksi di-ROLLBACK TOTAL (bukan cuma berhenti menulis baris baru):
+     * 0 baris dari batch ini pernah benar-benar masuk database, apa pun sejauh mana proses
+     * sempat berjalan. Konsekuensinya, progress counter TIDAK bisa lagi ditulis lewat koneksi
+     * default yang sama (perubahan itu baru terlihat oleh request lain setelah commit, di akhir
+     * — FE akan terlihat macet di 0% lalu meloncat ke selesai) — makanya writeProgress() di
+     * bawah sengaja menulis lewat koneksi 'mysql_progress' terpisah (lihat config/database.php)
+     * supaya progress tetap real-time walau transaksi utamanya belum (dan mungkin tidak akan
+     * pernah) commit.
+     */
     public function process(ImportMasterBatch $batch): void
     {
         $disk = Storage::disk('local');
@@ -148,13 +161,32 @@ class MasterImportService
         $details = [];
         $counts  = ['investor_skipped' => 0, 'resto_skipped' => 0];
 
+        DB::beginTransaction();
         try {
-            $counts = $this->processMasterDataSheet($spreadsheet, $batch, $errors, $details);
-            $this->processMasterBarangSheet($spreadsheet, $batch, $errors, $details);
-            $this->noticeInvoiceSheetIgnored($spreadsheet, $errors);
-        } finally {
-            $spreadsheet->disconnectWorksheets();
-            unset($spreadsheet);
+            try {
+                $counts = $this->processMasterDataSheet($spreadsheet, $batch, $errors, $details);
+                $this->processMasterBarangSheet($spreadsheet, $batch, $errors, $details);
+                $this->noticeInvoiceSheetIgnored($spreadsheet, $errors);
+            } finally {
+                $spreadsheet->disconnectWorksheets();
+                unset($spreadsheet);
+            }
+            DB::commit();
+        } catch (ImportCancelledException) {
+            if (DB::transactionLevel() > 0) {
+                DB::rollBack();
+            }
+            $batch->cancel(sprintf(
+                'Dibatalkan oleh %s saat proses berjalan — tidak ada data yang tersimpan.',
+                $batch->cancelRequestedBy() ?? 'pengguna',
+            ));
+
+            return;
+        } catch (\Throwable $e) {
+            if (DB::transactionLevel() > 0) {
+                DB::rollBack();
+            }
+            throw $e;
         }
 
         $batch     = $batch->fresh();
@@ -174,6 +206,25 @@ class MasterImportService
             ],
             'message' => $this->buildSummaryMessage($batch, $counts['investor_skipped'], $counts['resto_skipped']),
         ]);
+    }
+
+    /**
+     * Tulis progress counter batch LEWAT KONEKSI TERPISAH ('mysql_progress'), bukan Eloquent
+     * biasa — lihat komentar besar di process(). Query builder murni (bukan model) karena
+     * kita cuma butuh UPDATE baris yang sudah ada, tidak perlu hydration/casting Eloquent.
+     */
+    private function writeProgress(ImportMasterBatch $batch, array $data): void
+    {
+        DB::connection('mysql_progress')
+            ->table($batch->getTable())
+            ->where($batch->getKeyName(), $batch->getKey())
+            ->update($data + ['updated_at' => now()]);
+
+        // $batch->update() biasanya ikut menyinkronkan atribut in-memory sebagai efek
+        // samping — query builder mysql_progress di atas tidak, jadi disinkronkan manual
+        // supaya pembacaan $batch->master_total/barang_total dkk di request yang sama
+        // (mis. min($processed, $batch->master_total)) tetap benar.
+        $batch->forceFill($data);
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -210,7 +261,12 @@ class MasterImportService
         $col = static fn(array $row, string $name): mixed =>
             $row[$headerIdxMap[$name] ?? -1] ?? '';
 
-        $batch->update(['master_total' => max(0, $detected['highestRow'] - $detected['dataStart'] + 1)]);
+        // writeProgress() (koneksi mysql_progress), BUKAN $batch->update() (koneksi default) —
+        // baris ini jalan di dalam transaksi besar yang dibuka process(); menulis lewat koneksi
+        // default di sini akan mengambil row lock yang ditahan sampai transaksi commit, membuat
+        // SEMUA writeProgress() berikutnya di bawah selalu menunggu lock itu sampai
+        // innodb_lock_wait_timeout (SQLSTATE 1205 "Lock wait timeout exceeded").
+        $this->writeProgress($batch, ['master_total' => max(0, $detected['highestRow'] - $detected['dataStart'] + 1)]);
 
         // Preload referensi
         $actingUserId     = $batch->user_id;
@@ -246,26 +302,29 @@ class MasterImportService
         $lineNumber = $detected['dataStart'] - 1;
         $inChunk    = 0;
 
-        DB::beginTransaction();
-        try {
-            $this->chunkMasterRows($sheet, $detected['dataStart'], $detected['highestColumn'], self::PARSE_CHUNK,
-                function (array $row) use (
-                    &$errors, &$details, &$inChunk, &$processed, &$lineNumber,
-                    &$invIns, &$invUpd, &$invFail, &$invSkip, &$resIns, &$resUpd, &$resFail, &$resSkip,
-                    &$kliIns, &$kliUpd, &$kliFail, &$kliSkip,
-                    &$karyawanMap, &$karyawanNameById,
-                    &$investorMap, &$restoByKodeMap, &$restoByNamaMap, &$klienByPerusahaanMap, &$klienByRestoMap,
-                    $col, $batch, $actingUserId, $brandMap, $karyawanNikMap, $perusahaanMap,
-                ) {
+        // Tidak ada DB::beginTransaction()/commit() di sini lagi — seluruh sheet ini ikut SATU
+        // transaksi besar yang dibuka process() (lihat komentar besar di sana). Boundary chunk
+        // yang sama (self::CHUNK baris) sekarang cuma dipakai untuk titik cek "batal diminas?"
+        // dan progress tick, bukan commit.
+        $this->chunkMasterRows($sheet, $detected['dataStart'], $detected['highestColumn'], self::PARSE_CHUNK,
+            function (array $row) use (
+                &$errors, &$details, &$inChunk, &$processed, &$lineNumber,
+                &$invIns, &$invUpd, &$invFail, &$invSkip, &$resIns, &$resUpd, &$resFail, &$resSkip,
+                &$kliIns, &$kliUpd, &$kliFail, &$kliSkip,
+                &$karyawanMap, &$karyawanNameById,
+                &$investorMap, &$restoByKodeMap, &$restoByNamaMap, &$klienByPerusahaanMap, &$klienByRestoMap,
+                $col, $batch, $actingUserId, $brandMap, $karyawanNikMap, $perusahaanMap,
+            ) {
                 if ($inChunk >= self::CHUNK) {
-                    DB::commit();
-                    $batch->update([
+                    $this->writeProgress($batch, [
                         'master_processed'  => min($processed, $batch->master_total),
                         'investor_inserted' => $invIns,  'investor_updated' => $invUpd,  'investor_failed' => $invFail,
                         'resto_inserted'    => $resIns,  'resto_updated'    => $resUpd,  'resto_failed'    => $resFail,
                         'klien_inserted'    => $kliIns,  'klien_updated'    => $kliUpd,  'klien_failed'    => $kliFail,  'klien_skipped' => $kliSkip,
                     ]);
-                    DB::beginTransaction();
+                    if ($batch->isCancelRequested()) {
+                        throw new ImportCancelledException();
+                    }
                     $inChunk = 0;
                 }
                 $lineNumber++;
@@ -702,13 +761,8 @@ class MasterImportService
                 }
                 }
             );
-            DB::commit();
-        } catch (\Throwable $e) {
-            if (DB::transactionLevel() > 0) DB::rollBack();
-            throw $e;
-        }
 
-        $batch->update([
+        $this->writeProgress($batch, [
             'master_processed'  => $batch->master_total,
             'investor_inserted' => $invIns,  'investor_updated' => $invUpd,  'investor_failed' => $invFail,
             'resto_inserted'    => $resIns,  'resto_updated'    => $resUpd,  'resto_failed'    => $resFail,
@@ -744,13 +798,12 @@ class MasterImportService
         $col = static fn(array $row, string $name): mixed =>
             $row[$headerIdxMap[$name] ?? -1] ?? '';
 
-        $batch->update(['barang_total' => max(0, $detected['highestRow'] - $detected['dataStart'] + 1)]);
+        // Sama seperti master_total di processMasterDataSheet() — lihat komentar di sana.
+        $this->writeProgress($batch, ['barang_total' => max(0, $detected['highestRow'] - $detected['dataStart'] + 1)]);
 
         $actingUserId = $batch->user_id;
         // Pre-scan sekali di awal — lihat komentar preloadMasterDataDedupMaps() untuk rasional.
-        $barangMaps    = $this->preloadBarangMap($sheet, $detected, $col);
-        $barangMap     = $barangMaps['by_kode'];
-        $barangByNamaMap = $barangMaps['by_nama'];
+        $barangMap = $this->preloadBarangMap($sheet, $detected, $col);
 
         $brgIns = $brgUpd = $brgSkip = $brgFail = 0;
         $processed  = 0;
@@ -758,24 +811,25 @@ class MasterImportService
         $lineNumber = $detected['dataStart'] - 1;
         $inChunk    = 0;
 
-        DB::beginTransaction();
-        try {
-            $this->chunkMasterRows($sheet, $detected['dataStart'], $detected['highestColumn'], self::PARSE_CHUNK,
-                function (array $row) use (
-                    &$errors, &$details, &$inChunk, &$processed, &$lineNumber,
-                    &$brgIns, &$brgUpd, &$brgSkip, &$brgFail, &$barangMap, &$barangByNamaMap,
-                    $col, $batch, $actingUserId,
-                ) {
+        // Sama seperti processMasterDataSheet() — tidak ada transaksi lokal lagi, sheet ini
+        // ikut transaksi besar yang dibuka process().
+        $this->chunkMasterRows($sheet, $detected['dataStart'], $detected['highestColumn'], self::PARSE_CHUNK,
+            function (array $row) use (
+                &$errors, &$details, &$inChunk, &$processed, &$lineNumber,
+                &$brgIns, &$brgUpd, &$brgSkip, &$brgFail, &$barangMap,
+                $col, $batch, $actingUserId,
+            ) {
                 if ($inChunk >= self::CHUNK) {
-                    DB::commit();
-                    $batch->update([
+                    $this->writeProgress($batch, [
                         'barang_processed' => min($processed, $batch->barang_total),
                         'barang_inserted'  => $brgIns,
                         'barang_updated'   => $brgUpd,
                         'barang_skipped'   => $brgSkip,
                         'barang_failed'    => $brgFail,
                     ]);
-                    DB::beginTransaction();
+                    if ($batch->isCancelRequested()) {
+                        throw new ImportCancelledException();
+                    }
                     $inChunk = 0;
                 }
                 $lineNumber++;
@@ -841,22 +895,6 @@ class MasterImportService
                             $this->pushDetail($details, 'MASTER BARANG', $lineNumber, 'Data sudah sama persis dengan data tersimpan — tidak ada perubahan, baris dilewati.');
                         }
                     } else {
-                        // kode_barang tidak ketemu — sebelum insert, cek apakah nama_barang yang
-                        // exact sama sudah terdaftar dengan kode LAIN. Kalau ya, ini kemungkinan
-                        // koreksi typo kode_barang, bukan barang baru — tolak & arahkan ke edit
-                        // manual (import sengaja tidak pernah menulis ulang kode_barang, lihat
-                        // barangDiff()/update di atas), supaya tidak jadi duplikat diam-diam.
-                        $namaCollision = $barangByNamaMap[$this->normalizeStrictName($data['nama_barang'])] ?? null;
-                        if ($namaCollision) {
-                            $errors[] = [
-                                'sheet' => 'MASTER BARANG',
-                                'row' => $lineNumber,
-                                'message' => "nama_barang '{$data['nama_barang']}' sudah terdaftar dengan kode_barang berbeda ('{$namaCollision->kode_barang}'). Jika ini koreksi kode yang salah ketik, ubah kode_barang lewat halaman Master Barang > Edit — bukan lewat import — untuk menghindari data terduplikat.",
-                            ];
-                            $brgFail++;
-                            return;
-                        }
-
                         $barang = Barang::create([
                             'kode_barang' => $rawKode,
                             'nama_barang' => $data['nama_barang'],
@@ -865,7 +903,6 @@ class MasterImportService
                             'status'      => $data['status'] ?? true,
                         ]);
                         $barangMap[$rawKode] = $barang;
-                        $barangByNamaMap[$this->normalizeStrictName($barang->nama_barang)] = $barang;
                         $brgIns++;
                     }
                 } catch (\Throwable $e) {
@@ -874,13 +911,8 @@ class MasterImportService
                 }
                 }
             );
-            DB::commit();
-        } catch (\Throwable $e) {
-            if (DB::transactionLevel() > 0) DB::rollBack();
-            throw $e;
-        }
 
-        $batch->update([
+        $this->writeProgress($batch, [
             'barang_processed' => $batch->barang_total,
             'barang_inserted'  => $brgIns,
             'barang_updated'   => $brgUpd,
@@ -1252,17 +1284,14 @@ class MasterImportService
      * Pre-scan sheet MASTER BARANG (pola sama seperti preloadMasterDataDedupMaps()) supaya
      * lookup "kode_barang sudah ada atau belum" tidak query per baris.
      *
-     * @return array{by_kode: array<string, Barang>, by_nama: array<string, Barang>}
-     *   by_kode: kode_barang (uppercase) => Barang — jalur matching utama (update-vs-insert).
-     *   by_nama: nama_barang ternormalisasi => Barang — HANYA untuk deteksi "kode baru tapi nama
-     *   sama" (kemungkinan kode_barang salah ketik dikoreksi), bukan jalur matching baru.
+     * @return array<string, Barang> kode_barang (uppercase) => Barang — jalur matching utama
+     *   (update-vs-insert). kode_barang adalah satu-satunya acuan; nama_barang boleh duplikat
+     *   antar kode berbeda dan tidak ikut menentukan matching.
      */
     private function preloadBarangMap(\PhpOffice\PhpSpreadsheet\Worksheet\Worksheet $sheet, array $detected, callable $col): array
     {
-        $empty = ['by_kode' => [], 'by_nama' => []];
-
         if ($detected['highestRow'] < $detected['dataStart']) {
-            return $empty;
+            return [];
         }
 
         $rawRows = $sheet->rangeToArray(
@@ -1271,7 +1300,6 @@ class MasterImportService
         );
 
         $kodeSet = [];
-        $namaSet = [];
         foreach ($rawRows as $rawRow) {
             $row = array_map(fn ($c) => $this->xlsxRawValueToString($c), $rawRow);
 
@@ -1281,34 +1309,20 @@ class MasterImportService
 
             $kode = strtoupper(trim((string) $col($row, 'kode_barang')));
             if ($kode !== '') $kodeSet[$kode] = true;
-
-            $nama = $this->normalizeStrictName((string) $col($row, 'nama_barang'));
-            if ($nama !== '') $namaSet[$nama] = true;
         }
 
-        if (empty($kodeSet) && empty($namaSet)) {
-            return $empty;
+        if (empty($kodeSet)) {
+            return [];
         }
 
         $byKode = [];
-        $byNama = [];
-        Barang::where(function ($q) use ($kodeSet, $namaSet) {
-                if (! empty($kodeSet)) $q->orWhereIn('kode_barang', array_keys($kodeSet));
-                if (! empty($namaSet)) $q->orWhereIn(DB::raw('UPPER(TRIM(nama_barang))'), array_keys($namaSet));
-            })
+        Barang::whereIn('kode_barang', array_keys($kodeSet))
             ->get()
-            ->each(function (Barang $b) use (&$byKode, &$byNama) {
+            ->each(function (Barang $b) use (&$byKode) {
                 $byKode[strtoupper((string) $b->kode_barang)] = $b;
-                $byNama[$this->normalizeStrictName((string) $b->nama_barang)] = $b;
             });
 
-        return ['by_kode' => $byKode, 'by_nama' => $byNama];
-    }
-
-    /** Normalisasi ketat (trim+uppercase, TANPA fuzzy matching) untuk deteksi tabrakan nama exact. */
-    private function normalizeStrictName(string $value): string
-    {
-        return strtoupper(trim($value));
+        return $byKode;
     }
 
     /**

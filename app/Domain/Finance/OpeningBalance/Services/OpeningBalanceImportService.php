@@ -94,6 +94,7 @@ class OpeningBalanceImportService
         $cutoverDate = $batch->cutover_date->format('Y-m-d');
 
         $batch->update(['status' => 'processing']);
+        $batch->setCachedPhase('resolving');
 
         $filePath = $disk->path($batch->file_path);
         $ext = strtolower(pathinfo($batch->original_filename ?: $batch->file_path, PATHINFO_EXTENSION));
@@ -121,10 +122,15 @@ class OpeningBalanceImportService
         // PERTAMA yang berhasil (grup berikutnya kena "duplikat klien+tanggal" dan di-skip
         // diam-diam — datanya hilang, bukan cuma kehilangan info resto).
         $buckets = [];
+        $cancelled = false;
         foreach ($obRows as $noUrut => $groupRows) {
             $processed++;
             if ($processed % 50 === 0) {
                 $batch->update(['processed_ob' => $processed, 'failed_ob' => $failedOb]);
+                if ($batch->isCancelRequested()) {
+                    $cancelled = true;
+                    break;
+                }
             }
 
             $identity = $groupRows[0];
@@ -148,6 +154,12 @@ class OpeningBalanceImportService
 
             $buckets[$klien->id] ??= ['klien' => $klien, 'sheet' => $identity['sheet'], 'source_row' => $identity['source_row'], 'rows' => []];
             $buckets[$klien->id]['rows'] = [...$buckets[$klien->id]['rows'], ...$groupRows];
+        }
+
+        if ($cancelled || $batch->isCancelRequested()) {
+            $batch->cancel(sprintf('Dibatalkan oleh %s saat resolusi klien.', $batch->cancelRequestedBy() ?? 'pengguna'));
+
+            return;
         }
 
         $batch->update(['processed_ob' => count($obRows), 'failed_ob' => $failedOb]);
@@ -210,6 +222,18 @@ class OpeningBalanceImportService
 
             return;
         }
+
+        // Titik cek terakhir sebelum apa pun ditulis ke tb_invoice — sesudah ini cancel
+        // TIDAK dihormati lagi (Pass 2 memang sengaja partial-write per-bucket, lihat
+        // catatan di atas createOpeningBalance() — interupsi di tengah Pass 2 akan
+        // meninggalkan sebagian OB tersimpan, bertentangan dengan jaminan "batal saat
+        // parsing = 0 baris masuk database").
+        if ($batch->isCancelRequested()) {
+            $batch->cancel(sprintf('Dibatalkan oleh %s.', $batch->cancelRequestedBy() ?? 'pengguna'));
+
+            return;
+        }
+        $batch->setCachedPhase('saving');
 
         // Fase "Ganti Data Lama" — all-or-nothing per batch (dikonfirmasi user, bukan
         // per-klien): coba hapus SEMUA OB lama yang bentrok. Yang gagal dihapus (mis.

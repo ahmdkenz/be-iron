@@ -84,6 +84,57 @@ class UnifiedMasterController extends Controller
         ], 'File diterima. Import sedang diproses di latar belakang.', 202);
     }
 
+    /** Batch masih berjalan (queued/processing) milik user ini — dipakai FE mendeteksi & melanjutkan polling setelah reload halaman (mirror Invoice/OB AR). */
+    public function active(): JsonResponse
+    {
+        ImportMasterBatch::failStale();
+
+        $user = auth()->user();
+        $batch = RoleHelper::hasAnyRole($user, ['ADMIN', 'MANAGER', 'SUPERVISOR'])
+            ? ImportMasterBatch::whereIn('status', ['queued', 'processing'])->latest('created_at')->first()
+            : null;
+
+        if (!$batch) {
+            return $this->successResponse(null);
+        }
+
+        return $this->successResponse([
+            'batch_id' => $batch->id,
+            'status'   => $batch->status,
+        ]);
+    }
+
+    /**
+     * Seluruh penulisan entitas dibungkus SATU transaksi besar (lihat MasterImportService::
+     * process()) — TIDAK ada fase "sudah mulai menulis, tidak boleh diinterupsi" seperti
+     * Invoice/OB AR, karena rollback-nya total (semua atau tidak sama sekali). Jadi cancel
+     * sah selama batch belum terminal (queued/processing) — job yang sedang jalan akan
+     * mengecek flag ini di boundary tiap ~100 baris dan me-rollback semuanya begitu sadar.
+     */
+    public function cancel(string $id): JsonResponse
+    {
+        $user = auth()->user();
+        if (!RoleHelper::hasAnyRole($user, ['ADMIN', 'MANAGER', 'SUPERVISOR'])) {
+            return $this->unauthorizedResponse();
+        }
+
+        $batch = ImportMasterBatch::find($id);
+        if (!$batch) {
+            return $this->notFoundResponse('Batch import tidak ditemukan');
+        }
+
+        if (!in_array($batch->status, ['queued', 'processing'], true)) {
+            return $this->errorResponse(
+                "Batch dengan status \"{$batch->status}\" tidak bisa dibatalkan — import sudah selesai atau gagal.",
+                422,
+            );
+        }
+
+        $batch->requestCancel($user?->username ?? 'pengguna');
+
+        return $this->successResponse(null, 'Permintaan pembatalan diterima — sedang dihentikan, mohon tunggu sebentar.', 202);
+    }
+
     public function latestImport(): JsonResponse
     {
         $batch = ImportMasterBatch::where('status', 'completed')
@@ -145,6 +196,10 @@ class UnifiedMasterController extends Controller
         return $this->successResponse([
             'batch_id'          => $batch->id,
             'status'            => $batch->status,
+            // Dipakai FE menampilkan/menonaktifkan tombol Batalkan — logic SAMA persis
+            // dengan gate di cancel() (lihat komentar di sana: seluruh penulisan entitas
+            // dibungkus SATU transaksi besar, jadi cancel sah selama belum status terminal).
+            'cancelable'        => in_array($batch->status, ['queued', 'processing'], true),
             'started_at'        => optional($batch->created_at)->toIso8601String(),
             'elapsed_seconds'   => $eta['elapsed_seconds'],
             'estimated_remaining_seconds' => $eta['estimated_remaining_seconds'],
@@ -356,7 +411,7 @@ class UnifiedMasterController extends Controller
 
         // Row 2 — Subtitle
         $sheet->mergeCells("A2:{$lastCol}2");
-        $sheet->setCellValue('A2', 'Isi data barang/produk di bawah ini. kode_barang wajib untuk data baru. Upsert berdasarkan nama_barang (case-insensitive).');
+        $sheet->setCellValue('A2', 'Isi data barang/produk di bawah ini. kode_barang wajib untuk data baru dan menjadi satu-satunya acuan upsert — nama_barang boleh sama untuk kode_barang yang berbeda.');
         $sheet->getStyle('A2')->applyFromArray([
             'font'      => ['italic' => true, 'size' => 9, 'color' => ['argb' => 'FF37474F']],
             'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFE8F5E9']],
@@ -563,8 +618,8 @@ class UnifiedMasterController extends Controller
         $row++;
 
         $barangCols = [
-            ['kode_barang', 'Kode barang (uppercase) — wajib untuk barang baru; tidak diupdate', 'Ya (barang baru)', 'BRG-001'],
-            ['nama_barang', 'Nama barang (upsert key, case-insensitive)',                         'Ya',              'Produk A'],
+            ['kode_barang', 'Kode barang (uppercase) — acuan utama/upsert key; wajib untuk barang baru, tidak diupdate', 'Ya (barang baru)', 'BRG-001'],
+            ['nama_barang', 'Nama barang — boleh sama untuk kode_barang yang berbeda',            'Ya',              'Produk A'],
             ['spesifikasi', 'Deskripsi spesifikasi produk',                                       'Opsional',        '500ml, warna biru'],
             ['keterangan',  'Keterangan tambahan',                                                'Opsional',        'Stok prioritas'],
             ['status',      '1 = Aktif (default), 0 = Nonaktif',                                 'Opsional',        '1'],

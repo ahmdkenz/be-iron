@@ -15,6 +15,7 @@ use App\Models\InvoiceImportRow;
 use App\Models\KlienAr;
 use App\Models\PembayaranAr;
 use App\Models\Resto;
+use App\Support\Exceptions\ImportCancelledException;
 use App\Support\Helpers\ImportDateParser;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -141,11 +142,17 @@ class InvoiceImportService
             'barangMap'      => $this->buildBarangMap(),
         ];
 
-        $result = in_array($ext, ['xlsx', 'xls'], true)
-            ? $this->parseXlsxFile($filePath, $batch, $maps)
-            : $this->parseCsvFile($filePath, $batch, $maps);
+        try {
+            $result = in_array($ext, ['xlsx', 'xls'], true)
+                ? $this->parseXlsxFile($filePath, $batch, $maps)
+                : $this->parseCsvFile($filePath, $batch, $maps);
 
-        $this->persistGroups($batch, $result['groups']);
+            $this->persistGroups($batch, $result['groups']);
+        } catch (ImportCancelledException) {
+            $batch->cancel(sprintf('Dibatalkan oleh %s saat parsing.', $batch->cancelRequestedBy() ?? 'pengguna'));
+
+            return;
+        }
 
         $batch->update([
             'parsed_rows'  => $result['parsedRows'],
@@ -180,6 +187,9 @@ class InvoiceImportService
                 // (terlihat identik dengan job yang macet).
                 if ($lineNumber % 2000 === 0) {
                     $batch->update(['parsed_rows' => $parsedRows]);
+                    if ($batch->isCancelRequested()) {
+                        throw new ImportCancelledException();
+                    }
                 }
 
                 if ($this->processInvoiceRow($row, $lineNumber, $maps, $groups, $errors)) {
@@ -224,6 +234,9 @@ class InvoiceImportService
                 // Progres bertahap — lihat komentar sepadan di parseCsvFile().
                 if ($excelRow % 2000 === 0) {
                     $batch->update(['parsed_rows' => $parsedRows]);
+                    if ($batch->isCancelRequested()) {
+                        throw new ImportCancelledException();
+                    }
                 }
 
                 if ($this->processInvoiceRow($row, $excelRow, $maps, $groups, $errors)) {
@@ -353,6 +366,10 @@ class InvoiceImportService
         $batch->update(['total_groups' => count($groups)]);
 
         foreach (array_chunk($groups, 100, true) as $chunk) {
+            if ($batch->isCancelRequested()) {
+                throw new ImportCancelledException();
+            }
+
             DB::transaction(function () use ($batch, $chunk) {
                 $now          = now();
                 $rowsToInsert = [];
@@ -424,6 +441,10 @@ class InvoiceImportService
         InvoiceImportGroup::where('batch_id', $batch->id)
             ->orderBy('id')
             ->chunkById(100, function ($groups) use ($batch, $lockedEbMap, &$counters, &$done) {
+                if ($batch->isCancelRequested()) {
+                    return false;
+                }
+
                 $snapshots = $this->buildExistingSnapshots($groups);
                 $rowsByGroup = InvoiceImportRow::whereIn('group_id', $groups->pluck('id'))
                     ->orderBy('row_number')
@@ -503,6 +524,12 @@ class InvoiceImportService
 
                 $batch->update(['classified_groups' => $done] + $counters);
             });
+
+        if ($batch->isCancelRequested()) {
+            $batch->cancel(sprintf('Dibatalkan oleh %s saat klasifikasi.', $batch->cancelRequestedBy() ?? 'pengguna'));
+
+            return;
+        }
 
         $batch->update([
             'status'            => 'awaiting_review',

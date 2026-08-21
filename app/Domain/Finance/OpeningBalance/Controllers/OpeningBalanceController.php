@@ -395,9 +395,16 @@ class OpeningBalanceController extends Controller
 
         $awaitingConfirmation = ($batch->errors['awaiting_confirmation'] ?? false) === true;
 
+        // Dipakai FE menampilkan/menonaktifkan tombol Batalkan tanpa perlu tahu detail
+        // 'resolving'/'saving' — logic SAMA persis dengan gate di importCancel().
+        $cancelable = $awaitingConfirmation
+            || $batch->status === 'queued'
+            || ($batch->status === 'processing' && $batch->getCachedPhase() === 'resolving');
+
         return [
             'batch_id' => $batch->id,
             'status' => $awaitingConfirmation ? 'needs_confirmation' : $batch->status,
+            'cancelable' => $cancelable,
             'started_at' => optional($batch->created_at)->toIso8601String(),
             'elapsed_seconds' => $eta['elapsed_seconds'],
             'estimated_remaining_seconds' => $eta['estimated_remaining_seconds'],
@@ -489,18 +496,41 @@ class OpeningBalanceController extends Controller
         );
     }
 
+    /**
+     * Tiga jalur:
+     *  - awaiting_confirmation: tidak ada job aktif (menunggu keputusan user) → batal LANGSUNG.
+     *  - queued / processing selama masih Pass 1 (resolusi klien, murni baca — lihat
+     *    OpeningBalanceImportService::process()): job MASIH aktif, jadi cuma menitip flag
+     *    "batal diminta". ProcessOpeningBalanceImportJob/Service yang sedang jalan akan
+     *    mengecek flag ini di boundary Pass 1 dan membersihkan diri sendiri.
+     *  - processing dengan fase 'saving' (Pass 2 sudah mulai menulis tb_invoice): TIDAK
+     *    boleh diinterupsi (partial-write Pass 2 sudah desain lama, tidak diubah di sini).
+     */
     public function importCancel(string $batch): JsonResponse
     {
         $this->authorizeOperateOpeningBalance();
 
-        $record = $this->findAwaitingConfirmationBatchOrFail($batch);
-        if ($record instanceof JsonResponse) {
-            return $record;
+        $record = OpeningBalanceImportBatch::find($batch);
+        if (! $record) {
+            return $this->notFoundResponse('Batch import tidak ditemukan.');
         }
 
-        $record->cancel('Import dibatalkan oleh pengguna.');
+        if (($record->errors['awaiting_confirmation'] ?? false) === true) {
+            $record->cancel('Import dibatalkan oleh pengguna.');
 
-        return $this->successResponse(null, 'Import dibatalkan.');
+            return $this->successResponse(null, 'Import dibatalkan.');
+        }
+
+        $cancelableNow = $record->status === 'queued'
+            || ($record->status === 'processing' && $record->getCachedPhase() === 'resolving');
+
+        if ($cancelableNow) {
+            $record->requestCancel(auth()->user()?->username ?? 'pengguna');
+
+            return $this->successResponse(null, 'Permintaan pembatalan diterima — sedang dihentikan, mohon tunggu sebentar.', 202);
+        }
+
+        return $this->errorResponse('Import sudah mulai menyimpan data, tidak bisa dihentikan lagi — tunggu sampai selesai.', 422);
     }
 
     // ─── Export ───────────────────────────────────────────────────────────────

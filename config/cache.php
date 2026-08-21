@@ -99,6 +99,24 @@ return [
             ],
         ],
 
+        /**
+         * Store terpisah khusus flag pembatalan import (App\Models\Concerns\
+         * HasCancelableImport) — pakai koneksi 'mysql_progress' (lihat config/database.php),
+         * BUKAN koneksi default. MasterImportService membungkus seluruh penulisan entitas
+         * dalam satu transaksi besar (supaya batal = rollback total, 0 baris masuk DB); kalau
+         * flag ini dibaca lewat koneksi default yang sama dengan transaksi itu, snapshot
+         * REPEATABLE READ MySQL akan membuatnya TIDAK melihat flag yang baru di-set oleh
+         * request HTTP terpisah sampai transaksinya selesai — cancel jadi terasa tidak
+         * responsif/tidak bereaksi sama sekali. Koneksi kedua ini menghindari masalah itu.
+         */
+        'import_cancel' => [
+            'driver' => 'database',
+            'connection' => 'mysql_progress',
+            'table' => env('DB_CACHE_TABLE', 'cache'),
+            'lock_connection' => null,
+            'lock_table' => null,
+        ],
+
     ],
 
     /*

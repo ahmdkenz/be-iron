@@ -27,7 +27,9 @@ Route::middleware('role:ADMIN|MANAGER|SUPERVISOR')->group(function () {
     Route::get('/master-data/import-template', [UnifiedMasterController::class, 'importTemplate']);
     Route::post('/master-data/import', [UnifiedMasterController::class, 'import']);
     Route::get('/master-data/import/latest', [UnifiedMasterController::class, 'latestImport']);
+    Route::get('/master-data/import/active', [UnifiedMasterController::class, 'active']);
     Route::get('/master-data/import/{id}/status', [UnifiedMasterController::class, 'importStatus']);
+    Route::post('/master-data/import/{id}/cancel', [UnifiedMasterController::class, 'cancel']);
 
     // Tab "Import Master Opening Balance" — bulk import saldo awal piutang klien (backfill data historis).
     Route::get('/master-data/opening-balance/import-template', [OpeningBalanceController::class, 'importTemplate']);
