@@ -2,8 +2,6 @@
 
 namespace Tests\Feature;
 
-use App\Domain\Finance\EndingBalance\Services\EndingBalanceKoreksiService;
-use App\Domain\Finance\EndingBalance\Services\EndingBalanceService;
 use App\Domain\Finance\Invoice\Services\InvoiceGroupProcessor;
 use App\Domain\Finance\Invoice\Services\InvoiceImportService;
 use App\Domain\Finance\Invoice\Services\InvoiceService;
@@ -36,8 +34,6 @@ class InvoiceImportServiceTest extends TestCase
         $this->service = new InvoiceImportService(
             $this->createMock(InvoiceGroupProcessor::class),
             $this->createMock(InvoiceService::class),
-            $this->createMock(EndingBalanceService::class),
-            $this->createMock(EndingBalanceKoreksiService::class),
         );
     }
 
@@ -222,7 +218,6 @@ class InvoiceImportServiceTest extends TestCase
 
         $this->assertSame('SAFE_UPDATE', $result['classification']);
         $this->assertSame([], $result['risk_flags']);
-        $this->assertNull($result['adjustment_type']);
     }
 
     public function test_invoice_belum_dibayar_dengan_header_berubah_boleh_safe_update(): void
@@ -242,10 +237,15 @@ class InvoiceImportServiceTest extends TestCase
     }
 
     // ──────────────────────────────────────────────────────────────
-    //  Butuh review — invoice sudah tersentuh transaksi
+    //  Invoice sudah tersentuh transaksi TAPI belum lunas → tetap diperbarui
+    //
+    //  Sejak penyesuaian otomatis CN/DN dihapus, pembayaran / no. referensi /
+    //  match rekening koran / koreksi pending TIDAK lagi menghalangi update.
+    //  Update tidak menyentuh tb_pembayaran_ar, jadi pembayaran & no. referensi
+    //  existing tetap utuh dan sisa tagihan dihitung ulang mengikuti nilai baru.
     // ──────────────────────────────────────────────────────────────
 
-    public function test_invoice_sebagian_dengan_no_referensi_masuk_review_bukan_overwrite(): void
+    public function test_invoice_sebagian_dengan_no_referensi_tetap_safe_update(): void
     {
         $result = $this->service->classifyGroup(
             $this->incoming([$this->item('BRG-1', 8, 5000)]),
@@ -258,28 +258,84 @@ class InvoiceImportServiceTest extends TestCase
             false,
         );
 
-        $this->assertSame('REVIEW_REQUIRED', $result['classification']);
+        $this->assertSame('SAFE_UPDATE', $result['classification']);
+        // Flag tetap dikumpulkan sebagai konteks, tapi tidak lagi mengubah klasifikasi.
         $this->assertContains('PEMBAYARAN', $result['risk_flags']);
         $this->assertContains('NO_REFERENSI', $result['risk_flags']);
         $this->assertContains('STATUS_SEBAGIAN', $result['risk_flags']);
     }
 
-    public function test_invoice_cocok_rekening_koran_masuk_review(): void
+    /**
+     * Skenario "data dinamis": invoice yang sudah dicocokkan rekening koran boleh
+     * naik nilainya — sisa tagihan muncul lagi dan bisa dialokasikan dari Cocokkan
+     * Transaksi (tombol PDM/Alokasikan), bukan lewat Debit Note otomatis.
+     */
+    public function test_invoice_sebagian_yang_sudah_cocok_rekening_koran_tetap_safe_update(): void
     {
         $result = $this->service->classifyGroup(
             $this->incoming([$this->item('BRG-1', 11, 5000)]),
             $this->existing([$this->item('BRG-1', 10, 5000)], [
-                'has_pembayaran' => true,
-                'bank_matched'   => true,
+                'status'           => 'SEBAGIAN',
+                'has_pembayaran'   => true,
+                'total_pembayaran' => 20000.0,
+                'bank_matched'     => true,
             ]),
             false,
         );
 
-        $this->assertSame('REVIEW_REQUIRED', $result['classification']);
+        $this->assertSame('SAFE_UPDATE', $result['classification']);
         $this->assertContains('BANK_MATCHED', $result['risk_flags']);
+        $this->assertSame(5000.0, $result['selisih']);
     }
 
-    public function test_invoice_lunas_yang_berubah_tidak_diupdate_langsung(): void
+    public function test_invoice_dengan_penyesuaian_sebelumnya_tetap_safe_update(): void
+    {
+        $result = $this->service->classifyGroup(
+            $this->incoming([$this->item('BRG-1', 11, 5000)]),
+            $this->existing([$this->item('BRG-1', 10, 5000)], ['total_penyesuaian' => -2500.0]),
+            false,
+        );
+
+        $this->assertSame('SAFE_UPDATE', $result['classification']);
+        $this->assertContains('PENYESUAIAN', $result['risk_flags']);
+    }
+
+    public function test_invoice_dengan_koreksi_pending_tetap_safe_update(): void
+    {
+        $result = $this->service->classifyGroup(
+            $this->incoming([$this->item('BRG-1', 11, 5000)]),
+            $this->existing([$this->item('BRG-1', 10, 5000)], ['has_active_koreksi' => true]),
+            false,
+        );
+
+        $this->assertSame('SAFE_UPDATE', $result['classification']);
+        $this->assertContains('KOREKSI_PENDING', $result['risk_flags']);
+    }
+
+    /** Nilai boleh turun di bawah pembayaran yang sudah masuk — kelebihannya jadi PDM saat apply. */
+    public function test_nominal_turun_di_bawah_pembayaran_tetap_safe_update(): void
+    {
+        $result = $this->service->classifyGroup(
+            $this->incoming([$this->item('BRG-1', 2, 5000)]),   // 10.000
+            $this->existing([$this->item('BRG-1', 10, 5000)], [ // 50.000
+                'status'           => 'SEBAGIAN',
+                'has_pembayaran'   => true,
+                'total_pembayaran' => 30000.0,
+            ]),
+            false,
+        );
+
+        $this->assertSame('SAFE_UPDATE', $result['classification']);
+        $this->assertSame(-40000.0, $result['selisih']);
+        $this->assertSame(50000.0, $result['total_lama']);
+        $this->assertSame(10000.0, $result['total_baru']);
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    //  Dua kondisi keras yang membuat invoice DILEWATI (REJECTED)
+    // ──────────────────────────────────────────────────────────────
+
+    public function test_invoice_lunas_yang_berubah_ditolak(): void
     {
         $result = $this->service->classifyGroup(
             $this->incoming([$this->item('BRG-1', 9, 5000)]),
@@ -291,37 +347,13 @@ class InvoiceImportServiceTest extends TestCase
             false,
         );
 
-        $this->assertSame('REVIEW_REQUIRED', $result['classification']);
+        $this->assertSame('REJECTED', $result['classification']);
         $this->assertContains('LUNAS', $result['risk_flags']);
-        $this->assertSame('CREDIT_NOTE', $result['adjustment_type']);
+        $this->assertStringContainsString('LUNAS', $result['reason']);
     }
 
-    public function test_invoice_dengan_penyesuaian_sebelumnya_masuk_review(): void
-    {
-        $result = $this->service->classifyGroup(
-            $this->incoming([$this->item('BRG-1', 11, 5000)]),
-            $this->existing([$this->item('BRG-1', 10, 5000)], ['total_penyesuaian' => -2500.0]),
-            false,
-        );
-
-        $this->assertSame('REVIEW_REQUIRED', $result['classification']);
-        $this->assertContains('PENYESUAIAN', $result['risk_flags']);
-    }
-
-    public function test_invoice_dengan_koreksi_pending_masuk_review(): void
-    {
-        $result = $this->service->classifyGroup(
-            $this->incoming([$this->item('BRG-1', 11, 5000)]),
-            $this->existing([$this->item('BRG-1', 10, 5000)], ['has_active_koreksi' => true]),
-            false,
-        );
-
-        $this->assertSame('REVIEW_REQUIRED', $result['classification']);
-        $this->assertContains('KOREKSI_PENDING', $result['risk_flags']);
-    }
-
-    /** EB terkunci tidak boleh di-update langsung, meski invoice-nya belum dibayar. */
-    public function test_invoice_existing_di_periode_terkunci_masuk_review_bukan_safe_update(): void
+    /** EB terkunci menang mutlak, termasuk untuk invoice yang baru dibayar sebagian. */
+    public function test_invoice_existing_di_periode_terkunci_ditolak(): void
     {
         $result = $this->service->classifyGroup(
             $this->incoming([$this->item('BRG-1', 11, 5000)]),
@@ -329,47 +361,51 @@ class InvoiceImportServiceTest extends TestCase
             true,
         );
 
-        $this->assertSame('REVIEW_REQUIRED', $result['classification']);
+        $this->assertSame('REJECTED', $result['classification']);
         $this->assertContains('EB_LOCKED', $result['risk_flags']);
+        $this->assertStringContainsString('dikunci di Ending Balance', $result['reason']);
     }
 
-    // ──────────────────────────────────────────────────────────────
-    //  Arah penyesuaian
-    // ──────────────────────────────────────────────────────────────
-
-    public function test_nominal_turun_menghasilkan_kandidat_credit_note(): void
+    /**
+     * Pengecualian "sudah dicocokkan rekening koran" TIDAK berlaku kalau periodenya
+     * terkunci — angka EB yang sudah dikunci tidak boleh bergeser lewat import.
+     */
+    public function test_invoice_sebagian_cocok_rekening_koran_tetap_ditolak_kalau_eb_terkunci(): void
     {
         $result = $this->service->classifyGroup(
-            $this->incoming([$this->item('BRG-1', 6, 5000)]),   // 30.000
-            $this->existing([$this->item('BRG-1', 10, 5000)], [ // 50.000
+            $this->incoming([$this->item('BRG-1', 11, 5000)]),
+            $this->existing([$this->item('BRG-1', 10, 5000)], [
+                'status'           => 'SEBAGIAN',
                 'has_pembayaran'   => true,
-                'total_pembayaran' => 10000.0,
+                'total_pembayaran' => 20000.0,
+                'bank_matched'     => true,
             ]),
-            false,
+            true,
         );
 
-        $this->assertSame('CREDIT_NOTE', $result['adjustment_type']);
-        $this->assertSame(-20000.0, $result['selisih']);
-        $this->assertSame(50000.0, $result['total_lama']);
-        $this->assertSame(30000.0, $result['total_baru']);
+        $this->assertSame('REJECTED', $result['classification']);
+        $this->assertStringContainsString('dikunci di Ending Balance', $result['reason']);
     }
 
-    public function test_nominal_naik_menghasilkan_kandidat_debit_note(): void
+    /** LUNAS + terkunci: alasan yang tercatat menyebut EB terkunci (dicek lebih dulu). */
+    public function test_invoice_lunas_di_periode_terkunci_menyebut_eb_terkunci(): void
     {
         $result = $this->service->classifyGroup(
-            $this->incoming([$this->item('BRG-1', 14, 5000)]),  // 70.000
-            $this->existing([$this->item('BRG-1', 10, 5000)], [ // 50.000
+            $this->incoming([$this->item('BRG-1', 9, 5000)]),
+            $this->existing([$this->item('BRG-1', 10, 5000)], [
+                'status'           => 'LUNAS',
+                'total_pembayaran' => 50000.0,
                 'has_pembayaran'   => true,
-                'total_pembayaran' => 10000.0,
             ]),
-            false,
+            true,
         );
 
-        $this->assertSame('DEBIT_NOTE', $result['adjustment_type']);
-        $this->assertSame(20000.0, $result['selisih']);
+        $this->assertSame('REJECTED', $result['classification']);
+        $this->assertStringContainsString('dikunci di Ending Balance', $result['reason']);
     }
 
-    public function test_nominal_sama_tapi_metadata_berubah_menjadi_review_metadata(): void
+    /** Perubahan metadata murni (nominal sama) pada invoice belum lunas tetap ditulis. */
+    public function test_nominal_sama_tapi_metadata_berubah_tetap_safe_update(): void
     {
         $result = $this->service->classifyGroup(
             $this->incoming([$this->item('BRG-1', 10, 5000, ['no_invoice_resto' => 'SI-BARU'])]),
@@ -377,30 +413,20 @@ class InvoiceImportServiceTest extends TestCase
             false,
         );
 
-        $this->assertSame('REVIEW_REQUIRED', $result['classification']);
-        $this->assertSame('METADATA', $result['adjustment_type']);
+        $this->assertSame('SAFE_UPDATE', $result['classification']);
         $this->assertSame(0.0, $result['selisih']);
     }
 
-    /**
-     * Kalau tagihan baru jadi lebih kecil dari pembayaran yang sudah masuk, import
-     * TIDAK boleh auto-PDM — cukup ditandai supaya Finance yang memutuskan.
-     */
-    public function test_pembayaran_melebihi_tagihan_baru_hanya_ditandai(): void
+    /** Hasil klasifikasi tidak boleh lagi membawa kolom adjustment_type. */
+    public function test_hasil_klasifikasi_tidak_punya_adjustment_type(): void
     {
         $result = $this->service->classifyGroup(
-            $this->incoming([$this->item('BRG-1', 2, 5000)]),   // 10.000
-            $this->existing([$this->item('BRG-1', 10, 5000)], [ // 50.000
-                'status'           => 'LUNAS',
-                'has_pembayaran'   => true,
-                'total_pembayaran' => 50000.0,
-            ]),
+            $this->incoming([$this->item('BRG-1', 12, 5000)]),
+            $this->existing([$this->item('BRG-1', 10, 5000)]),
             false,
         );
 
-        $this->assertSame('REVIEW_REQUIRED', $result['classification']);
-        $this->assertSame('CREDIT_NOTE', $result['adjustment_type']);
-        $this->assertContains('PEMBAYARAN_MELEBIHI', $result['risk_flags']);
+        $this->assertArrayNotHasKey('adjustment_type', $result);
     }
 
     // ──────────────────────────────────────────────────────────────

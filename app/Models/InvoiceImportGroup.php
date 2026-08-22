@@ -39,12 +39,6 @@ class InvoiceImportGroup extends Model
         'total_lama',
         'total_baru',
         'selisih',
-        'adjustment_type',
-        'review_status',
-        'koreksi_id',
-        'decided_by',
-        'decided_at',
-        'review_message',
         'apply_status',
         'apply_message',
     ];
@@ -59,7 +53,6 @@ class InvoiceImportGroup extends Model
         'total_lama'          => 'decimal:2',
         'total_baru'          => 'decimal:2',
         'selisih'             => 'decimal:2',
-        'decided_at'          => 'datetime',
     ];
 
     public function batch(): BelongsTo
@@ -82,18 +75,8 @@ class InvoiceImportGroup extends Model
         return $this->belongsTo(KlienAr::class, 'klien_ar_id');
     }
 
-    public function koreksi(): BelongsTo
-    {
-        return $this->belongsTo(EndingBalanceKoreksi::class, 'koreksi_id');
-    }
-
     public function isSafe(): bool
     {
         return in_array($this->classification, self::SAFE_CLASSIFICATIONS, true);
-    }
-
-    public function needsReview(): bool
-    {
-        return $this->classification === 'REVIEW_REQUIRED';
     }
 }

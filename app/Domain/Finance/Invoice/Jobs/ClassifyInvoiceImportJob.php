@@ -16,7 +16,7 @@ use Throwable;
 
 /**
  * Fase 2: bandingkan tiap grup dengan invoice existing dan tentukan
- * NEW_INVOICE / UNCHANGED / SAFE_UPDATE / REVIEW_REQUIRED / REJECTED.
+ * NEW_INVOICE / UNCHANGED / SAFE_UPDATE / REJECTED.
  *
  * Selesai job ini batch berhenti di status awaiting_review — menunggu user
  * menekan "Proses Data Aman". Masih belum ada invoice yang ditulis.

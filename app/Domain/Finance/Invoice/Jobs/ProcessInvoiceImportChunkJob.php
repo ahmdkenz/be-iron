@@ -15,12 +15,14 @@ use Illuminate\Support\Facades\Log;
 use Throwable;
 
 /**
- * Fase 3: tulis invoice untuk grup NEW_INVOICE & SAFE_UPDATE, satu chunk per job.
+ * Fase 3: tulis invoice untuk grup NEW_INVOICE & SAFE_UPDATE, satu chunk per job,
+ * sambil mencatat hasilnya ke tb_invoice_import_change_log.
  *
- * Grup REVIEW_REQUIRED / REJECTED / UNCHANGED tidak pernah disentuh di sini —
- * itulah inti jaminan "reupload tidak merusak invoice yang sudah ditagih".
- * Job men-dispatch dirinya sendiri sampai antrean grup aman habis, lalu
- * menyerahkan penutupan batch ke FinalizeInvoiceImportJob.
+ * Grup REJECTED (invoice sudah LUNAS / periode terkunci di Ending Balance) dan
+ * UNCHANGED tidak pernah disentuh di sini — itulah inti jaminan "reupload tidak
+ * merusak invoice yang sudah selesai ditagih". Job men-dispatch dirinya sendiri
+ * sampai antrean grup aman habis, lalu menyerahkan penutupan batch ke
+ * FinalizeInvoiceImportJob.
  */
 class ProcessInvoiceImportChunkJob implements ShouldQueue
 {

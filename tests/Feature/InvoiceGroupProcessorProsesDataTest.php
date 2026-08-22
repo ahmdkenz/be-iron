@@ -2,7 +2,6 @@
 
 namespace Tests\Feature;
 
-use App\Domain\Finance\EndingBalance\Services\EndingBalanceKoreksiService;
 use App\Domain\Finance\EndingBalance\Services\EndingBalanceService;
 use App\Domain\Finance\EndingBalance\Services\EndingBalanceSyncBatcher;
 use App\Domain\Finance\Invoice\Services\InvoiceGroupProcessor;
@@ -205,8 +204,6 @@ class InvoiceGroupProcessorProsesDataTest extends TestCase
         return new InvoiceImportService(
             $this->groupProcessor(),
             $this->invoiceService(),
-            $this->app->make(EndingBalanceService::class),
-            $this->createMock(EndingBalanceKoreksiService::class),
         );
     }
 

@@ -36,17 +36,12 @@ class InvoiceImportBatch extends Model
         'cnt_safe_update',
         'cnt_review_required',
         'cnt_rejected',
-        'cnt_cn_candidate',
-        'cnt_dn_candidate',
-        'cnt_metadata_candidate',
         'applied_total',
         'applied_processed',
         'applied_inserted',
         'applied_updated',
         'applied_skipped',
         'applied_failed',
-        'adjustment_submitted',
-        'adjustment_dismissed',
         'errors',
         'started_at',
         'classified_at',
@@ -64,17 +59,12 @@ class InvoiceImportBatch extends Model
         'cnt_safe_update'        => 'integer',
         'cnt_review_required'    => 'integer',
         'cnt_rejected'           => 'integer',
-        'cnt_cn_candidate'       => 'integer',
-        'cnt_dn_candidate'       => 'integer',
-        'cnt_metadata_candidate' => 'integer',
         'applied_total'          => 'integer',
         'applied_processed'      => 'integer',
         'applied_inserted'       => 'integer',
         'applied_updated'        => 'integer',
         'applied_skipped'        => 'integer',
         'applied_failed'         => 'integer',
-        'adjustment_submitted'   => 'integer',
-        'adjustment_dismissed'   => 'integer',
         'errors'                 => 'array',
         'started_at'             => 'datetime',
         'classified_at'          => 'datetime',
@@ -133,10 +123,9 @@ class InvoiceImportBatch extends Model
      * lewat phase & message). Batch (header) TIDAK dihapus supaya tetap ada
      * jejak audit siapa upload apa dan kenapa dibatalkan.
      *
-     * CN/DN yang sudah diajukan lewat submitAdjustments() sebelum pembatalan
-     * TIDAK ikut terhapus — koreksinya sudah jadi record independen di
-     * tb_ending_balance_koreksi (referensi dari group->koreksi, bukan
-     * sebaliknya) dan tetap lanjut ke alur approval Ending Balance.
+     * Riwayat perubahan (tb_invoice_import_change_log) milik batch ini TIDAK ikut
+     * dihapus di sini — pembatalan hanya mungkin saat awaiting_review, yaitu sebelum
+     * satu baris pun ditulis, jadi memang belum ada riwayat yang terbentuk.
      *
      * rows() dihapus SEBELUM groups() dengan sengaja: FK group_id pada
      * tb_invoice_import_rows cuma nullOnDelete (bukan cascade), jadi kalau

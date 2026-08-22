@@ -8,7 +8,7 @@ use App\Domain\Finance\Invoice\Services\InvoiceImportService;
 use App\Domain\Finance\Invoice\Services\InvoiceImportTemplateService;
 use App\Http\Controllers\Controller;
 use App\Models\InvoiceImportBatch;
-use App\Models\InvoiceImportGroup;
+use App\Models\InvoiceImportChangeLog;
 use App\Support\Helpers\ImportEtaCalculator;
 use App\Support\Helpers\RoleHelper;
 use App\Support\Traits\ApiResponse;
@@ -20,11 +20,15 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 /**
  * Tab "Import Master Invoice".
  *
- * Alur sengaja dipecah jadi dua aksi terpisah supaya reupload data lapangan
- * tidak pernah diam-diam menimpa invoice yang sudah ditagih/dibayar:
- *   1. upload  → parse & klasifikasi saja (tidak ada tulisan ke tb_invoice)
- *   2. apply-safe        → tulis hanya yang aman
- *   3. submit-adjustments → sisanya jadi kandidat Credit/Debit Note dengan approval
+ * Alur sengaja dipecah jadi dua aksi terpisah supaya reupload data lapangan bisa
+ * ditinjau ringkasannya dulu sebelum satu baris pun ditulis:
+ *   1. upload     → parse & klasifikasi saja (tidak ada tulisan ke tb_invoice)
+ *   2. apply-safe → tulis NEW_INVOICE & SAFE_UPDATE, lalu catat hasilnya ke
+ *                   tb_invoice_import_change_log (dibaca changeLog()).
+ *
+ * Invoice yang sudah LUNAS atau periodenya terkunci di Ending Balance jadi REJECTED
+ * dan tidak pernah disentuh; perubahannya harus lewat Credit/Debit Note manual di
+ * menu Ending Balance.
  */
 class InvoiceImportController extends Controller
 {
@@ -154,8 +158,47 @@ class InvoiceImportController extends Controller
         return $this->successResponse($model ? $this->statusPayload($model) : null);
     }
 
-    /** Baris yang butuh keputusan user (paginated). */
-    public function review(Request $request, string $batch): JsonResponse
+    /**
+     * Batch Import Master Invoice terakhir yang completed — dipakai banner "Terakhir
+     * diimport" + sumber batch_id tabel Riwayat Perubahan (mirror
+     * OpeningBalanceController::latestImport()).
+     *
+     * WAJIB terpisah dari active(): active() sengaja meng-exclude status completed,
+     * jadi tanpa endpoint ini tabel riwayat akan hilang begitu halaman di-reload.
+     */
+    public function latestImport(): JsonResponse
+    {
+        if ($denied = $this->guard()) {
+            return $denied;
+        }
+
+        $batch = InvoiceImportBatch::where('status', 'completed')
+            ->with(['user:id,username,karyawan_id', 'user.karyawan:id,nama_karyawan'])
+            ->latest('updated_at')
+            ->first();
+
+        if (!$batch) {
+            return $this->successResponse(null);
+        }
+
+        return $this->successResponse([
+            'id'               => $batch->id,
+            'imported_at'      => $batch->updated_at->toIso8601String(),
+            'imported_by'      => $batch->user?->name,
+            'applied_inserted' => $batch->applied_inserted,
+            'applied_updated'  => $batch->applied_updated,
+            'applied_skipped'  => $batch->applied_skipped,
+            'applied_failed'   => $batch->applied_failed,
+        ]);
+    }
+
+    /**
+     * Riwayat perubahan per-baris (tb_invoice_import_change_log) 1 batch import —
+     * menggantikan tabel Review lama. Mirror OpeningBalanceController::importChangeLog();
+     * tanpa cabang status 'dilewati' karena change_type itu memang tidak pernah ditulis
+     * (lihat InvoiceImportService::applySafeChunk()).
+     */
+    public function changeLog(Request $request, string $batch): JsonResponse
     {
         $model = InvoiceImportBatch::find($batch);
         if (!$model) {
@@ -165,50 +208,22 @@ class InvoiceImportController extends Controller
             return $denied;
         }
 
-        $perPage        = min(100, max(5, (int) $request->query('per_page', 20)));
-        $classification = $request->query('classification', 'REVIEW_REQUIRED');
-        $reviewStatus   = $request->query('review_status');
-        $search         = trim((string) $request->query('search', ''));
+        $perPage    = min(100, max(5, (int) $request->query('per_page', 20)));
+        $changeType = $request->query('change_type');
+        $status     = $request->query('status');
+        $search     = trim((string) $request->query('search', ''));
 
-        $query = InvoiceImportGroup::where('batch_id', $model->id)
-            ->when($classification !== 'ALL', fn($q) => $q->where('classification', $classification))
-            ->when($reviewStatus, fn($q) => $q->where('review_status', $reviewStatus))
+        $query = InvoiceImportChangeLog::where('batch_id', $model->id)
+            ->when($changeType, fn($q, $v) => $q->where('change_type', $v))
+            ->when($status === 'berhasil', fn($q) => $q->whereIn('change_type', ['ditambahkan', 'diperbarui']))
+            ->when($status === 'gagal', fn($q) => $q->where('change_type', 'gagal'))
             ->when($search !== '', fn($q) => $q->where(function ($q2) use ($search) {
-                $q2->where('nama_klien', 'like', "%{$search}%")
-                    ->orWhere('kode_resto', 'like', "%{$search}%")
-                    ->orWhere('no_invoice', 'like', "%{$search}%");
+                $q2->where('search_text', 'like', "%{$search}%")
+                    ->orWhere('row_number', 'like', "%{$search}%");
             }))
-            ->orderBy('tanggal_invoice')
             ->orderBy('id');
 
         $paginator = $query->paginate($perPage, ['*'], 'page', (int) $request->query('page', 1));
-
-        $paginator->getCollection()->transform(fn(InvoiceImportGroup $g) => [
-            'id'                  => $g->id,
-            'tipe_invoice'        => $g->tipe_invoice,
-            'nama_klien'          => $g->nama_klien,
-            'kode_resto'          => $g->kode_resto,
-            'tanggal_invoice'     => optional($g->tanggal_invoice)->toDateString(),
-            'tanggal_jatuh_tempo' => optional($g->tanggal_jatuh_tempo)->toDateString(),
-            'no_surat_jalan'      => $g->no_surat_jalan,
-            'item_count'          => $g->item_count,
-            'first_line'          => $g->first_line,
-            'invoice_id'          => $g->invoice_id,
-            'no_invoice'          => $g->no_invoice,
-            'classification'      => $g->classification,
-            'reason'              => $g->reason,
-            'risk_flags'          => $g->risk_flags ?? [],
-            'header_diff'         => $g->header_diff ?? [],
-            'total_lama'          => (float) $g->total_lama,
-            'total_baru'          => (float) $g->total_baru,
-            'selisih'             => (float) $g->selisih,
-            'adjustment_type'     => $g->adjustment_type,
-            'review_status'       => $g->review_status,
-            'review_message'      => $g->review_message,
-            'koreksi_id'          => $g->koreksi_id,
-            'apply_status'        => $g->apply_status,
-            'apply_message'       => $g->apply_message,
-        ]);
 
         return $this->paginatedResponse($paginator);
     }
@@ -293,33 +308,6 @@ class InvoiceImportController extends Controller
         );
     }
 
-    /** Ajukan / abaikan kandidat penyesuaian untuk baris REVIEW_REQUIRED. */
-    public function submitAdjustments(Request $request, string $batch): JsonResponse
-    {
-        if ($denied = $this->guard()) {
-            return $denied;
-        }
-
-        $model = InvoiceImportBatch::find($batch);
-        if (!$model) {
-            return $this->notFoundResponse('Batch import tidak ditemukan');
-        }
-
-        $validated = $request->validate([
-            'decisions'             => ['required', 'array', 'min:1'],
-            'decisions.*.group_id'  => ['required', 'integer'],
-            'decisions.*.action'    => ['required', 'in:submit,dismiss'],
-            'decisions.*.alasan'    => ['nullable', 'string', 'max:500'],
-        ]);
-
-        $result = $this->service->submitAdjustments($model, $validated['decisions'], auth()->id());
-
-        return $this->successResponse($result, sprintf(
-            '%d penyesuaian diajukan, %d diabaikan, %d gagal.',
-            $result['submitted'], $result['dismissed'], $result['failed'],
-        ));
-    }
-
     // ─── Helper ───────────────────────────────────────────────────────
 
     private function statusPayload(InvoiceImportBatch $b): array
@@ -366,23 +354,13 @@ class InvoiceImportController extends Controller
             'cnt_new'                => $b->cnt_new,
             'cnt_unchanged'          => $b->cnt_unchanged,
             'cnt_safe_update'        => $b->cnt_safe_update,
-            'cnt_review_required'    => $b->cnt_review_required,
             'cnt_rejected'           => $b->cnt_rejected,
-            'cnt_cn_candidate'       => $b->cnt_cn_candidate,
-            'cnt_dn_candidate'       => $b->cnt_dn_candidate,
-            'cnt_metadata_candidate' => $b->cnt_metadata_candidate,
             'applied_total'          => $b->applied_total,
             'applied_processed'      => $b->applied_processed,
             'applied_inserted'       => $b->applied_inserted,
             'applied_updated'        => $b->applied_updated,
             'applied_skipped'        => $b->applied_skipped,
             'applied_failed'         => $b->applied_failed,
-            'adjustment_submitted'   => $b->adjustment_submitted,
-            'adjustment_dismissed'   => $b->adjustment_dismissed,
-            'pending_review'         => InvoiceImportGroup::where('batch_id', $b->id)
-                ->where('classification', 'REVIEW_REQUIRED')
-                ->where('review_status', 'PENDING')
-                ->count(),
             'errors'                 => $b->errors ?? [],
         ];
     }

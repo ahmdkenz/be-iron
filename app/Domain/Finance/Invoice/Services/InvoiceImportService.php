@@ -2,12 +2,9 @@
 
 namespace App\Domain\Finance\Invoice\Services;
 
-use App\Domain\Finance\EndingBalance\Services\EndingBalanceKoreksiService;
-use App\Domain\Finance\EndingBalance\Services\EndingBalanceService;
 use App\Domain\Finance\EndingBalance\Services\EndingBalanceSyncBatcher;
 use App\Models\Barang;
 use App\Models\BankStatementDetail;
-use App\Models\EndingBalance;
 use App\Models\Invoice;
 use App\Models\InvoiceImportBatch;
 use App\Models\InvoiceImportGroup;
@@ -29,14 +26,22 @@ use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 /**
  * Import invoice dari file Excel dengan alur AMAN:
  *
- *   upload → parse → klasifikasi → (berhenti, tunggu keputusan user)
+ *   upload → parse → klasifikasi → (berhenti, tunggu konfirmasi user)
  *          → "Proses Data Aman"  → tulis NEW_INVOICE & SAFE_UPDATE
- *          → "Ajukan Penyesuaian" → CN/DN untuk baris REVIEW_REQUIRED
+ *                                → catat hasilnya ke tb_invoice_import_change_log
  *
- * Prinsipnya: invoice yang sudah tersentuh transaksi (pembayaran, no. referensi,
- * match rekening koran, penyesuaian, EB terkunci) TIDAK PERNAH ditimpa oleh import.
- * Perubahan nilainya harus lewat Credit Note / Debit Note yang punya approval,
- * supaya invoice yang sudah ditagih tetap menjadi dokumen historis yang utuh.
+ * Prinsipnya: import hanya menolak menyentuh invoice pada dua kondisi keras —
+ * periode sudah TERKUNCI di Ending Balance, atau invoice sudah LUNAS. Selain itu
+ * (TERKIRIM / SEBAGIAN) invoice diperbarui langsung mengikuti file.
+ *
+ * Update TIDAK pernah menyentuh tb_pembayaran_ar, jadi pembayaran & no. referensi
+ * yang sudah ada tetap utuh; InvoiceGroupProcessor::updateInvoice() hanya mengganti
+ * item lalu recalculate(), sehingga sisa tagihan mengikuti nilai terbaru secara
+ * dinamis (naik → sisa muncul lagi & bisa dialokasikan dari Cocokkan Transaksi,
+ * turun di bawah total bayar → kelebihannya otomatis jadi PDM).
+ *
+ * Credit Note / Debit Note TIDAK pernah dibuat otomatis oleh import — seluruhnya
+ * manual lewat menu Ending Balance → Koreksi.
  *
  * Berbeda dengan MasterImportService yang langsung menulis begitu file diproses.
  */
@@ -89,24 +94,28 @@ class InvoiceImportService
         '#CALC!'        => 'rumus gagal dihitung oleh Excel',
     ];
 
-    /** Label manusiawi untuk tiap risk flag — dipakai membentuk alasan review. */
+    /**
+     * Label manusiawi untuk tiap risk flag. Flag-nya sendiri TIDAK lagi menentukan
+     * klasifikasi (lihat classifyGroup()) — hanya disimpan di kolom risk_flags dan
+     * dipakai memperjelas alasan grup yang ditolak.
+     */
     private const RISK_LABELS = [
-        'PEMBAYARAN'          => 'sudah menerima pembayaran',
-        'NO_REFERENSI'        => 'pembayaran sudah punya no. referensi',
-        'BANK_MATCHED'        => 'sudah dicocokkan dengan rekening koran',
-        'PENYESUAIAN'         => 'sudah punya penyesuaian CN/DN',
-        'STATUS_SEBAGIAN'     => 'status SEBAGIAN',
-        'LUNAS'               => 'status LUNAS',
-        'EB_LOCKED'           => 'periode terkunci di Ending Balance',
-        'KOREKSI_PENDING'     => 'ada koreksi yang masih menunggu persetujuan',
-        'PEMBAYARAN_MELEBIHI' => 'pembayaran akan melebihi tagihan baru',
+        'PEMBAYARAN'      => 'sudah menerima pembayaran',
+        'NO_REFERENSI'    => 'pembayaran sudah punya no. referensi',
+        'BANK_MATCHED'    => 'sudah dicocokkan dengan rekening koran',
+        'PENYESUAIAN'     => 'sudah punya penyesuaian CN/DN',
+        'STATUS_SEBAGIAN' => 'status SEBAGIAN',
+        'LUNAS'           => 'status LUNAS',
+        'EB_LOCKED'       => 'periode terkunci di Ending Balance',
+        'KOREKSI_PENDING' => 'ada koreksi yang masih menunggu persetujuan',
     ];
 
+    /** Baris riwayat perubahan per INSERT statement (mirror OpeningBalanceImportService). */
+    private const CHANGE_LOG_FLUSH_SIZE = 500;
+
     public function __construct(
-        private readonly InvoiceGroupProcessor       $groupProcessor,
-        private readonly InvoiceService              $invoiceService,
-        private readonly EndingBalanceService        $ebService,
-        private readonly EndingBalanceKoreksiService $koreksiService,
+        private readonly InvoiceGroupProcessor $groupProcessor,
+        private readonly InvoiceService        $invoiceService,
     ) {}
 
     // ══════════════════════════════════════════════════════════════
@@ -431,10 +440,11 @@ class InvoiceImportService
         $batch->update(['status' => 'classifying', 'phase' => 'classifying']);
 
         $lockedEbMap = $this->groupProcessor->buildLockedEbMap();
+        // cnt_review_required dipertahankan supaya set counter klasifikasi tetap utuh,
+        // tapi sejak REVIEW_REQUIRED tidak pernah dihasilkan lagi nilainya selalu 0.
         $counters    = [
             'cnt_new' => 0, 'cnt_unchanged' => 0, 'cnt_safe_update' => 0,
             'cnt_review_required' => 0, 'cnt_rejected' => 0,
-            'cnt_cn_candidate' => 0, 'cnt_dn_candidate' => 0, 'cnt_metadata_candidate' => 0,
         ];
         $done = 0;
 
@@ -477,38 +487,27 @@ class InvoiceImportService
                     $result = $this->classifyGroup($incoming, $existing, $ebLocked);
 
                     $rowsToUpsert[] = [
-                        'id'              => $group->id,
-                        'batch_id'        => $batch->id,
-                        'group_key'       => $group->group_key,
-                        'classification'  => $result['classification'],
-                        'reason'          => $result['reason'],
-                        'risk_flags'      => json_encode($result['risk_flags']),
-                        'header_diff'     => json_encode($result['header_diff']),
-                        'total_lama'      => $result['total_lama'],
-                        'total_baru'      => $result['total_baru'],
-                        'selisih'         => $result['selisih'],
-                        'adjustment_type' => $result['adjustment_type'],
-                        'invoice_id'      => $existing['id']         ?? null,
-                        'no_invoice'      => $existing['no_invoice'] ?? null,
-                        'review_status'   => $result['classification'] === 'REVIEW_REQUIRED' ? 'PENDING' : null,
-                        'updated_at'      => $now,
+                        'id'             => $group->id,
+                        'batch_id'       => $batch->id,
+                        'group_key'      => $group->group_key,
+                        'classification' => $result['classification'],
+                        'reason'         => $result['reason'],
+                        'risk_flags'     => json_encode($result['risk_flags']),
+                        'header_diff'    => json_encode($result['header_diff']),
+                        'total_lama'     => $result['total_lama'],
+                        'total_baru'     => $result['total_baru'],
+                        'selisih'        => $result['selisih'],
+                        'invoice_id'     => $existing['id']         ?? null,
+                        'no_invoice'     => $existing['no_invoice'] ?? null,
+                        'updated_at'     => $now,
                     ];
 
                     $counters[match ($result['classification']) {
-                        'NEW_INVOICE'      => 'cnt_new',
-                        'UNCHANGED'        => 'cnt_unchanged',
-                        'SAFE_UPDATE'      => 'cnt_safe_update',
-                        'REVIEW_REQUIRED'  => 'cnt_review_required',
-                        default            => 'cnt_rejected',
+                        'NEW_INVOICE' => 'cnt_new',
+                        'UNCHANGED'   => 'cnt_unchanged',
+                        'SAFE_UPDATE' => 'cnt_safe_update',
+                        default       => 'cnt_rejected',
                     }]++;
-
-                    if ($result['classification'] === 'REVIEW_REQUIRED') {
-                        $counters[match ($result['adjustment_type']) {
-                            'CREDIT_NOTE' => 'cnt_cn_candidate',
-                            'DEBIT_NOTE'  => 'cnt_dn_candidate',
-                            default       => 'cnt_metadata_candidate',
-                        }]++;
-                    }
 
                     $done++;
                 }
@@ -518,7 +517,7 @@ class InvoiceImportService
                         $rowsToUpsert,
                         ['id'],
                         ['classification', 'reason', 'risk_flags', 'header_diff', 'total_lama', 'total_baru',
-                            'selisih', 'adjustment_type', 'invoice_id', 'no_invoice', 'review_status', 'updated_at'],
+                            'selisih', 'invoice_id', 'no_invoice', 'updated_at'],
                     );
                 }
 
@@ -527,6 +526,17 @@ class InvoiceImportService
 
         if ($batch->isCancelRequested()) {
             $batch->cancel(sprintf('Dibatalkan oleh %s saat klasifikasi.', $batch->cancelRequestedBy() ?? 'pengguna'));
+
+            return;
+        }
+
+        // Tidak ada satu invoice pun yang perlu ditulis (semua UNCHANGED/REJECTED, atau
+        // file kosong) — batalkan otomatis alih-alih menggantung di awaiting_review dengan
+        // tombol "Proses Data Aman (0)" yang percuma. Ini juga langsung membuka jalan
+        // upload baru (lihat guard 409 di InvoiceImportController::store()), jadi reupload
+        // data yang identik tidak perlu klik "Batalkan Import" manual dulu.
+        if ($counters['cnt_new'] + $counters['cnt_safe_update'] === 0) {
+            $batch->cancel($this->buildAutoCancelMessage($counters));
 
             return;
         }
@@ -543,13 +553,23 @@ class InvoiceImportService
     /**
      * Inti aturan aman — MURNI (tanpa DB) supaya bisa diuji tanpa database.
      *
+     * Hanya ada DUA kondisi keras yang membuat invoice tidak disentuh:
+     *   1. periode TERKUNCI di Ending Balance, dan
+     *   2. invoice sudah LUNAS.
+     * Keduanya jadi REJECTED. Selain itu (TERKIRIM / SEBAGIAN) invoice diperbarui
+     * langsung — termasuk yang sudah dibayar sebagian atau sudah dicocokkan dengan
+     * rekening koran, karena update tidak menyentuh pembayaran/no. referensi dan
+     * sisa tagihannya memang dirancang mengikuti nilai terbaru secara dinamis.
+     *
+     * Urutan REJECTED sengaja: EB terkunci dicek LEBIH DULU daripada LUNAS supaya
+     * alasan yang tercatat selalu menyebut penyebab yang paling menentukan.
+     *
      * @param array      $incoming ['items' => item[], 'header' => [...]]
      * @param array|null $existing Snapshot invoice existing (null = belum ada)
      * @param bool       $ebLocked Periode invoice ini terkunci di Ending Balance
      *
      * @return array{classification: string, reason: ?string, risk_flags: string[],
-     *               adjustment_type: ?string, total_lama: float, total_baru: float,
-     *               selisih: float, header_diff: array}
+     *               total_lama: float, total_baru: float, selisih: float, header_diff: array}
      */
     public function classifyGroup(array $incoming, ?array $existing, bool $ebLocked): array
     {
@@ -564,65 +584,63 @@ class InvoiceImportService
                 return $this->result(
                     'REJECTED',
                     'Periode sudah dikunci di Ending Balance — invoice baru tidak dapat dibuat lewat import. Buka kunci EB terlebih dahulu.',
-                    ['EB_LOCKED'], null, 0.0, $totalBaru, [],
+                    ['EB_LOCKED'], 0.0, $totalBaru, [],
                 );
             }
 
-            return $this->result('NEW_INVOICE', null, [], null, 0.0, $totalBaru, []);
+            return $this->result('NEW_INVOICE', null, [], 0.0, $totalBaru, []);
         }
 
         // Netkan total_penyesuaian (CN/DN yang sudah disetujui) dari baseline —
         // subtotal invoice sengaja tidak pernah diubah saat CN/DN disetujui
         // (lihat EndingBalanceKoreksiService::applyPenyesuaian()), jadi tanpa ini
-        // koreksi yang sudah approved akan selalu terdeteksi lagi sebagai selisih
-        // baru pada import berikutnya dan diajukan sebagai CN/DN duplikat.
+        // koreksi manual yang sudah approved akan selalu terdeteksi lagi sebagai
+        // selisih baru pada import berikutnya.
         $totalLama  = round((float) ($existing['subtotal'] ?? 0) - (float) ($existing['total_penyesuaian'] ?? 0), 2);
         $selisih    = round($totalBaru - $totalLama, 2);
         $headerDiff = $this->diffHeader($existing['header'] ?? [], $incoming['header'] ?? []);
         $itemsSama  = $this->itemsSignature($existing['items'] ?? []) === $this->itemsSignature($incoming['items'] ?? []);
 
-        // Tidak ada perubahan sama sekali → tidak perlu disentuh, apa pun risikonya.
+        // Tidak ada perubahan sama sekali → tidak perlu disentuh, apa pun kondisinya.
         if ($itemsSama && empty($headerDiff)) {
-            return $this->result('UNCHANGED', 'Isi invoice sama dengan data existing.', [], null, $totalLama, $totalBaru, []);
+            return $this->result('UNCHANGED', 'Isi invoice sama dengan data existing.', [], $totalLama, $totalBaru, []);
         }
 
         // Selisih finansial sudah 0 dan sudah ada penyesuaian (CN/DN approved) yang
         // menutupnya — item invoice asli sengaja tidak pernah diubah saat CN/DN disetujui,
         // jadi item-level TIDAK akan pernah match lagi meski secara finansial sudah selesai.
-        // Jangan masuk staging kalau tidak ada perubahan lain (header) yang perlu ditinjau.
         if ($selisih === 0.0 && empty($headerDiff) && round((float) ($existing['total_penyesuaian'] ?? 0), 2) !== 0.0) {
-            return $this->result('UNCHANGED', 'Selisih sudah tertutup oleh CN/DN yang sudah disetujui sebelumnya.', [], null, $totalLama, $totalBaru, []);
+            return $this->result('UNCHANGED', 'Selisih sudah tertutup oleh CN/DN yang sudah disetujui sebelumnya.', [], $totalLama, $totalBaru, []);
         }
 
         $risk = $this->collectRiskFlags($existing, $ebLocked);
 
-        // Bersih dari transaksi → boleh ditimpa langsung.
-        if (empty($risk)) {
-            return $this->result('SAFE_UPDATE', null, [], null, $totalLama, $totalBaru, $headerDiff);
+        // ── Kondisi keras 1: periode terkunci di Ending Balance ──
+        // Selalu menang, tanpa pengecualian — termasuk untuk invoice SEBAGIAN yang
+        // sudah dicocokkan rekening koran. Angka EB yang sudah dikunci tidak boleh
+        // bergeser diam-diam lewat import; buka kunci EB dulu kalau memang mau diubah.
+        if ($ebLocked) {
+            return $this->result(
+                'REJECTED',
+                $this->buildRejectedReason($risk, 'Periode sudah dikunci di Ending Balance — buka kunci EB terlebih dahulu.'),
+                $risk, $totalLama, $totalBaru, $headerDiff,
+            );
         }
 
-        // Berisiko → jangan ditimpa. Tentukan bentuk penyesuaian yang tepat.
-        $adjustmentType = match (true) {
-            $selisih < 0 => 'CREDIT_NOTE',
-            $selisih > 0 => 'DEBIT_NOTE',
-            default      => 'METADATA',
-        };
-
-        // Kalau tagihan turun sampai di bawah pembayaran yang sudah masuk, jangan
-        // pernah auto-PDM dari import — cukup ditandai supaya Finance memutuskan sendiri.
-        if ($adjustmentType === 'CREDIT_NOTE' && (float) ($existing['total_pembayaran'] ?? 0) > $totalBaru) {
-            $risk[] = 'PEMBAYARAN_MELEBIHI';
+        // ── Kondisi keras 2: invoice sudah LUNAS ──
+        // Invoice yang sudah selesai ditagih diperlakukan sebagai dokumen final;
+        // perubahan nilainya harus lewat Credit/Debit Note manual di Ending Balance.
+        if (($existing['status'] ?? null) === 'LUNAS') {
+            return $this->result(
+                'REJECTED',
+                $this->buildRejectedReason($risk, 'Invoice sudah LUNAS — perubahan nilai harus lewat Credit/Debit Note manual di Ending Balance.'),
+                $risk, $totalLama, $totalBaru, $headerDiff,
+            );
         }
 
-        return $this->result(
-            'REVIEW_REQUIRED',
-            $this->buildReviewReason($risk, $adjustmentType, $selisih),
-            $risk,
-            $adjustmentType,
-            $totalLama,
-            $totalBaru,
-            $headerDiff,
-        );
+        // Sisanya (TERKIRIM / SEBAGIAN) diperbarui langsung. Pembayaran & no. referensi
+        // yang sudah ada tidak disentuh; sisa tagihan dihitung ulang mengikuti nilai baru.
+        return $this->result('SAFE_UPDATE', null, $risk, $totalLama, $totalBaru, $headerDiff);
     }
 
     /** @return string[] */
@@ -644,18 +662,18 @@ class InvoiceImportService
         return $flags;
     }
 
-    private function buildReviewReason(array $risk, string $adjustmentType, float $selisih): string
+    /**
+     * Gabungkan sebab utama penolakan dengan konteks risk flag lain, supaya kolom
+     * reason tetap menjelaskan kondisi invoice selengkapnya (mis. "sudah menerima
+     * pembayaran, sudah dicocokkan dengan rekening koran").
+     */
+    private function buildRejectedReason(array $risk, string $sebabUtama): string
     {
         $labels = array_map(fn($f) => self::RISK_LABELS[$f] ?? $f, $risk);
-        $sebab  = implode(', ', $labels);
 
-        $aksi = match ($adjustmentType) {
-            'CREDIT_NOTE' => 'Nilai turun ' . number_format(abs($selisih), 2, ',', '.') . ' → kandidat Credit Note.',
-            'DEBIT_NOTE'  => 'Nilai naik ' . number_format(abs($selisih), 2, ',', '.') . ' → kandidat Debit Note.',
-            default       => 'Nilai tidak berubah, hanya detail item/metadata → butuh tinjauan manual.',
-        };
-
-        return "Invoice {$sebab}. {$aksi}";
+        return empty($labels)
+            ? $sebabUtama
+            : $sebabUtama . ' Kondisi invoice: ' . implode(', ', $labels) . '.';
     }
 
     /** @return array{classification: string, ...} */
@@ -663,20 +681,18 @@ class InvoiceImportService
         string  $classification,
         ?string $reason,
         array   $riskFlags,
-        ?string $adjustmentType,
         float   $totalLama,
         float   $totalBaru,
         array   $headerDiff,
     ): array {
         return [
-            'classification'  => $classification,
-            'reason'          => $reason,
-            'risk_flags'      => $riskFlags,
-            'adjustment_type' => $adjustmentType,
-            'total_lama'      => $totalLama,
-            'total_baru'      => $totalBaru,
-            'selisih'         => round($totalBaru - $totalLama, 2),
-            'header_diff'     => $headerDiff,
+            'classification' => $classification,
+            'reason'         => $reason,
+            'risk_flags'     => $riskFlags,
+            'total_lama'     => $totalLama,
+            'total_baru'     => $totalBaru,
+            'selisih'        => round($totalBaru - $totalLama, 2),
+            'header_diff'    => $headerDiff,
         ];
     }
 
@@ -825,9 +841,10 @@ class InvoiceImportService
     }
 
     /**
-     * Proses satu chunk grup aman. Mengembalikan true jika masih ada sisa.
+     * Proses satu chunk grup aman + catat hasilnya ke riwayat perubahan.
+     * Mengembalikan true jika masih ada sisa.
      *
-     * REVIEW_REQUIRED / REJECTED / UNCHANGED tidak pernah masuk ke sini.
+     * REJECTED / UNCHANGED tidak pernah masuk ke sini (lihat SAFE_CLASSIFICATIONS).
      */
     public function applySafeChunk(InvoiceImportBatch $batch, int $limit = self::APPLY_CHUNK): bool
     {
@@ -866,12 +883,18 @@ class InvoiceImportService
         $counterDeltas = ['applied_inserted' => 0, 'applied_updated' => 0, 'applied_skipped' => 0, 'applied_failed' => 0];
         $now = now();
 
+        // Buffer riwayat perubahan HANYA untuk chunk ini, di-flush sebelum method
+        // ini selesai. Sengaja tidak diakumulasi lintas chunk: tiap chunk berjalan
+        // di ProcessInvoiceImportChunkJob yang terpisah, jadi buffer in-memory tidak
+        // mungkin bertahan antar-chunk.
+        $changeLog = [];
+
         // Batching: sinkronisasi Ending Balance per invoice (via InvoiceObserver)
         // ditunda dan di-dedup, lalu di-flush sekali per klien+periode di akhir
         // chunk ini alih-alih recompute penuh (+cascade 6 bulan) berulang kali.
         EndingBalanceSyncBatcher::run(function () use (
-            $groups, $lockedEbMap, $existingInvoiceMap, $klienMap, $carryoverMap, $cascadeCandidatesMap, $rowsByGroup,
-            &$errors, &$groupUpdates, &$counterDeltas, $now,
+            $batch, $groups, $lockedEbMap, $existingInvoiceMap, $klienMap, $carryoverMap, $cascadeCandidatesMap, $rowsByGroup,
+            &$errors, &$groupUpdates, &$counterDeltas, &$changeLog, $now,
         ) {
             foreach ($groups as $group) {
                 try {
@@ -900,6 +923,31 @@ class InvoiceImportService
                     $errors[] = ['row' => $group->first_line, 'message' => $result['message']];
                 }
 
+                // Riwayat perubahan. SKIPPED sengaja dilewat: itu guard processGroup()
+                // (invoice sudah LUNAS / periode terkunci) yang lolos ke fase apply karena
+                // race dengan aktivitas lain — bukan error, dan pola dua tab import lainnya
+                // memang tidak mencatat baris yang dilewati.
+                if ($result['status'] === 'APPLIED') {
+                    $this->recordChange(
+                        $changeLog,
+                        $batch->id,
+                        (int) $group->first_line,
+                        $group->classification === 'NEW_INVOICE' ? 'ditambahkan' : 'diperbarui',
+                        $this->changeLogSebelum($group),
+                        $this->changeLogBaru($group, $result['no_invoice'] ?? null),
+                    );
+                } elseif ($result['status'] === 'FAILED') {
+                    $this->recordChange(
+                        $changeLog,
+                        $batch->id,
+                        (int) $group->first_line,
+                        'gagal',
+                        $this->changeLogSebelum($group),
+                        $this->changeLogBaru($group),
+                        $result['message'],
+                    );
+                }
+
                 $counterDeltas[match ($result['status']) {
                     'APPLIED' => $group->classification === 'NEW_INVOICE' ? 'applied_inserted' : 'applied_updated',
                     'SKIPPED' => 'applied_skipped',
@@ -926,6 +974,17 @@ class InvoiceImportService
             'applied_skipped'   => $batch->applied_skipped + $counterDeltas['applied_skipped'],
             'applied_failed'    => $batch->applied_failed + $counterDeltas['applied_failed'],
         ]);
+
+        // Kegagalan menulis riwayat perubahan TIDAK boleh menggagalkan invoice yang
+        // sudah berhasil ditulis di atas — cukup di-log (mirror OpeningBalanceImportService).
+        try {
+            $this->flushChangeLog($changeLog);
+        } catch (\Throwable $e) {
+            Log::warning('Gagal menulis riwayat perubahan Import Master Invoice', [
+                'batch_id' => $batch->id,
+                'error'    => $e->getMessage(),
+            ]);
+        }
 
         return InvoiceImportGroup::where('batch_id', $batch->id)
             ->whereIn('classification', InvoiceImportGroup::SAFE_CLASSIFICATIONS)
@@ -1151,156 +1210,120 @@ class InvoiceImportService
             'phase'       => 'completed',
             'finished_at' => now(),
             'message'     => sprintf(
-                'Proses data aman selesai: %d dibuat, %d diperbarui, %d dilewati, %d gagal. %d invoice menunggu keputusan penyesuaian.',
+                'Proses data aman selesai: %d dibuat, %d diperbarui, %d gagal. %d invoice dilewati (sudah lunas / periode terkunci).',
                 $batch->applied_inserted,
                 $batch->applied_updated,
-                $batch->applied_skipped,
                 $batch->applied_failed,
-                InvoiceImportGroup::where('batch_id', $batch->id)
-                    ->where('classification', 'REVIEW_REQUIRED')
-                    ->where('review_status', 'PENDING')
-                    ->count(),
+                $batch->cnt_rejected + $batch->applied_skipped,
             ),
         ]);
     }
 
     // ══════════════════════════════════════════════════════════════
-    //  FASE 4 — Penyesuaian (Credit Note / Debit Note)
+    //  Riwayat perubahan (tb_invoice_import_change_log)
     // ══════════════════════════════════════════════════════════════
 
     /**
-     * Ajukan atau tolak kandidat penyesuaian untuk baris REVIEW_REQUIRED.
+     * Buffer 1 entri riwayat perubahan — MURNI di memori, TIDAK ditulis ke DB di sini
+     * (lihat flushChangeLog()). Mirror OpeningBalanceImportService::recordChange().
      *
-     * Import TIDAK pernah menyetujui apa pun: CN/DN dibuat dengan status
-     * PENDING_MANAGER dan mengikuti alur approval koreksi Ending Balance yang
-     * sudah ada. Sisa tagihan AR baru berubah setelah koreksi disetujui.
-     *
-     * @param  array $decisions [['group_id' => int, 'action' => 'submit'|'dismiss', 'alasan' => ?string], …]
-     * @return array{submitted: int, dismissed: int, failed: int, results: array}
+     * HANYA 'ditambahkan' | 'diperbarui' | 'gagal' yang boleh masuk, mengikuti pola dua
+     * tab import lainnya. Grup REJECTED (sudah lunas / periode terkunci), UNCHANGED, dan
+     * SKIPPED sengaja TIDAK dicatat — jumlahnya sudah terwakili counter pada batch.
      */
-    public function submitAdjustments(InvoiceImportBatch $batch, array $decisions, int $userId): array
-    {
-        $submitted = $dismissed = $failed = 0;
-        $results   = [];
+    private function recordChange(
+        array   &$buffer,
+        string  $batchId,
+        int     $rowNumber,
+        string  $changeType,
+        ?array  $dataSebelum,
+        ?array  $dataBaru,
+        ?string $message = null,
+    ): void {
+        $searchParts = array_filter(
+            array_merge(array_values($dataSebelum ?? []), array_values($dataBaru ?? []), [$message]),
+            static fn($v) => is_string($v) && $v !== '',
+        );
 
-        foreach ($decisions as $decision) {
-            $groupId = (int) ($decision['group_id'] ?? 0);
-            $action  = $decision['action'] ?? 'submit';
+        $now = now();
 
-            $group = InvoiceImportGroup::where('batch_id', $batch->id)->find($groupId);
-
-            if (!$group) {
-                $failed++;
-                $results[] = ['group_id' => $groupId, 'status' => 'FAILED', 'message' => 'Baris review tidak ditemukan pada batch ini.'];
-                continue;
-            }
-
-            if (!$group->needsReview() || $group->review_status !== 'PENDING') {
-                $failed++;
-                $results[] = ['group_id' => $groupId, 'status' => 'FAILED', 'message' => 'Baris ini tidak lagi menunggu keputusan.'];
-                continue;
-            }
-
-            if ($action === 'dismiss') {
-                $group->update([
-                    'review_status'  => 'DISMISSED',
-                    'review_message' => $decision['alasan'] ?? 'Ditolak oleh pengguna — invoice existing dipertahankan.',
-                    'decided_by'     => $userId,
-                    'decided_at'     => now(),
-                ]);
-                $dismissed++;
-                $results[] = ['group_id' => $groupId, 'status' => 'DISMISSED', 'message' => null];
-                continue;
-            }
-
-            try {
-                $koreksi = $this->createKoreksiForGroup($group, $decision['alasan'] ?? null, $userId);
-
-                $group->update([
-                    'review_status'  => 'SUBMITTED',
-                    'koreksi_id'     => $koreksi->id,
-                    'review_message' => "Diajukan sebagai {$koreksi->no_dokumen} — menunggu persetujuan.",
-                    'decided_by'     => $userId,
-                    'decided_at'     => now(),
-                ]);
-                $submitted++;
-                $results[] = ['group_id' => $groupId, 'status' => 'SUBMITTED', 'message' => $koreksi->no_dokumen];
-            } catch (\Throwable $e) {
-                $failed++;
-                $message = $e instanceof \Symfony\Component\HttpKernel\Exception\HttpExceptionInterface
-                    ? $e->getMessage()
-                    : 'Gagal mengajukan penyesuaian: ' . $e->getMessage();
-
-                $group->update(['review_message' => $message]);
-                $results[] = ['group_id' => $groupId, 'status' => 'FAILED', 'message' => $message];
-                Log::warning('InvoiceImportService: gagal submit penyesuaian', ['group_id' => $groupId, 'error' => $e->getMessage()]);
-            }
-        }
-
-        $batch->increment('adjustment_submitted', $submitted);
-        $batch->increment('adjustment_dismissed', $dismissed);
-
-        return ['submitted' => $submitted, 'dismissed' => $dismissed, 'failed' => $failed, 'results' => $results];
+        $buffer[] = [
+            'batch_id'     => $batchId,
+            'row_number'   => $rowNumber,
+            'change_type'  => $changeType,
+            'data_sebelum' => $dataSebelum !== null ? json_encode($dataSebelum) : null,
+            'data_baru'    => $dataBaru !== null ? json_encode($dataBaru) : null,
+            'message'      => $message,
+            'search_text'  => mb_substr(implode(' ', array_unique($searchParts)), 0, 500),
+            'created_at'   => $now,
+            'updated_at'   => $now,
+        ];
     }
 
-    private function createKoreksiForGroup(InvoiceImportGroup $group, ?string $alasan, int $userId)
+    /** Bulk insert isi buffer riwayat perubahan, dipecah per CHANGE_LOG_FLUSH_SIZE baris per statement. */
+    private function flushChangeLog(array $buffer): void
     {
-        abort_unless(
-            in_array($group->adjustment_type, ['CREDIT_NOTE', 'DEBIT_NOTE'], true),
-            422,
-            'Perubahan ini tidak mengubah nominal invoice, jadi tidak bisa diajukan sebagai Credit/Debit Note. Tinjau manual lewat menu Invoice.',
-        );
-        abort_unless($group->invoice_id, 422, 'Invoice tujuan penyesuaian tidak ditemukan.');
-
-        $eb = $this->resolveEndingBalanceForGroup($group, $userId);
-
-        return $this->koreksiService->submit($eb, [
-            'tipe'           => $group->adjustment_type,
-            'invoice_id'     => $group->invoice_id,
-            'nilai_koreksi'  => abs((float) $group->selisih),
-            'alasan_koreksi' => $alasan ?: $this->defaultAlasan($group),
-        ], $userId);
+        foreach (array_chunk($buffer, self::CHANGE_LOG_FLUSH_SIZE) as $chunk) {
+            DB::table('tb_invoice_import_change_log')->insert($chunk);
+        }
     }
 
     /**
-     * Cari Ending Balance periode invoice ini; kalau belum ada, bangun DRAFT-nya
-     * lewat EndingBalanceService supaya nilainya konsisten dengan perhitungan EB
-     * biasa (bukan record kosong buatan import).
+     * Isi kolom data_sebelum: kondisi invoice existing SEBELUM ditimpa isi file.
+     * Hanya relevan untuk SAFE_UPDATE — NEW_INVOICE belum punya "sebelum".
      */
-    private function resolveEndingBalanceForGroup(InvoiceImportGroup $group, int $userId): EndingBalance
+    private function changeLogSebelum(InvoiceImportGroup $group): ?array
     {
-        $tanggal      = Carbon::parse($this->dateOrNull($group->tanggal_invoice));
-        $periodeAwal  = $tanggal->copy()->startOfMonth()->toDateString();
-        $periodeAkhir = $tanggal->copy()->endOfMonth()->toDateString();
-
-        $find = fn() => EndingBalance::where('klien_ar_id', $group->klien_ar_id)
-            ->where('periode_awal', $periodeAwal)
-            ->where('periode_akhir', $periodeAkhir)
-            ->first();
-
-        $eb = $find();
-        if (!$eb) {
-            $this->ebService->syncEbForKlien((int) $group->klien_ar_id, $periodeAwal, $periodeAkhir, $userId);
-            $eb = $find();
+        if ($group->classification !== 'SAFE_UPDATE') {
+            return null;
         }
 
-        abort_unless($eb, 422, "Ending Balance periode {$periodeAwal} s/d {$periodeAkhir} tidak dapat dibuat untuk klien ini.");
+        $diff = $group->header_diff ?? [];
 
-        return $eb;
+        // array_key_exists (bukan ??) disengaja: kalau field ADA di header_diff tapi nilai
+        // lamanya null, itu memang "dulu kosong" — jangan sampai jatuh ke nilai file baru.
+        return $this->pruneEmpty([
+            'no_invoice'          => $group->no_invoice,
+            'nama_klien'          => $group->nama_klien,
+            'kode_resto'          => $group->kode_resto,
+            'tanggal_invoice'     => $this->dateOrNull($group->tanggal_invoice),
+            'tanggal_jatuh_tempo' => array_key_exists('tanggal_jatuh_tempo', $diff)
+                ? $diff['tanggal_jatuh_tempo']['lama']
+                : $this->dateOrNull($group->tanggal_jatuh_tempo),
+            'no_surat_jalan'      => array_key_exists('no_surat_jalan', $diff)
+                ? $diff['no_surat_jalan']['lama']
+                : $group->no_surat_jalan,
+            'total'               => $this->rupiah((float) $group->total_lama),
+        ]);
     }
 
-    private function defaultAlasan(InvoiceImportGroup $group): string
+    /** Isi kolom data_baru: kondisi invoice SESUDAH ditulis dari file. */
+    private function changeLogBaru(InvoiceImportGroup $group, ?string $noInvoice = null): array
     {
-        $arah = $group->adjustment_type === 'CREDIT_NOTE' ? 'penurunan' : 'kenaikan';
+        return $this->pruneEmpty([
+            'no_invoice'          => $noInvoice ?? $group->no_invoice,
+            'nama_klien'          => $group->nama_klien,
+            'kode_resto'          => $group->kode_resto,
+            'tanggal_invoice'     => $this->dateOrNull($group->tanggal_invoice),
+            'tanggal_jatuh_tempo' => $this->dateOrNull($group->tanggal_jatuh_tempo),
+            'no_surat_jalan'      => $group->no_surat_jalan,
+            'total'               => $this->rupiah((float) $group->total_baru),
+            'jumlah_item'         => (string) $group->item_count,
+        ]);
+    }
 
-        return sprintf(
-            'Penyesuaian dari import invoice %s: %s nilai dari %s menjadi %s (selisih %s).',
-            $group->no_invoice ?? '-',
-            $arah,
-            number_format((float) $group->total_lama, 2, ',', '.'),
-            number_format((float) $group->total_baru, 2, ',', '.'),
-            number_format(abs((float) $group->selisih), 2, ',', '.'),
-        );
+    /**
+     * Buang key bernilai null/'' supaya "Lihat detail" di FE tidak penuh baris kosong.
+     * Semua value sengaja string: search_text hanya mengindeks value bertipe string.
+     */
+    private function pruneEmpty(array $data): array
+    {
+        return array_filter($data, static fn($v) => $v !== null && $v !== '');
+    }
+
+    private function rupiah(float $value): string
+    {
+        return number_format($value, 2, ',', '.');
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -1332,14 +1355,23 @@ class InvoiceImportService
     private function buildClassificationMessage(array $c, int $rejectedRows = 0): string
     {
         $message = sprintf(
-            'Klasifikasi selesai: %d baru, %d update aman, %d tanpa perubahan, %d butuh review (CN %d / DN %d / metadata %d), %d invoice ditolak.',
-            $c['cnt_new'], $c['cnt_safe_update'], $c['cnt_unchanged'], $c['cnt_review_required'],
-            $c['cnt_cn_candidate'], $c['cnt_dn_candidate'], $c['cnt_metadata_candidate'], $c['cnt_rejected'],
+            'Klasifikasi selesai: %d baru, %d update aman, %d tanpa perubahan, %d dilewati (sudah lunas / periode terkunci).',
+            $c['cnt_new'], $c['cnt_safe_update'], $c['cnt_unchanged'], $c['cnt_rejected'],
         );
 
         return $rejectedRows > 0
             ? $message . " {$rejectedRows} baris file ditolak saat pembacaan — lihat daftar error."
             : $message;
+    }
+
+    /** Pesan untuk batch yang dibatalkan otomatis karena tidak ada invoice yang perlu ditulis. */
+    private function buildAutoCancelMessage(array $c): string
+    {
+        return sprintf(
+            'Tidak ada perubahan untuk ditulis (%d tanpa perubahan, %d dilewati) — data sama dengan yang sudah tersimpan. '
+            . 'Import dibatalkan otomatis, silakan unggah file revisi jika ada perubahan.',
+            $c['cnt_unchanged'], $c['cnt_rejected'],
+        );
     }
 
     private function nullIfBlank(mixed $val): ?string
