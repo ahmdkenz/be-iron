@@ -73,8 +73,6 @@ Route::prefix('invoices')->group(function () {
     Route::get('/outstanding-bulk', [InvoiceController::class, 'outstandingBulk']);
     Route::get('/preview-no', [InvoiceController::class, 'previewNo']);
     Route::get('/preview-no-konsolidasi', [InvoiceController::class, 'previewConsolidatedNo']);
-    Route::post('/bulk-b2c-investor/preview', [InvoiceController::class, 'bulkB2CInvestorPreview']);
-    Route::post('/bulk-b2c-investor/link', [InvoiceController::class, 'bulkB2CInvestorLink']);
     Route::post('/email-blast', [InvoiceController::class, 'emailBlast'])->middleware('throttle:15,1,email-blast');
     Route::get('/email-blast/{batch}/status', [InvoiceController::class, 'emailBlastStatus']);
     // Mutasi invoice — sebelumnya tanpa role: middleware sama sekali (proteksi

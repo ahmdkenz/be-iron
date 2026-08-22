@@ -77,10 +77,10 @@ return Application::configure(basePath: dirname(__DIR__))
             ->everyFiveMinutes()
             ->withoutOverlapping();
 
-        // Baris tb_bulk_print_tokens (link publik "Kirim Bulk Investor") tidak
-        // ada gunanya lagi setelah signed URL-nya sendiri kedaluwarsa (30 hari).
-        $schedule->command('bulk-print-token:cleanup')
-            ->daily()
+        // Sama alasannya lagi — importStatus() Import Master Data dulu memanggil failStale()
+        // inline di tiap polling FE (tiap ~2.5 detik), rawan deadlock yang sama.
+        $schedule->command('master-data:cleanup-stale-imports')
+            ->everyFiveMinutes()
             ->withoutOverlapping();
     })
     ->withMiddleware(function (Middleware $middleware): void {

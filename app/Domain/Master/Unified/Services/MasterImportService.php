@@ -18,6 +18,7 @@ use App\Models\Perusahaan;
 use App\Models\Resto;
 use App\Support\Exceptions\ImportCancelledException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 use PhpOffice\PhpSpreadsheet\IOFactory;
@@ -71,6 +72,31 @@ class MasterImportService
      * membengkak saat re-import file besar (±13.000 baris) yang sebagian besar tidak berubah.
      */
     private const MAX_DETAILS = 500;
+
+    /**
+     * Jumlah baris riwayat perubahan (tb_import_master_change_log) per statement insert()
+     * saat flushChangeLog() memecah buffer jadi beberapa bulk insert — beda dari MAX_DETAILS
+     * (itu membatasi $details lama yang cuma feed panel hasil dialog import; tabel riwayat
+     * baru ini tidak dibatasi jumlah barisnya, cuma dipecah per statement).
+     */
+    private const CHANGE_LOG_FLUSH_SIZE = 500;
+
+    /** Field yang disnapshot ke data_sebelum/data_baru riwayat import — nama+kode duluan (identitas utama di UI). */
+    private const INVESTOR_SNAPSHOT_FIELDS = ['nama_investor', 'kode_cabang', 'ktp', 'npwp', 'no_hp', 'pengelola', 'no_hp_pengelola', 'email', 'id_cabang', 'status'];
+
+    private const RESTO_SNAPSHOT_FIELDS = ['nama_resto', 'kode_resto', 'supervisor', 'no_hp_supervisor', 'stokis', 'area', 'kota', 'alamat', 'no_telp', 'tgl_aktif', 'keterangan', 'status'];
+
+    private const KLIEN_AR_SNAPSHOT_FIELDS = ['nama_klien', 'kode_klien', 'tipe_klien', 'no_npwp', 'no_wa', 'status'];
+
+    /**
+     * Jumlah batch Import Master Data (status completed/failed) yang disimpan — sisanya
+     * di-auto-prune tiap kali 1 import selesai (lihat pruneOldBatches()). UI hanya pernah
+     * menampilkan batch TERAKHIR, jadi 1 sudah cukup secara fungsional; 2 disisakan sebagai
+     * buffer kecil (mis. untuk query manual dari database membandingkan 2 import terakhir).
+     */
+    private const KEEP_BATCHES = 2;
+
+    private const BARANG_SNAPSHOT_FIELDS = ['kode_barang', 'nama_barang', 'spesifikasi', 'keterangan', 'status'];
 
     /** Label field Indonesia untuk pesan "apa yang berubah" — dipakai formatDiffMessage(). */
     private const INVESTOR_FIELD_LABELS = [
@@ -157,15 +183,16 @@ class MasterImportService
 
         $batch->update(['status' => 'processing']);
 
-        $errors  = [];
-        $details = [];
-        $counts  = ['investor_skipped' => 0, 'resto_skipped' => 0];
+        $errors    = [];
+        $details   = [];
+        $changeLog = [];
+        $counts    = ['investor_skipped' => 0, 'resto_skipped' => 0];
 
         DB::beginTransaction();
         try {
             try {
-                $counts = $this->processMasterDataSheet($spreadsheet, $batch, $errors, $details);
-                $this->processMasterBarangSheet($spreadsheet, $batch, $errors, $details);
+                $counts = $this->processMasterDataSheet($spreadsheet, $batch, $errors, $details, $changeLog);
+                $this->processMasterBarangSheet($spreadsheet, $batch, $errors, $details, $changeLog);
                 $this->noticeInvoiceSheetIgnored($spreadsheet, $errors);
             } finally {
                 $spreadsheet->disconnectWorksheets();
@@ -189,6 +216,25 @@ class MasterImportService
             throw $e;
         }
 
+        // Riwayat perubahan ditulis SETELAH DB::commit() di atas berhasil — SENGAJA bukan
+        // di dalam transaksi besar (lihat try block di atas). tb_import_master_change_log
+        // punya FK ke tb_import_master_batch, jadi INSERT ke situ selagi transaksi besar
+        // masih terbuka akan ikut mengambil shared row lock pada baris batch (demi FK
+        // check) — itu bentrok dengan writeProgress() yang menulis baris batch YANG SAMA
+        // lewat koneksi terpisah 'mysql_progress' supaya progress tetap kelihatan real-time
+        // (lihat komentar besar di writeProgress()), menyebabkan writeProgress() menunggu
+        // sampai innodb_lock_wait_timeout (SQLSTATE 1205). Menulis di sini (setelah commit,
+        // setelah semua writeProgress() untuk batch ini selesai) menghindari itu sepenuhnya.
+        // Konsekuensi: batch yang gagal/dibatalkan (return/throw di atas) otomatis tidak
+        // pernah sampai baris ini — buffer $changeLog dibuang begitu saja, tidak perlu
+        // rollback manual. Gagal simpan riwayat TIDAK boleh menggagalkan import yang sudah
+        // commit — cukup dicatat log, bukan dilempar ulang.
+        try {
+            $this->flushChangeLog($changeLog);
+        } catch (\Throwable $e) {
+            Log::warning('Gagal menyimpan riwayat perubahan import master data: ' . $e->getMessage(), ['batch_id' => $batch->id]);
+        }
+
         $batch     = $batch->fresh();
         $detailTotal = $counts['investor_skipped'] + $counts['resto_skipped']
             + $batch->investor_updated + $batch->resto_updated
@@ -206,6 +252,14 @@ class MasterImportService
             ],
             'message' => $this->buildSummaryMessage($batch, $counts['investor_skipped'], $counts['resto_skipped']),
         ]);
+
+        // Auto-prune batch lama SETELAH batch ini sukses — lihat komentar pruneOldBatches().
+        // Gagal prune TIDAK boleh menggagalkan import yang sudah selesai — cukup dicatat log.
+        try {
+            $this->pruneOldBatches();
+        } catch (\Throwable $e) {
+            Log::warning('Gagal membersihkan batch import master data lama: ' . $e->getMessage(), ['batch_id' => $batch->id]);
+        }
     }
 
     /**
@@ -232,7 +286,7 @@ class MasterImportService
     // ──────────────────────────────────────────────────────────────
 
     /** @return array{investor_skipped: int, resto_skipped: int} */
-    private function processMasterDataSheet(\PhpOffice\PhpSpreadsheet\Spreadsheet $spreadsheet, ImportMasterBatch $batch, array &$errors, array &$details): array
+    private function processMasterDataSheet(\PhpOffice\PhpSpreadsheet\Spreadsheet $spreadsheet, ImportMasterBatch $batch, array &$errors, array &$details, array &$changeLog): array
     {
         $noSkip = ['investor_skipped' => 0, 'resto_skipped' => 0];
 
@@ -308,7 +362,7 @@ class MasterImportService
         // dan progress tick, bukan commit.
         $this->chunkMasterRows($sheet, $detected['dataStart'], $detected['highestColumn'], self::PARSE_CHUNK,
             function (array $row) use (
-                &$errors, &$details, &$inChunk, &$processed, &$lineNumber,
+                &$errors, &$details, &$changeLog, &$inChunk, &$processed, &$lineNumber,
                 &$invIns, &$invUpd, &$invFail, &$invSkip, &$resIns, &$resUpd, &$resFail, &$resSkip,
                 &$kliIns, &$kliUpd, &$kliFail, &$kliSkip,
                 &$karyawanMap, &$karyawanNameById,
@@ -382,9 +436,11 @@ class MasterImportService
                     ]);
 
                     if ($validator->fails()) {
-                        $errors[] = ['sheet' => 'MASTER DATA', 'row' => $lineNumber, 'message' => '[Investor] ' . implode('; ', $validator->errors()->all())];
+                        $errorMessage = implode('; ', $validator->errors()->all());
+                        $errors[] = ['sheet' => 'MASTER DATA', 'row' => $lineNumber, 'message' => '[Investor] ' . $errorMessage];
                         $invFail++;
                         $investorFailed = true;
+                        $this->recordChange($changeLog, $batch, 'investor', $lineNumber, 'gagal', null, $invData, $errorMessage);
                     } else {
                         $investorKey = $this->investorDedupKey($invData['nama_investor'], $invData['kode_cabang'], $invData['id_cabang']);
                         $existing = $investorMap[$investorKey] ?? null;
@@ -403,11 +459,13 @@ class MasterImportService
                             if ($existing) {
                                 $invDiff = $this->investorDiff($existing, $invData);
                                 if (!empty($invDiff)) {
+                                    $invBefore = $this->snapshotEntity($existing, self::INVESTOR_SNAPSHOT_FIELDS);
                                     $existing->updated_by = $actingUserId;
                                     $investor = $this->investorService->update($existing, InvestorDTO::fromRequest($invData), eagerLoad: false);
                                     $investorMap[$investorKey] = $investor;
                                     $invUpd++;
                                     $this->pushDetail($details, 'MASTER DATA', $lineNumber, '[Investor] ' . $this->formatDiffMessage($invDiff, self::INVESTOR_FIELD_LABELS));
+                                    $this->recordChange($changeLog, $batch, 'investor', $lineNumber, 'diperbarui', $invBefore, $this->snapshotEntity($investor, self::INVESTOR_SNAPSHOT_FIELDS));
                                 } else {
                                     $investor = $existing;
                                     $invSkip++;
@@ -417,11 +475,13 @@ class MasterImportService
                                 $investor = $this->investorService->create(InvestorDTO::fromRequest($invData), eagerLoad: false);
                                 $investorMap[$investorKey] = $investor;
                                 $invIns++;
+                                $this->recordChange($changeLog, $batch, 'investor', $lineNumber, 'ditambahkan', null, $this->snapshotEntity($investor, self::INVESTOR_SNAPSHOT_FIELDS));
                             }
                         } catch (\Throwable $e) {
                             $errors[] = ['sheet' => 'MASTER DATA', 'row' => $lineNumber, 'message' => '[Investor] Gagal menyimpan: ' . $e->getMessage()];
                             $invFail++;
                             $investorFailed = true;
+                            $this->recordChange($changeLog, $batch, 'investor', $lineNumber, 'gagal', null, $invData, '[Investor] Gagal menyimpan: ' . $e->getMessage());
                         }
                     }
                 }
@@ -478,8 +538,10 @@ class MasterImportService
                     }
 
                     if (!empty($rowErrors)) {
-                        $errors[] = ['sheet' => 'MASTER DATA', 'row' => $lineNumber, 'message' => '[Resto] ' . implode('; ', $rowErrors)];
+                        $rowErrorMessage = implode('; ', $rowErrors);
+                        $errors[] = ['sheet' => 'MASTER DATA', 'row' => $lineNumber, 'message' => '[Resto] ' . $rowErrorMessage];
                         $resFail++;
+                        $this->recordChange($changeLog, $batch, 'resto', $lineNumber, 'gagal', null, ['nama_resto' => $namaCabang, 'kode_resto' => $kodeResto ?: null], $rowErrorMessage);
                     } else {
                         $resData = [
                             'nama_resto'       => $namaCabang,
@@ -520,18 +582,22 @@ class MasterImportService
                         ]);
 
                         if ($validator->fails()) {
-                            $errors[] = ['sheet' => 'MASTER DATA', 'row' => $lineNumber, 'message' => '[Resto] ' . implode('; ', $validator->errors()->all())];
+                            $errorMessage = implode('; ', $validator->errors()->all());
+                            $errors[] = ['sheet' => 'MASTER DATA', 'row' => $lineNumber, 'message' => '[Resto] ' . $errorMessage];
                             $resFail++;
+                            $this->recordChange($changeLog, $batch, 'resto', $lineNumber, 'gagal', null, $resData, $errorMessage);
                         } else {
                             try {
                                 if ($existingResto) {
                                     $resDiff = $this->restoDiff($existingResto, $resData);
                                     if (!empty($resDiff)) {
+                                        $resBefore = $this->snapshotEntity($existingResto, self::RESTO_SNAPSHOT_FIELDS);
                                         $existingResto->updated_by = $actingUserId;
                                         $resto = $this->restoService->update($existingResto, RestoDTO::fromRequest($resData), eagerLoad: false);
                                         $this->writeRestoDedupMaps($resto, $restoByKodeMap, $restoByNamaMap);
                                         $resUpd++;
                                         $this->pushDetail($details, 'MASTER DATA', $lineNumber, '[Resto] ' . $this->formatDiffMessage($resDiff, self::RESTO_FIELD_LABELS));
+                                        $this->recordChange($changeLog, $batch, 'resto', $lineNumber, 'diperbarui', $resBefore, $this->snapshotEntity($resto, self::RESTO_SNAPSHOT_FIELDS));
                                     } else {
                                         $resto = $existingResto;
                                         $resSkip++;
@@ -556,12 +622,14 @@ class MasterImportService
                                         && strtolower($resData['kota']) === strtolower($namaCollision->kota);
 
                                     if ($namaCollision && $sameKota) {
+                                        $collisionMessage = "nama_resto '{$namaCabang}' di kota yang sama sudah terdaftar {$kodeInfo}. Jika ini koreksi/pelengkapan kode, ubah kode_resto lewat halaman Master Resto > Edit — bukan lewat import — untuk menghindari data terduplikat.";
                                         $errors[] = [
                                             'sheet' => 'MASTER DATA',
                                             'row' => $lineNumber,
-                                            'message' => "[Resto] nama_resto '{$namaCabang}' di kota yang sama sudah terdaftar {$kodeInfo}. Jika ini koreksi/pelengkapan kode, ubah kode_resto lewat halaman Master Resto > Edit — bukan lewat import — untuk menghindari data terduplikat.",
+                                            'message' => "[Resto] {$collisionMessage}",
                                         ];
                                         $resFail++;
+                                        $this->recordChange($changeLog, $batch, 'resto', $lineNumber, 'gagal', null, $resData, $collisionMessage);
                                     } else {
                                         $resto = $this->restoService->create(RestoDTO::fromRequest($resData), eagerLoad: false);
                                         $this->writeRestoDedupMaps($resto, $restoByKodeMap, $restoByNamaMap);
@@ -569,11 +637,13 @@ class MasterImportService
                                         if ($namaCollision) {
                                             $this->pushDetail($details, 'MASTER DATA', $lineNumber, "[Resto] Perhatian: nama_resto '{$namaCabang}' sudah dipakai outlet lain {$kodeInfo} (kota berbeda/tidak diisi) — dibuat sebagai outlet baru, cek manual kalau seharusnya ini outlet yang sama.");
                                         }
+                                        $this->recordChange($changeLog, $batch, 'resto', $lineNumber, 'ditambahkan', null, $this->snapshotEntity($resto, self::RESTO_SNAPSHOT_FIELDS));
                                     }
                                 }
                             } catch (\Throwable $e) {
                                 $errors[] = ['sheet' => 'MASTER DATA', 'row' => $lineNumber, 'message' => '[Resto] Gagal menyimpan: ' . $e->getMessage()];
                                 $resFail++;
+                                $this->recordChange($changeLog, $batch, 'resto', $lineNumber, 'gagal', null, $resData, '[Resto] Gagal menyimpan: ' . $e->getMessage());
                             }
                         }
                     }
@@ -685,8 +755,10 @@ class MasterImportService
                     }
 
                     if (!empty($rowErrors)) {
-                        $errors[] = ['sheet' => 'MASTER DATA', 'row' => $lineNumber, 'message' => '[Client] ' . implode('; ', $rowErrors)];
+                        $rowErrorMessage = implode('; ', $rowErrors);
+                        $errors[] = ['sheet' => 'MASTER DATA', 'row' => $lineNumber, 'message' => '[Client] ' . $rowErrorMessage];
                         $kliFail++;
+                        $this->recordChange($changeLog, $batch, 'klien_ar', $lineNumber, 'gagal', null, ['nama_klien' => $namaKlien, 'tipe_klien' => $tipeKlien], $rowErrorMessage);
                     } else {
                         $kliData = [
                             'nama_klien'     => $namaKlien,
@@ -711,8 +783,10 @@ class MasterImportService
                         ]);
 
                         if ($validator->fails()) {
-                            $errors[] = ['sheet' => 'MASTER DATA', 'row' => $lineNumber, 'message' => '[Client] ' . implode('; ', $validator->errors()->all())];
+                            $errorMessage = implode('; ', $validator->errors()->all());
+                            $errors[] = ['sheet' => 'MASTER DATA', 'row' => $lineNumber, 'message' => '[Client] ' . $errorMessage];
                             $kliFail++;
+                            $this->recordChange($changeLog, $batch, 'klien_ar', $lineNumber, 'gagal', null, $kliData, $errorMessage);
                         } else {
                             // klienKey null berarti jalur fallback (nama_klien+tipe_klien) — path langka
                             // (hanya saat perusahaan_id/resto_id tidak berhasil diresolusi), sengaja
@@ -734,6 +808,7 @@ class MasterImportService
                                 if ($existingKlien) {
                                     $kliDiff = $this->klienArDiff($existingKlien, $kliData);
                                     if (!empty($kliDiff)) {
+                                        $kliBefore = $this->snapshotEntity($existingKlien, self::KLIEN_AR_SNAPSHOT_FIELDS);
                                         $existingKlien->updated_by = $actingUserId;
                                         $updatedKlien = $this->klienArService->update($existingKlien, KlienArDTO::fromRequest($kliData), eagerLoad: false);
                                         if ($klienKey !== null) {
@@ -741,6 +816,7 @@ class MasterImportService
                                         }
                                         $kliUpd++;
                                         $this->pushDetail($details, 'MASTER DATA', $lineNumber, '[Client] ' . $this->formatDiffMessage($kliDiff, self::KLIEN_AR_FIELD_LABELS));
+                                        $this->recordChange($changeLog, $batch, 'klien_ar', $lineNumber, 'diperbarui', $kliBefore, $this->snapshotEntity($updatedKlien, self::KLIEN_AR_SNAPSHOT_FIELDS));
                                     } else {
                                         $kliSkip++;
                                         $this->pushDetail($details, 'MASTER DATA', $lineNumber, '[Client] Data sudah sama persis dengan data tersimpan — tidak ada perubahan, baris dilewati.');
@@ -751,10 +827,12 @@ class MasterImportService
                                         $tipeKlien === 'PT' ? $klienByPerusahaanMap[$klienKey] = $newKlien : $klienByRestoMap[$klienKey] = $newKlien;
                                     }
                                     $kliIns++;
+                                    $this->recordChange($changeLog, $batch, 'klien_ar', $lineNumber, 'ditambahkan', null, $this->snapshotEntity($newKlien, self::KLIEN_AR_SNAPSHOT_FIELDS));
                                 }
                             } catch (\Throwable $e) {
                                 $errors[] = ['sheet' => 'MASTER DATA', 'row' => $lineNumber, 'message' => '[Client] Gagal menyimpan: ' . $e->getMessage()];
                                 $kliFail++;
+                                $this->recordChange($changeLog, $batch, 'klien_ar', $lineNumber, 'gagal', null, $kliData, '[Client] Gagal menyimpan: ' . $e->getMessage());
                             }
                         }
                     }
@@ -776,7 +854,7 @@ class MasterImportService
     //  Sheet 2: MASTER BARANG (Barang)
     // ──────────────────────────────────────────────────────────────
 
-    private function processMasterBarangSheet(\PhpOffice\PhpSpreadsheet\Spreadsheet $spreadsheet, ImportMasterBatch $batch, array &$errors, array &$details): void
+    private function processMasterBarangSheet(\PhpOffice\PhpSpreadsheet\Spreadsheet $spreadsheet, ImportMasterBatch $batch, array &$errors, array &$details, array &$changeLog): void
     {
         $sheetIndex = $this->findSheetIndex($spreadsheet, 'MASTER BARANG');
         if ($sheetIndex === null) {
@@ -815,7 +893,7 @@ class MasterImportService
         // ikut transaksi besar yang dibuka process().
         $this->chunkMasterRows($sheet, $detected['dataStart'], $detected['highestColumn'], self::PARSE_CHUNK,
             function (array $row) use (
-                &$errors, &$details, &$inChunk, &$processed, &$lineNumber,
+                &$errors, &$details, &$changeLog, &$inChunk, &$processed, &$lineNumber,
                 &$brgIns, &$brgUpd, &$brgSkip, &$brgFail, &$barangMap,
                 $col, $batch, $actingUserId,
             ) {
@@ -843,6 +921,7 @@ class MasterImportService
 
                 if ($formulaError = $this->detectFormulaError($row, 'MASTER BARANG', $lineNumber)) {
                     $errors[] = ['sheet' => 'MASTER BARANG', 'row' => $lineNumber, 'message' => $formulaError];
+                    $this->recordChange($changeLog, $batch, 'barang', $lineNumber, 'gagal', null, null, $formulaError);
 
                     return;
                 }
@@ -867,8 +946,10 @@ class MasterImportService
                     'status'      => ['nullable', 'boolean'],
                 ]);
                 if ($validator->fails()) {
-                    $errors[] = ['sheet' => 'MASTER BARANG', 'row' => $lineNumber, 'message' => implode('; ', $validator->errors()->all())];
+                    $errorMessage = implode('; ', $validator->errors()->all());
+                    $errors[] = ['sheet' => 'MASTER BARANG', 'row' => $lineNumber, 'message' => $errorMessage];
                     $brgFail++;
+                    $this->recordChange($changeLog, $batch, 'barang', $lineNumber, 'gagal', null, $data, $errorMessage);
                     return;
                 }
 
@@ -879,6 +960,7 @@ class MasterImportService
                     if ($existing) {
                         $brgDiff = $this->barangDiff($existing, $data);
                         if (!empty($brgDiff)) {
+                            $brgBefore = $this->snapshotEntity($existing, self::BARANG_SNAPSHOT_FIELDS);
                             // update() mutasi objek $existing di tempat — otomatis konsisten dengan
                             // referensi yang sama di $barangMap, tidak perlu tulis balik eksplisit.
                             $existing->update([
@@ -890,6 +972,7 @@ class MasterImportService
                             ]);
                             $brgUpd++;
                             $this->pushDetail($details, 'MASTER BARANG', $lineNumber, $this->formatDiffMessage($brgDiff, self::BARANG_FIELD_LABELS));
+                            $this->recordChange($changeLog, $batch, 'barang', $lineNumber, 'diperbarui', $brgBefore, $this->snapshotEntity($existing, self::BARANG_SNAPSHOT_FIELDS));
                         } else {
                             $brgSkip++;
                             $this->pushDetail($details, 'MASTER BARANG', $lineNumber, 'Data sudah sama persis dengan data tersimpan — tidak ada perubahan, baris dilewati.');
@@ -904,10 +987,12 @@ class MasterImportService
                         ]);
                         $barangMap[$rawKode] = $barang;
                         $brgIns++;
+                        $this->recordChange($changeLog, $batch, 'barang', $lineNumber, 'ditambahkan', null, $this->snapshotEntity($barang, self::BARANG_SNAPSHOT_FIELDS));
                     }
                 } catch (\Throwable $e) {
                     $errors[] = ['sheet' => 'MASTER BARANG', 'row' => $lineNumber, 'message' => 'Gagal menyimpan: ' . $e->getMessage()];
                     $brgFail++;
+                    $this->recordChange($changeLog, $batch, 'barang', $lineNumber, 'gagal', null, $data, 'Gagal menyimpan: ' . $e->getMessage());
                 }
                 }
             );
@@ -1364,7 +1449,12 @@ class MasterImportService
             return ['nama' => trim($m[1]) !== '' ? trim($m[1]) : null, 'nik' => $m[2]];
         }
 
-        if (preg_match("/^(.+?)\\s*[\\/\\-]\\s*({$nikToken})$/", $identifier, $m)) {
+        // Selain hyphen-minus ASCII biasa (-) & slash (/), terima juga en dash/em dash/figure
+        // dash (–—‒―, U+2012-U+2015) — Excel/Word AutoCorrect otomatis mengganti " - " jadi
+        // " – " saat diketik, jadi "Nama - NIK" yang diketik manusia sering berakhir memakai
+        // dash "cantik" itu di file .xlsx-nya, bukan hyphen ASCII. Modifier /u wajib supaya
+        // rentang \x{2012}-\x{2015} (3-byte UTF-8) dicocokkan per-codepoint, bukan per-byte.
+        if (preg_match("/^(.+?)\\s*[\\/\\-\x{2012}-\x{2015}]\\s*({$nikToken})$/u", $identifier, $m)) {
             return ['nama' => trim($m[1]) !== '' ? trim($m[1]) : null, 'nik' => $m[2]];
         }
 
@@ -1675,6 +1765,102 @@ class MasterImportService
     {
         if (count($details) < self::MAX_DETAILS) {
             $details[] = ['sheet' => $sheet, 'row' => $row, 'message' => $message];
+        }
+    }
+
+    /**
+     * Snapshot field-field entitas yang persisted (utk kolom data_sebelum/data_baru riwayat
+     * import) — dipanggil SEBELUM ->update() untuk "sebelum" (update() memutasi objek yang
+     * sama di tempat, lihat komentar di titik pemanggilan Barang), dan SETELAH create()/update()
+     * untuk "sesudah".
+     */
+    private function snapshotEntity(object $model, array $fields): array
+    {
+        $out = ['id' => $model->id];
+        foreach ($fields as $f) {
+            $value = $model->{$f};
+            if ($f === 'status') {
+                $out[$f] = $this->statusLabel((bool) $value);
+            } elseif ($value instanceof \Carbon\Carbon) {
+                $out[$f] = $value->format('Y-m-d');
+            } else {
+                $out[$f] = $value;
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * Buffer 1 entri riwayat perubahan (tb_import_master_change_log) — MURNI di memori, TIDAK
+     * ditulis ke DB di sini (lihat flushChangeLog(), dipanggil sekali di process() SETELAH
+     * DB::commit() — alasannya ada di komentar besar pemanggilannya di sana).
+     */
+    private function recordChange(
+        array &$buffer,
+        ImportMasterBatch $batch,
+        string $entityType,
+        int $rowNumber,
+        string $changeType,
+        ?array $dataSebelum,
+        ?array $dataBaru,
+        ?string $message = null,
+    ): void {
+        $searchParts = array_filter(
+            array_merge(array_values($dataSebelum ?? []), array_values($dataBaru ?? []), [$message]),
+            static fn ($v) => is_string($v) && $v !== '',
+        );
+
+        $buffer[] = [
+            'batch_id'     => $batch->id,
+            'entity_type'  => $entityType,
+            'row_number'   => $rowNumber,
+            'change_type'  => $changeType,
+            'data_sebelum' => $dataSebelum !== null ? json_encode($dataSebelum) : null,
+            'data_baru'    => $dataBaru !== null ? json_encode($dataBaru) : null,
+            'message'      => $message,
+            'search_text'  => mb_substr(implode(' ', array_unique($searchParts)), 0, 500),
+            'created_at'   => now(),
+            'updated_at'   => now(),
+        ];
+    }
+
+    /** Bulk insert isi buffer riwayat perubahan, dipecah per CHANGE_LOG_FLUSH_SIZE baris per statement. */
+    private function flushChangeLog(array $buffer): void
+    {
+        foreach (array_chunk($buffer, self::CHANGE_LOG_FLUSH_SIZE) as $chunk) {
+            DB::table('tb_import_master_change_log')->insert($chunk);
+        }
+    }
+
+    /**
+     * Hapus batch Import Master Data lama (status completed/failed saja — TIDAK PERNAH
+     * queued/processing, itu bisa jadi import yang sedang aktif), sisakan KEEP_BATCHES
+     * terbaru (diurutkan updated_at, sama seperti latestImport() menentukan "batch
+     * terakhir"). tb_import_master_change_log ikut terhapus otomatis lewat FK
+     * cascadeOnDelete — tidak ada baris riwayat yang jadi orphan. File Excel yang
+     * diupload ikut dihapus dari storage. Dipanggil sinkron tiap kali 1 import selesai
+     * (bukan cron) — supaya tabel tidak pernah tumbuh melewati beberapa import terakhir,
+     * tanpa bergantung pada crontab OS yang belum terverifikasi aktif di hosting project ini.
+     */
+    private function pruneOldBatches(): void
+    {
+        $keepIds = ImportMasterBatch::whereIn('status', ['completed', 'failed'])
+            ->orderByDesc('updated_at')
+            ->limit(self::KEEP_BATCHES)
+            ->pluck('id');
+
+        $old = ImportMasterBatch::whereIn('status', ['completed', 'failed'])
+            ->whereNotIn('id', $keepIds)
+            ->get(['id', 'file_path']);
+
+        foreach ($old as $oldBatch) {
+            if ($oldBatch->file_path) {
+                Storage::disk('local')->delete($oldBatch->file_path);
+            }
+        }
+
+        if ($old->isNotEmpty()) {
+            ImportMasterBatch::whereIn('id', $old->pluck('id'))->delete();
         }
     }
 

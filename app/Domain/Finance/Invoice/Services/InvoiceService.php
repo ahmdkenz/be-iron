@@ -9,7 +9,6 @@ use App\Domain\Finance\Invoice\Repositories\InvoiceRepository;
 use App\Domain\Finance\PendapatanDiMuka\Services\PendapatanDiMukaService;
 use App\Domain\Notification\Services\FinanceNotificationService;
 use App\Models\EndingBalance;
-use App\Models\Investor;
 use App\Models\Invoice;
 use App\Models\InvoiceApprovalLog;
 use App\Models\KlienAr;
@@ -19,7 +18,6 @@ use App\Models\PembayaranAr;
 use App\Models\PembayaranArLog;
 use App\Models\PendapatanDiMuka;
 use App\Models\User;
-use App\Support\Helpers\InvestorIdentityMatcher;
 use App\Support\Helpers\RoleHelper;
 use App\Support\Helpers\SignatureBarcodeHelper;
 use Carbon\Carbon;
@@ -216,79 +214,6 @@ class InvoiceService
             'approved_by_name' => null,
             'approved_qr_src'  => null,
         ];
-    }
-
-    /**
-     * Resolve semua investor_id yang mewakili "orang/entitas investor yang
-     * sama" dengan $anchorInvestor. tb_investor ternyata hampir 1:1 dengan
-     * tb_resto (dibuat per-outlet saat import) — jadi tidak bisa asumsikan
-     * 1 investor_id = 1 investor asli. Lihat InvestorIdentityMatcher untuk
-     * aturan pencocokan (KTP kalau tersedia di kedua sisi, fallback nama).
-     */
-    public function resolveMatchingInvestorIds(Investor $anchorInvestor): array
-    {
-        return Investor::query()
-            ->select(['id', 'nama_investor', 'ktp'])
-            ->get()
-            ->filter(fn (Investor $inv) => InvestorIdentityMatcher::matches($anchorInvestor, $inv))
-            ->pluck('id')
-            ->all();
-    }
-
-    /**
-     * Kandidat invoice reguler B2C (tipe_klien RESTO) milik investor yang
-     * sama (lintas klien_ar/outlet, lintas investor_id yang sudah di-resolve
-     * via resolveMatchingInvestorIds), dipakai fitur Bulk Print per Investor.
-     *
-     * Mode preview/link (dipanggil authenticated, $onlyInvoiceIds null):
-     * disaring ke periode + status belum lunas + scoping PIC AR.
-     * Mode public print ($onlyInvoiceIds diisi): mengabaikan semua filter
-     * periode/status, cukup ambil ulang baris invoice_id persis dari token
-     * supaya nilainya selalu terkini dari DB, sementara himpunan invoice-nya
-     * tetap persis snapshot yang tersimpan di token.
-     */
-    public function getBulkB2CInvestorInvoices(
-        ?array $investorIds,
-        ?string $tanggalDari = null,
-        ?string $tanggalSampai = null,
-        ?int $picArKaryawanId = null,
-        ?array $onlyInvoiceIds = null,
-    ): Collection {
-        $query = Invoice::with([
-            'klienAr.resto',
-            'klienAr.karyawanAr.perusahaan',
-            'resto',
-            'perusahaan',
-            'karyawan.perusahaan',
-            'items.barang',
-            'pembayarans',
-        ]);
-
-        $sortKey = fn (Invoice $inv) => sprintf(
-            '%s_%s',
-            $inv->klienAr?->resto?->nama_resto ?? '',
-            $inv->tanggal_invoice?->format('Y-m-d') ?? ''
-        );
-
-        if ($onlyInvoiceIds !== null) {
-            return $query->whereIn('id', $onlyInvoiceIds)
-                ->get()
-                ->sortBy($sortKey)
-                ->values();
-        }
-
-        return $query
-            ->where('is_opening_balance', false)
-            ->whereHas('klienAr', fn ($q) => $q->where('tipe_klien', 'RESTO'))
-            ->whereHas('klienAr.resto', fn ($q) => $q->whereIn('investor_id', $investorIds))
-            ->whereIn('status', ['TERKIRIM', 'SEBAGIAN'])
-            ->whereRaw('(subtotal - total_pembayaran - total_penyesuaian) > 0')
-            ->whereBetween('tanggal_invoice', [$tanggalDari, $tanggalSampai])
-            ->when($picArKaryawanId, fn ($q, $v) => $q->whereHas('klienAr', fn ($q) => $q->where('karyawan_ar_id', $v))
-            )
-            ->get()
-            ->sortBy($sortKey)
-            ->values();
     }
 
     public function getSummary(array $filters = []): array

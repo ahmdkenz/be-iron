@@ -29,15 +29,16 @@ Route::middleware('role:ADMIN|MANAGER|SUPERVISOR')->group(function () {
     Route::get('/master-data/import/latest', [UnifiedMasterController::class, 'latestImport']);
     Route::get('/master-data/import/active', [UnifiedMasterController::class, 'active']);
     Route::get('/master-data/import/{id}/status', [UnifiedMasterController::class, 'importStatus']);
+    Route::get('/master-data/import/{id}/change-log', [UnifiedMasterController::class, 'importChangeLog']);
     Route::post('/master-data/import/{id}/cancel', [UnifiedMasterController::class, 'cancel']);
 
     // Tab "Import Master Opening Balance" — bulk import saldo awal piutang klien (backfill data historis).
     Route::get('/master-data/opening-balance/import-template', [OpeningBalanceController::class, 'importTemplate']);
     Route::post('/master-data/opening-balance/import', [OpeningBalanceController::class, 'import']);
+    Route::get('/master-data/opening-balance/import/latest', [OpeningBalanceController::class, 'latestImport']);
     Route::get('/master-data/opening-balance/import/active', [OpeningBalanceController::class, 'importActive']);
     Route::get('/master-data/opening-balance/import/{batch}/status', [OpeningBalanceController::class, 'importStatus']);
-    Route::post('/master-data/opening-balance/import/{batch}/confirm-replace', [OpeningBalanceController::class, 'importConfirmReplace']);
-    Route::post('/master-data/opening-balance/import/{batch}/confirm-skip', [OpeningBalanceController::class, 'importConfirmSkip']);
+    Route::get('/master-data/opening-balance/import/{batch}/change-log', [OpeningBalanceController::class, 'importChangeLog']);
     Route::post('/master-data/opening-balance/import/{batch}/cancel', [OpeningBalanceController::class, 'importCancel']);
 
     // Mutasi master data (Perusahaan/Investor/Resto/Barang) — sebelumnya tanpa

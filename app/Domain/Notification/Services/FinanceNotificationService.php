@@ -346,19 +346,6 @@ class FinanceNotificationService
         );
     }
 
-    public function obImportNeedsConfirmation(?int $userId, string $message): void
-    {
-        $this->dispatch(
-            $this->recipients->merge([$this->recipients->user($userId), $this->recipients->approvers()]),
-            actorId: null,
-            category: 'import_opening_balance',
-            severity: 'warning',
-            title: 'Import Opening Balance perlu konfirmasi',
-            body: $message,
-            routeName: $this->importRouteName('opening_balance'),
-        );
-    }
-
     private function importRouteName(string $type): string
     {
         return match ($type) {

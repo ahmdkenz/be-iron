@@ -16,6 +16,7 @@ use App\Models\Invoice;
 use App\Models\KlienAr;
 use App\Models\OpeningBalanceDetailItem;
 use App\Models\OpeningBalanceImportBatch;
+use App\Models\OpeningBalanceImportChangeLog;
 use App\Support\Helpers\ArFilterScope;
 use App\Support\Helpers\ImportEtaCalculator;
 use App\Support\Helpers\RoleHelper;
@@ -350,6 +351,34 @@ class OpeningBalanceController extends Controller
         ], 'File diterima. Import Opening Balance sedang diproses di latar belakang.', 202);
     }
 
+    /**
+     * Batch Import Master Opening Balance terakhir yang completed — dipakai banner
+     * "Terakhir diimport" di atas tabel Riwayat Import (mirror
+     * UnifiedMasterController::latestImport()).
+     */
+    public function latestImport(): JsonResponse
+    {
+        $batch = OpeningBalanceImportBatch::where('status', 'completed')
+            ->with(['user:id,username,karyawan_id', 'user.karyawan:id,nama_karyawan'])
+            ->latest('updated_at')
+            ->first();
+
+        if (! $batch) {
+            return $this->successResponse(null);
+        }
+
+        return $this->successResponse([
+            'id' => $batch->id,
+            'imported_at' => $batch->updated_at->toIso8601String(),
+            'imported_by' => $batch->user?->name,
+            'inserted_ob' => $batch->inserted_ob,
+            'skipped_ob' => $batch->skipped_ob,
+            'failed_ob' => $batch->failed_ob,
+            'inserted_detail' => $batch->inserted_detail,
+            'inserted_item' => $batch->inserted_item,
+        ]);
+    }
+
     public function importActive(): JsonResponse
     {
         OpeningBalanceImportBatch::failStale();
@@ -378,12 +407,6 @@ class OpeningBalanceController extends Controller
         return $this->successResponse($this->formatImportStatus($record));
     }
 
-    /**
-     * "needs_confirmation" TIDAK ada di enum status DB — murni transformasi response.
-     * Batch fisiknya tetap 'processing' selama menunggu keputusan user (lihat
-     * OpeningBalanceImportBatch::failStale() & OpeningBalanceImportService::process()),
-     * supaya tidak perlu migration untuk nilai enum baru.
-     */
     private function formatImportStatus(OpeningBalanceImportBatch $batch): array
     {
         // Pass 1 (resolusi grup) mengisi processed_ob; setelah pass 1 selesai
@@ -393,17 +416,14 @@ class OpeningBalanceController extends Controller
         $etaProcessed = max($batch->processed_ob, $batch->inserted_ob + $batch->skipped_ob + $batch->failed_ob);
         $eta = ImportEtaCalculator::compute($batch->created_at, $etaProcessed, $batch->total_ob);
 
-        $awaitingConfirmation = ($batch->errors['awaiting_confirmation'] ?? false) === true;
-
         // Dipakai FE menampilkan/menonaktifkan tombol Batalkan tanpa perlu tahu detail
         // 'resolving'/'saving' — logic SAMA persis dengan gate di importCancel().
-        $cancelable = $awaitingConfirmation
-            || $batch->status === 'queued'
+        $cancelable = $batch->status === 'queued'
             || ($batch->status === 'processing' && $batch->getCachedPhase() === 'resolving');
 
         return [
             'batch_id' => $batch->id,
-            'status' => $awaitingConfirmation ? 'needs_confirmation' : $batch->status,
+            'status' => $batch->status,
             'cancelable' => $cancelable,
             'started_at' => optional($batch->created_at)->toIso8601String(),
             'elapsed_seconds' => $eta['elapsed_seconds'],
@@ -421,84 +441,51 @@ class OpeningBalanceController extends Controller
             'inserted_item' => $batch->inserted_item,
             'errors' => $batch->errors['failed'] ?? [],
             'skipped_details' => $batch->errors['skipped'] ?? [],
-            'conflicts' => $batch->errors['conflicts'] ?? [],
             'message' => $batch->message,
         ];
     }
 
-    /** Reset progres lalu dispatch ulang job — dipakai confirm-replace & confirm-skip (perbedaannya hanya nilai 'resolution'). */
-    private function requeueWithResolution(OpeningBalanceImportBatch $batch, string $resolution): void
+    /**
+     * Riwayat perubahan per-baris (tb_opening_balance_import_change_log) 1 batch import —
+     * dipakai tabel "Riwayat Import" yang menggantikan panel hasil di modal Import Master
+     * Opening Balance. Mirror UnifiedMasterController::importChangeLog(), minus filter
+     * entity_type (OB AR single-entity, tidak punya kolom itu).
+     */
+    public function importChangeLog(Request $request, string $batch): JsonResponse
     {
-        $errors = $batch->errors ?? [];
-        $errors['resolution'] = $resolution;
-        $errors['awaiting_confirmation'] = false;
+        $user = auth()->user();
+        if (! RoleHelper::hasAnyRole($user, ['ADMIN', 'MANAGER', 'SUPERVISOR'])) {
+            return $this->unauthorizedResponse();
+        }
 
-        $batch->update([
-            'errors' => $errors,
-            'status' => 'queued',
-            'message' => null,
-            'processed_ob' => 0,
-            'inserted_ob' => 0,
-            'skipped_ob' => 0,
-            'failed_ob' => 0,
-            'inserted_detail' => 0,
-            'inserted_item' => 0,
-        ]);
-
-        ProcessOpeningBalanceImportJob::dispatch($batch->id);
-    }
-
-    private function findAwaitingConfirmationBatchOrFail(string $batch): OpeningBalanceImportBatch|JsonResponse
-    {
         $record = OpeningBalanceImportBatch::find($batch);
         if (! $record) {
-            return $this->notFoundResponse('Batch import tidak ditemukan.');
+            return $this->notFoundResponse('Batch import tidak ditemukan');
         }
 
-        if (($record->errors['awaiting_confirmation'] ?? false) !== true) {
-            return $this->errorResponse('Batch ini tidak sedang menunggu konfirmasi.', 422);
-        }
+        $perPage    = min(100, max(5, (int) $request->query('per_page', 20)));
+        $changeType = $request->query('change_type');
+        $status     = $request->query('status');
+        $search     = trim((string) $request->query('search', ''));
 
-        return $record;
-    }
+        $query = OpeningBalanceImportChangeLog::where('batch_id', $record->id)
+            ->when($changeType, fn ($q, $v) => $q->where('change_type', $v))
+            ->when($status === 'berhasil', fn ($q) => $q->whereIn('change_type', ['ditambahkan', 'diperbarui']))
+            ->when($status === 'dilewati', fn ($q) => $q->where('change_type', 'dilewati'))
+            ->when($status === 'gagal', fn ($q) => $q->where('change_type', 'gagal'))
+            ->when($search !== '', fn ($q) => $q->where(function ($q2) use ($search) {
+                $q2->where('search_text', 'like', "%{$search}%")
+                    ->orWhere('row_number', 'like', "%{$search}%");
+            }))
+            ->orderBy('id');
 
-    public function importConfirmReplace(string $batch): JsonResponse
-    {
-        $this->authorizeOperateOpeningBalance();
+        $paginator = $query->paginate($perPage, ['*'], 'page', (int) $request->query('page', 1));
 
-        $record = $this->findAwaitingConfirmationBatchOrFail($batch);
-        if ($record instanceof JsonResponse) {
-            return $record;
-        }
-
-        $this->requeueWithResolution($record, 'replace');
-
-        return $this->successResponse(
-            ['batch_id' => $record->id, 'status' => 'queued'],
-            'Import dilanjutkan — Opening Balance lama yang bentrok akan digantikan.'
-        );
-    }
-
-    public function importConfirmSkip(string $batch): JsonResponse
-    {
-        $this->authorizeOperateOpeningBalance();
-
-        $record = $this->findAwaitingConfirmationBatchOrFail($batch);
-        if ($record instanceof JsonResponse) {
-            return $record;
-        }
-
-        $this->requeueWithResolution($record, 'skip');
-
-        return $this->successResponse(
-            ['batch_id' => $record->id, 'status' => 'queued'],
-            'Import dilanjutkan — data yang bentrok akan dilewati.'
-        );
+        return $this->paginatedResponse($paginator);
     }
 
     /**
-     * Tiga jalur:
-     *  - awaiting_confirmation: tidak ada job aktif (menunggu keputusan user) → batal LANGSUNG.
+     * Dua jalur:
      *  - queued / processing selama masih Pass 1 (resolusi klien, murni baca — lihat
      *    OpeningBalanceImportService::process()): job MASIH aktif, jadi cuma menitip flag
      *    "batal diminta". ProcessOpeningBalanceImportJob/Service yang sedang jalan akan
@@ -513,12 +500,6 @@ class OpeningBalanceController extends Controller
         $record = OpeningBalanceImportBatch::find($batch);
         if (! $record) {
             return $this->notFoundResponse('Batch import tidak ditemukan.');
-        }
-
-        if (($record->errors['awaiting_confirmation'] ?? false) === true) {
-            $record->cancel('Import dibatalkan oleh pengguna.');
-
-            return $this->successResponse(null, 'Import dibatalkan.');
         }
 
         $cancelableNow = $record->status === 'queued'

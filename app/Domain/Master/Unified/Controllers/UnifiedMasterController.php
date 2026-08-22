@@ -5,6 +5,7 @@ namespace App\Domain\Master\Unified\Controllers;
 use App\Domain\Master\Unified\Jobs\ImportMasterJob;
 use App\Http\Controllers\Controller;
 use App\Models\ImportMasterBatch;
+use App\Models\ImportMasterChangeLog;
 use App\Support\Helpers\ImportEtaCalculator;
 use App\Support\Helpers\RoleHelper;
 use App\Support\Traits\ApiResponse;
@@ -66,8 +67,6 @@ class UnifiedMasterController extends Controller
             'file' => ['required', 'file', 'mimes:xlsx,xls', 'max:10240'],
         ]);
 
-        ImportMasterBatch::failStale();
-
         $path = $request->file('file')->store('master-imports');
 
         $batch = ImportMasterBatch::create([
@@ -87,8 +86,6 @@ class UnifiedMasterController extends Controller
     /** Batch masih berjalan (queued/processing) milik user ini — dipakai FE mendeteksi & melanjutkan polling setelah reload halaman (mirror Invoice/OB AR). */
     public function active(): JsonResponse
     {
-        ImportMasterBatch::failStale();
-
         $user = auth()->user();
         $batch = RoleHelper::hasAnyRole($user, ['ADMIN', 'MANAGER', 'SUPERVISOR'])
             ? ImportMasterBatch::whereIn('status', ['queued', 'processing'])->latest('created_at')->first()
@@ -149,6 +146,7 @@ class UnifiedMasterController extends Controller
         $decoded = $this->decodeImportDetails($batch);
 
         return $this->successResponse([
+            'id'                => $batch->id,
             'imported_at'       => $batch->updated_at->toIso8601String(),
             'imported_by'       => $batch->user?->name,
             'investor_inserted' => $batch->investor_inserted,
@@ -172,8 +170,6 @@ class UnifiedMasterController extends Controller
 
     public function importStatus(string $id): JsonResponse
     {
-        ImportMasterBatch::failStale();
-
         $batch = ImportMasterBatch::find($id);
         if (!$batch) {
             return $this->notFoundResponse('Batch import tidak ditemukan');
@@ -229,6 +225,47 @@ class UnifiedMasterController extends Controller
             'details_total'     => $decoded['detail_total'],
             'message'           => $batch->message,
         ]);
+    }
+
+    /**
+     * Riwayat perubahan per-baris (tb_import_master_change_log) 1 batch import — dipakai
+     * tabel "riwayat perubahan" yang menggantikan 4 card ringkasan di tab Import Master Data.
+     * Beda dari importStatus()/latestImport() (counter agregat) — ini detail before/after
+     * per baris, dengan filter Sheet (entity_type)/Tipe Perubahan (change_type)/Status + search.
+     */
+    public function importChangeLog(Request $request, string $id): JsonResponse
+    {
+        $user = auth()->user();
+        if (!RoleHelper::hasAnyRole($user, ['ADMIN', 'MANAGER', 'SUPERVISOR'])) {
+            return $this->unauthorizedResponse();
+        }
+
+        $batch = ImportMasterBatch::find($id);
+        if (!$batch) {
+            return $this->notFoundResponse('Batch import tidak ditemukan');
+        }
+
+        $perPage    = min(100, max(5, (int) $request->query('per_page', 20)));
+        $entityType = $request->query('entity_type');
+        $changeType = $request->query('change_type');
+        $status     = $request->query('status');
+        $search     = trim((string) $request->query('search', ''));
+
+        $query = ImportMasterChangeLog::where('batch_id', $batch->id)
+            ->when($entityType, fn ($q, $v) => $q->where('entity_type', $v))
+            ->when($changeType, fn ($q, $v) => $q->where('change_type', $v))
+            ->when($status === 'berhasil', fn ($q) => $q->whereIn('change_type', ['ditambahkan', 'diperbarui']))
+            ->when($status === 'dilewati', fn ($q) => $q->where('change_type', 'dilewati'))
+            ->when($status === 'gagal', fn ($q) => $q->where('change_type', 'gagal'))
+            ->when($search !== '', fn ($q) => $q->where(function ($q2) use ($search) {
+                $q2->where('search_text', 'like', "%{$search}%")
+                    ->orWhere('row_number', 'like', "%{$search}%");
+            }))
+            ->orderBy('id');
+
+        $paginator = $query->paginate($perPage, ['*'], 'page', (int) $request->query('page', 1));
+
+        return $this->paginatedResponse($paginator);
     }
 
     /**

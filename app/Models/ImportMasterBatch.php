@@ -40,12 +40,6 @@ class ImportMasterBatch extends Model
         'barang_updated',
         'barang_skipped',
         'barang_failed',
-        'invoice_total',
-        'invoice_processed',
-        'invoice_inserted',
-        'invoice_updated',
-        'invoice_skipped',
-        'invoice_failed',
         'errors',
         'message',
     ];
@@ -69,12 +63,6 @@ class ImportMasterBatch extends Model
         'barang_updated'    => 'integer',
         'barang_skipped'    => 'integer',
         'barang_failed'     => 'integer',
-        'invoice_total'     => 'integer',
-        'invoice_processed' => 'integer',
-        'invoice_inserted'  => 'integer',
-        'invoice_updated'   => 'integer',
-        'invoice_skipped'   => 'integer',
-        'invoice_failed'    => 'integer',
         'errors'            => 'array',
     ];
 

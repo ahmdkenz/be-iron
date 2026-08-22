@@ -733,6 +733,23 @@ class MasterImportServiceTest extends TestCase
         $this->assertSame(['nama' => 'Siti Rahayu', 'nik' => '3273010101900002'], $this->invoke('parsePicIdentifier', 'Siti Rahayu - 3273010101900002'));
     }
 
+    /**
+     * Excel/Word AutoCorrect otomatis mengganti " - " (hyphen ASCII) jadi " – " (en dash,
+     * U+2013) saat pengguna mengetik pola "kata - kata" — jadi file .xlsx sungguhan sering
+     * berisi en dash, bukan hyphen biasa, meski penggunanya "mengetik hyphen". Sebelum fix ini,
+     * baris kombinasi "Nama - NIK" seperti ini gagal ter-parse (jatuh ke nama utuh tanpa NIK)
+     * dan menghasilkan "PIC tidak ditemukan" padahal karyawannya ada.
+     */
+    public function test_parse_pic_identifier_nama_en_dash_nik(): void
+    {
+        $this->assertSame(['nama' => 'Siti Rahayu', 'nik' => '3273010101900002'], $this->invoke('parsePicIdentifier', "Siti Rahayu \u{2013} 3273010101900002"));
+    }
+
+    public function test_parse_pic_identifier_nama_em_dash_nik(): void
+    {
+        $this->assertSame(['nama' => 'Siti Rahayu', 'nik' => '3273010101900002'], $this->invoke('parsePicIdentifier', "Siti Rahayu \u{2014} 3273010101900002"));
+    }
+
     public function test_parse_pic_identifier_nama_paren_nik(): void
     {
         $this->assertSame(['nama' => 'Andi Wijaya', 'nik' => '3273010101900001'], $this->invoke('parsePicIdentifier', 'Andi Wijaya (3273010101900001)'));
@@ -755,6 +772,11 @@ class MasterImportServiceTest extends TestCase
     public function test_parse_pic_identifier_nama_dash_nik_alfanumerik(): void
     {
         $this->assertSame(['nama' => 'Gusti Erwanda', 'nik' => 'FL0401780'], $this->invoke('parsePicIdentifier', 'Gusti Erwanda - FL0401780'));
+    }
+
+    public function test_parse_pic_identifier_nama_en_dash_nik_alfanumerik(): void
+    {
+        $this->assertSame(['nama' => 'Gusti Erwanda', 'nik' => 'FL0401780'], $this->invoke('parsePicIdentifier', "Gusti Erwanda \u{2013} FL0401780"));
     }
 
     public function test_parse_pic_identifier_nama_slash_nik_alfanumerik(): void

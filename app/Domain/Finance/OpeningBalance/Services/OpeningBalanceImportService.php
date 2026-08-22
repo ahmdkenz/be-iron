@@ -11,6 +11,8 @@ use App\Models\OpeningBalanceImportBatch;
 use App\Models\Resto;
 use App\Support\Helpers\ImportDateParser;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
 use PhpOffice\PhpSpreadsheet\IOFactory;
@@ -57,6 +59,8 @@ class OpeningBalanceImportService
     private const MAX_STORED_FAILED = 200;
 
     private const MAX_STORED_SKIPPED = 200;
+
+    private const CHANGE_LOG_FLUSH_SIZE = 500;
 
     /**
      * Kode error kalkulasi Excel standar → penjelasan bahasa awam. Rumus yang gagal (mis. =A1/0)
@@ -114,6 +118,7 @@ class OpeningBalanceImportService
 
         $failedOb = 0;
         $processed = 0;
+        $changeLog = [];
 
         // Pass 1 — resolve identitas PER GRUP no_urut, lalu kumpulkan rows ke bucket per
         // klien_id HASIL RESOLUSI (bukan per no_urut). Ini krusial untuk PT/B2B: data nyata
@@ -139,6 +144,11 @@ class OpeningBalanceImportService
             if ($masterError) {
                 $errors[] = ['sheet' => $identity['sheet'], 'row' => $identity['source_row'], 'message' => $masterError];
                 $failedOb++;
+                $this->recordChange($changeLog, $batch, $identity['source_row'], 'gagal', null, [
+                    'nama_klien' => $identity['nama_klien'] ?? null,
+                    'kode_resto' => $identity['kode_resto'] ?? null,
+                    'tipe_klien' => $identity['tipe_klien'] ?? null,
+                ], $masterError);
 
                 continue;
             }
@@ -147,6 +157,11 @@ class OpeningBalanceImportService
             if (! $resolved['klien']) {
                 $errors[] = ['sheet' => $identity['sheet'], 'row' => $identity['source_row'], 'message' => $resolved['error']];
                 $failedOb++;
+                $this->recordChange($changeLog, $batch, $identity['source_row'], 'gagal', null, [
+                    'nama_klien' => $identity['nama_klien'] ?? null,
+                    'kode_resto' => $identity['kode_resto'] ?? null,
+                    'tipe_klien' => $identity['tipe_klien'] ?? null,
+                ], $resolved['error']);
 
                 continue;
             }
@@ -174,54 +189,16 @@ class OpeningBalanceImportService
 
         // 1 query whereIn untuk semua klien di batch ini, bukan 1 exists() per bucket
         // (~1.240 query terpisah sebelum fix ini, untuk data dummy OB). ->get() (bukan
-        // pluck->flip()) supaya ada data OB lama untuk dilaporkan ke user (lihat $skippedRows).
+        // pluck->flip()) supaya ada data OB lama untuk dilaporkan ke user (lihat $skippedRows)
+        // DAN untuk perbandingan otomatis sama/beda (lihat openingBalanceUnchanged() di Pass 2)
+        // — subtotal + openingBalanceDetails di-eager-load untuk itu, dibatasi jumlah konflik
+        // di batch ini (bukan seluruh batch), jadi bukan risiko N+1 baru.
         $existingKlienIds = Invoice::whereIn('klien_ar_id', array_keys($buckets))
             ->where('is_opening_balance', true)
             ->whereDate('tanggal_invoice', $cutoverDate)
-            ->get(['id', 'no_invoice', 'klien_ar_id', 'tanggal_invoice'])
+            ->with(['openingBalanceDetails:id,invoice_id,no_invoice_asal,tanggal_invoice_asal,jumlah_tagihan_asal,sisa_tagihan_asal'])
+            ->get(['id', 'no_invoice', 'klien_ar_id', 'tanggal_invoice', 'subtotal'])
             ->keyBy('klien_ar_id');
-
-        // Fase deteksi konflik — HANYA jalan kalau belum ada keputusan user (resolution
-        // masih null) DAN ada bentrok. Berhenti di sini SEBELUM apapun ditulis ke
-        // tb_invoice: status batch tetap 'processing' (bukan enum baru — lihat
-        // OpeningBalanceImportBatch::failStale()), awaiting_confirmation jadi penanda
-        // sub-state-nya. User memilih Ganti/Lewati/Batal lewat endpoint baru di
-        // OpeningBalanceController, yang men-dispatch ulang job ini (file upload tetap
-        // dipertahankan, lihat ProcessOpeningBalanceImportJob::cleanupFile()) — run
-        // berikutnya baca $batch->errors['resolution'] yang sudah terisi dan lanjut ke
-        // fase tulis di bawah, bukan berhenti lagi di sini.
-        $resolution = $batch->errors['resolution'] ?? null;
-
-        if ($resolution === null && $existingKlienIds->isNotEmpty()) {
-            $conflicts = [];
-            foreach ($existingKlienIds as $klienId => $existing) {
-                $bucket = $buckets[$klienId] ?? null;
-                $klien = $bucket['klien'] ?? null;
-                $conflicts[] = [
-                    'klien_ar_id' => $klienId,
-                    'nama_klien' => $klien->nama_klien ?? '-',
-                    'kode_resto' => $klien?->resto?->kode_resto,
-                    'existing_invoice_id' => $existing->id,
-                    'existing_no_invoice' => $existing->no_invoice,
-                    'existing_tanggal_invoice' => optional($existing->tanggal_invoice)->toDateString(),
-                    'source_row' => $bucket['source_row'] ?? null,
-                    'sheet' => $bucket['sheet'] ?? null,
-                ];
-            }
-
-            $batch->update([
-                'errors' => [
-                    'failed' => [],
-                    'skipped' => [],
-                    'conflicts' => $conflicts,
-                    'resolution' => null,
-                    'awaiting_confirmation' => true,
-                ],
-                'message' => sprintf('%d klien bentrok dengan Opening Balance yang sudah ada pada tanggal cutover ini — menunggu konfirmasi.', count($conflicts)),
-            ]);
-
-            return;
-        }
 
         // Titik cek terakhir sebelum apa pun ditulis ke tb_invoice — sesudah ini cancel
         // TIDAK dihormati lagi (Pass 2 memang sengaja partial-write per-bucket, lihat
@@ -234,26 +211,6 @@ class OpeningBalanceImportService
             return;
         }
         $batch->setCachedPhase('saving');
-
-        // Fase "Ganti Data Lama" — all-or-nothing per batch (dikonfirmasi user, bukan
-        // per-klien): coba hapus SEMUA OB lama yang bentrok. Yang gagal dihapus (mis.
-        // sudah ada pembayaran) TETAP ada di $existingKlienIds supaya fase tulis di
-        // bawah men-skip klien itu (bukan malah dipaksa jadi duplikat) — alasan gagalnya
-        // dicatat di $replaceFailureReasons untuk pesan skip yang spesifik.
-        $replaceFailureReasons = [];
-        if ($resolution === 'replace' && $existingKlienIds->isNotEmpty()) {
-            foreach ($existingKlienIds as $klienId => $existing) {
-                try {
-                    $this->invoiceService->deleteOpeningBalance(
-                        $existing,
-                        'Digantikan oleh Import Opening Balance ulang (batch '.$batch->id.').'
-                    );
-                    $existingKlienIds->forget($klienId);
-                } catch (Throwable $e) {
-                    $replaceFailureReasons[$klienId] = $e->getMessage();
-                }
-            }
-        }
 
         // 1 query whereIn untuk kandidat carryover-cascade SEMUA klien di batch ini, bukan 1
         // Invoice::where('klien_ar_id', ...)->get() per klien di dalam cascadeCarryoverToNext()
@@ -275,8 +232,9 @@ class OpeningBalanceImportService
         // (mirror pola InvoiceImportService::applySafeChunk()).
         EndingBalanceSyncBatcher::run(function () use (
             $buckets, $batch, &$rawItems, $barangByKode, $barangByNama, &$errors,
-            $existingKlienIds, $cutoverDate, $carryoverCandidatesByKlien, $replaceFailureReasons,
+            $existingKlienIds, $cutoverDate, $carryoverCandidatesByKlien,
             &$insertedOb, &$skippedOb, &$failedOb, &$insertedDetail, &$insertedItem, &$skippedRows,
+            &$changeLog,
         ) {
             $bucketIndex = 0;
             foreach ($buckets as $bucket) {
@@ -295,37 +253,84 @@ class OpeningBalanceImportService
 
                 $built = $this->buildDetailsForGroup($bucket['rows'], $rawItems, $barangByKode, $barangByNama, $errors);
                 if ($built === null) {
+                    $buildFailMessage = "Klien '{$klien->nama_klien}': tidak ada baris valid untuk membentuk Opening Balance (semua baris gagal validasi no_invoice_asal/tanggal_invoice_asal).";
                     $errors[] = [
                         'sheet' => $bucket['sheet'],
                         'row' => $bucket['source_row'],
-                        'message' => "Klien '{$klien->nama_klien}': tidak ada baris valid untuk membentuk Opening Balance (semua baris gagal validasi no_invoice_asal/tanggal_invoice_asal).",
+                        'message' => $buildFailMessage,
                     ];
                     $failedOb++;
+                    $this->recordChange($changeLog, $batch, $bucket['source_row'], 'gagal', null, [
+                        'nama_klien' => $klien->nama_klien,
+                        'kode_resto' => $klien->resto?->kode_resto,
+                    ], $buildFailMessage);
 
                     continue;
                 }
 
-                if ($existing = $existingKlienIds->get($klien->id)) {
-                    $skippedOb++;
-                    if (count($skippedRows) < self::MAX_STORED_SKIPPED) {
-                        $replaceFailureReason = $replaceFailureReasons[$klien->id] ?? null;
-                        $message = $replaceFailureReason
-                            ? "Klien '{$klien->nama_klien}': Opening Balance lama ({$existing->no_invoice}) GAGAL diganti — {$replaceFailureReason} Baris ini dilewati, data lama tetap dipakai."
-                            : "Klien '{$klien->nama_klien}' sudah memiliki Opening Balance ({$existing->no_invoice}) pada tanggal cutover ini — baris dilewati.";
+                // Resolusi konflik OTOMATIS per-klien (tidak lagi menjeda batch menunggu
+                // keputusan manual — lihat openingBalanceUnchanged()): data identik dengan OB
+                // lama -> dilewati; data beda -> OB lama dihapus lalu diganti data baru
+                // (tercatat 'diperbarui'), mirror pola diff MasterImportService untuk Master
+                // Data (ditambahkan/diperbarui/dilewati ditentukan otomatis dari perbandingan).
+                $existing = $existingKlienIds->get($klien->id);
+                $isReplace = false;
+                $dataSebelum = null;
 
-                        $skippedRows[] = [
-                            'sheet' => $bucket['sheet'],
-                            'row' => $bucket['source_row'],
-                            'no_urut' => $bucket['rows'][0]['no_urut'] ?? null,
-                            'klien' => $klien->nama_klien,
-                            'kode_resto' => $klien->resto?->kode_resto,
-                            'existing_invoice_id' => $existing->id,
-                            'existing_no_invoice' => $existing->no_invoice,
-                            'message' => $message,
-                        ];
+                if ($existing) {
+                    $existingSnapshot = [
+                        'no_invoice' => $existing->no_invoice,
+                        'tanggal_invoice' => optional($existing->tanggal_invoice)->toDateString(),
+                        'saldo_awal' => (float) $existing->subtotal,
+                    ];
+
+                    if ($this->openingBalanceUnchanged($existing, $built)) {
+                        $skippedOb++;
+                        $skipMessage = "Klien '{$klien->nama_klien}': data Opening Balance sama persis dengan yang sudah tersimpan ({$existing->no_invoice}) — baris dilewati.";
+
+                        if (count($skippedRows) < self::MAX_STORED_SKIPPED) {
+                            $skippedRows[] = [
+                                'sheet' => $bucket['sheet'],
+                                'row' => $bucket['source_row'],
+                                'no_urut' => $bucket['rows'][0]['no_urut'] ?? null,
+                                'klien' => $klien->nama_klien,
+                                'kode_resto' => $klien->resto?->kode_resto,
+                                'existing_invoice_id' => $existing->id,
+                                'existing_no_invoice' => $existing->no_invoice,
+                                'message' => $skipMessage,
+                            ];
+                        }
+
+                        continue;
                     }
 
-                    continue;
+                    $dataSebelum = $existingSnapshot;
+
+                    try {
+                        $this->invoiceService->deleteOpeningBalance(
+                            $existing,
+                            'Digantikan otomatis oleh Import Opening Balance ulang (batch '.$batch->id.') — data baru berbeda dari data lama.'
+                        );
+                        $isReplace = true;
+                    } catch (Throwable $e) {
+                        $skippedOb++;
+                        $skipMessage = "Klien '{$klien->nama_klien}': Opening Balance lama ({$existing->no_invoice}) berbeda dari data baru tapi GAGAL diganti otomatis — {$e->getMessage()} Baris ini dilewati, data lama tetap dipakai.";
+
+                        if (count($skippedRows) < self::MAX_STORED_SKIPPED) {
+                            $skippedRows[] = [
+                                'sheet' => $bucket['sheet'],
+                                'row' => $bucket['source_row'],
+                                'no_urut' => $bucket['rows'][0]['no_urut'] ?? null,
+                                'klien' => $klien->nama_klien,
+                                'kode_resto' => $klien->resto?->kode_resto,
+                                'existing_invoice_id' => $existing->id,
+                                'existing_no_invoice' => $existing->no_invoice,
+                                'message' => $skipMessage,
+                            ];
+                        }
+
+                        continue;
+                    }
                 }
 
                 try {
@@ -359,9 +364,27 @@ class OpeningBalanceImportService
                     $insertedOb++;
                     $insertedDetail += count($built['details']);
                     $insertedItem += array_sum(array_map(fn ($d) => count($d['items']), $built['details']));
+
+                    // Snapshot dibangun dari $data/$built/$klien yang sudah ada di scope SEBELUM
+                    // createOpeningBalance() dipanggil di atas — sengaja TIDAK menangkap return
+                    // value method itu, supaya tidak menyentuh eagerLoad:false yang sudah
+                    // dikomentari sebagai optimisasi performa yang disengaja.
+                    $this->recordChange($changeLog, $batch, $bucket['source_row'], $isReplace ? 'diperbarui' : 'ditambahkan', $dataSebelum, [
+                        'no_invoice' => $data['no_invoice'],
+                        'nama_klien' => $klien->nama_klien,
+                        'kode_resto' => $klien->resto?->kode_resto,
+                        'tanggal' => $cutoverDate,
+                        'saldo_awal' => $built['saldo_awal'],
+                        'jumlah_detail' => count($built['details']),
+                        'jumlah_item' => array_sum(array_map(fn ($d) => count($d['items']), $built['details'])),
+                    ]);
                 } catch (Throwable $e) {
                     $errors[] = ['sheet' => $bucket['sheet'], 'row' => $bucket['source_row'], 'message' => 'Gagal menyimpan: '.$e->getMessage()];
                     $failedOb++;
+                    $this->recordChange($changeLog, $batch, $bucket['source_row'], 'gagal', $dataSebelum, [
+                        'nama_klien' => $klien->nama_klien,
+                        'kode_resto' => $klien->resto?->kode_resto,
+                    ], 'Gagal menyimpan: '.$e->getMessage());
                 }
             }
         });
@@ -396,11 +419,6 @@ class OpeningBalanceImportService
             'errors' => [
                 'failed' => $errors,
                 'skipped' => $skippedRows,
-                // conflicts/resolution dipertahankan (bukan direset) sebagai jejak audit —
-                // kosong/null kalau batch ini tidak pernah melewati fase konfirmasi.
-                'conflicts' => $batch->errors['conflicts'] ?? [],
-                'resolution' => $resolution,
-                'awaiting_confirmation' => false,
             ],
             'status' => 'completed',
             'message' => sprintf(
@@ -408,6 +426,111 @@ class OpeningBalanceImportService
                 $insertedOb, $skippedOb, $failedOb, $insertedDetail, $insertedItem,
             ),
         ]);
+
+        // Kegagalan menulis riwayat perubahan TIDAK boleh menggagalkan import yang sudah
+        // berhasil di atas — cukup di-log, bukan dilempar ulang.
+        try {
+            $this->flushChangeLog($changeLog);
+        } catch (Throwable $e) {
+            Log::warning('Gagal menulis riwayat perubahan Import Opening Balance', [
+                'batch_id' => $batch->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * Buffer 1 entri riwayat perubahan (tb_opening_balance_import_change_log) — MURNI di
+     * memori, TIDAK ditulis ke DB di sini (lihat flushChangeLog()). Beda dari
+     * MasterImportService::recordChange(): tidak ada kolom entity_type (single-entity),
+     * dan flush-nya TIDAK perlu menunggu setelah DB::commit() — process() di file ini
+     * tidak membungkus seluruh alur dalam satu transaksi besar (tiap createOpeningBalance()
+     * commit transaksinya sendiri), jadi tidak ada risiko lock-collision dengan
+     * mysql_progress connection seperti yang jadi alasan penundaan di Master Data.
+     */
+    private function recordChange(
+        array &$buffer,
+        OpeningBalanceImportBatch $batch,
+        int $rowNumber,
+        string $changeType,
+        ?array $dataSebelum,
+        ?array $dataBaru,
+        ?string $message = null,
+    ): void {
+        $searchParts = array_filter(
+            array_merge(array_values($dataSebelum ?? []), array_values($dataBaru ?? []), [$message]),
+            static fn ($v) => is_string($v) && $v !== '',
+        );
+
+        $buffer[] = [
+            'batch_id'     => $batch->id,
+            'row_number'   => $rowNumber,
+            'change_type'  => $changeType,
+            'data_sebelum' => $dataSebelum !== null ? json_encode($dataSebelum) : null,
+            'data_baru'    => $dataBaru !== null ? json_encode($dataBaru) : null,
+            'message'      => $message,
+            'search_text'  => mb_substr(implode(' ', array_unique($searchParts)), 0, 500),
+            'created_at'   => now(),
+            'updated_at'   => now(),
+        ];
+    }
+
+    /** Bulk insert isi buffer riwayat perubahan, dipecah per CHANGE_LOG_FLUSH_SIZE baris per statement. */
+    private function flushChangeLog(array $buffer): void
+    {
+        foreach (array_chunk($buffer, self::CHANGE_LOG_FLUSH_SIZE) as $chunk) {
+            DB::table('tb_opening_balance_import_change_log')->insert($chunk);
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    //  Resolusi konflik otomatis: bandingkan OB baru vs OB lama
+    // ──────────────────────────────────────────────────────────────
+
+    /**
+     * Bandingkan data OB yang baru dibangun ($built, hasil buildDetailsForGroup()) terhadap
+     * OB lama yang sudah ada ($existing, di-eager-load dengan openingBalanceDetails di
+     * process()) — dipakai untuk resolusi konflik otomatis (lihat process(): identik ->
+     * dilewati, beda -> diganti). Level item (kode_barang/qty/harga) SENGAJA tidak
+     * dibandingkan — item OB bersifat opsional/suplementer, over-engineering untuk manfaat
+     * marginal kalau ikut dibandingkan.
+     */
+    private function openingBalanceUnchanged(Invoice $existing, array $built): bool
+    {
+        if (abs((float) $existing->subtotal - (float) $built['saldo_awal']) >= 0.01) {
+            return false;
+        }
+
+        $existingFingerprints = $existing->openingBalanceDetails
+            ->map(fn ($d) => $this->detailFingerprint(
+                $d->no_invoice_asal,
+                optional($d->tanggal_invoice_asal)->toDateString(),
+                (float) $d->jumlah_tagihan_asal,
+                (float) $d->sisa_tagihan_asal,
+            ))
+            ->sort()
+            ->values()
+            ->all();
+
+        $builtFingerprints = collect($built['details'])
+            ->map(fn ($d) => $this->detailFingerprint(
+                $d['no_invoice_asal'] ?? null,
+                $d['tanggal_invoice_asal'] ?? null,
+                (float) ($d['jumlah_tagihan_asal'] ?? 0),
+                (float) ($d['sisa_tagihan_asal'] ?? 0),
+            ))
+            ->sort()
+            ->values()
+            ->all();
+
+        return $existingFingerprints === $builtFingerprints;
+    }
+
+    /** Fingerprint 1 baris rincian OB — dipakai openingBalanceUnchanged() untuk bandingkan set (order-independent). */
+    private function detailFingerprint(?string $noInvoiceAsal, ?string $tanggalInvoiceAsal, float $jumlahTagihanAsal, float $sisaTagihanAsal): string
+    {
+        return strtolower(trim($noInvoiceAsal ?? '')).'|'.($tanggalInvoiceAsal ?? '').'|'
+            .number_format($jumlahTagihanAsal, 2, '.', '').'|'.number_format($sisaTagihanAsal, 2, '.', '');
     }
 
     // ──────────────────────────────────────────────────────────────
