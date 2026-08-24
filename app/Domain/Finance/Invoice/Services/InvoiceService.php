@@ -408,6 +408,56 @@ class InvoiceService
     }
 
     /**
+     * Cegah tanggal cut-over Opening Balance salah ketik jatuh di bulan yang sama (atau
+     * setelah) invoice reguler yang sudah ada, atau tumpang tindih dengan OB lain yang
+     * belum ditolak — tanpa ini EndingBalanceService::computeComponents() dobel-hitung
+     * invoiceMasuk dan DashboardService::buildAgingSummaryForKpi() salah bucket umur
+     * piutang. Batas ">= startOfMonth" (bukan cuma "bulan sama persis") meniru konvensi
+     * yang sudah dipakai InvoiceController::outstanding() untuk menentukan invoice mana
+     * yang boleh ditarik ke OB.
+     */
+    public function findOpeningBalanceMonthConflict(int $klienArId, string|Carbon $tanggal, ?int $ignoreInvoiceId = null): ?array
+    {
+        $tanggal = $tanggal instanceof Carbon ? $tanggal : Carbon::parse($tanggal);
+        $monthStart = $tanggal->copy()->startOfMonth();
+        $monthEnd = $tanggal->copy()->endOfMonth();
+
+        $obConflict = Invoice::where('klien_ar_id', $klienArId)
+            ->where('is_opening_balance', true)
+            ->where('approval_status', '!=', 'REJECTED')
+            ->whereBetween('tanggal_invoice', [$monthStart->toDateString(), $monthEnd->toDateString()])
+            ->when($ignoreInvoiceId, fn ($q) => $q->where('id', '!=', $ignoreInvoiceId))
+            ->first();
+
+        if ($obConflict) {
+            return [
+                'type' => 'opening_balance',
+                'no_invoice' => $obConflict->no_invoice,
+                'tanggal_invoice' => $obConflict->tanggal_invoice?->toDateString(),
+                'message' => "Opening Balance untuk klien ini pada bulan {$monthStart->locale('id')->translatedFormat('F Y')} sudah pernah dibuat (No. {$obConflict->no_invoice}, tanggal ".Carbon::parse($obConflict->tanggal_invoice)->format('d-m-Y').'). Tidak bisa membuat Opening Balance lain di bulan yang sama.',
+            ];
+        }
+
+        $invoiceConflict = Invoice::where('klien_ar_id', $klienArId)
+            ->where('is_opening_balance', false)
+            ->where('tanggal_invoice', '>=', $monthStart->toDateString())
+            ->when($ignoreInvoiceId, fn ($q) => $q->where('id', '!=', $ignoreInvoiceId))
+            ->orderBy('tanggal_invoice')
+            ->first();
+
+        if ($invoiceConflict) {
+            return [
+                'type' => 'invoice',
+                'no_invoice' => $invoiceConflict->no_invoice,
+                'tanggal_invoice' => $invoiceConflict->tanggal_invoice?->toDateString(),
+                'message' => "Ditemukan Invoice reguler pada/setelah bulan {$monthStart->locale('id')->translatedFormat('F Y')} (No. {$invoiceConflict->no_invoice}, tanggal ".Carbon::parse($invoiceConflict->tanggal_invoice)->format('d-m-Y').'). Tanggal Opening Balance harus sebelum bulan invoice reguler pertama klien ini.',
+            ];
+        }
+
+        return null;
+    }
+
+    /**
      * @param  bool  $bypassApproval  true untuk jalur Import Master Opening Balance — akses import
      *                                sudah dibatasi ke ADMIN/MANAGER/SUPERVISOR (role tepercaya) di
      *                                controller, jadi OB hasil import langsung APPROVED, tidak perlu
@@ -416,6 +466,9 @@ class InvoiceService
      */
     private function persistOpeningBalance(array $data, KlienAr $klien, User $user, bool $notify, bool $eagerLoad = true, bool $bypassApproval = false, ?Collection $preloadedCarryoverCandidates = null): Invoice
     {
+        $conflict = $this->findOpeningBalanceMonthConflict((int) $data['klien_ar_id'], $data['tanggal']);
+        abort_if($conflict !== null, 422, $conflict['message'] ?? 'Tanggal Opening Balance bentrok dengan data yang sudah ada');
+
         $saldoAwal = ! empty($data['details'])
             ? collect($data['details'])->sum(fn ($d) => (float) ($d['sisa_tagihan_asal'] ?? 0))
             : (float) ($data['saldo_awal'] ?? 0);
@@ -488,6 +541,9 @@ class InvoiceService
         $this->abortIfPeriodLocked($invoice);
 
         $klien = KlienAr::findOrFail($data['klien_ar_id']);
+
+        $conflict = $this->findOpeningBalanceMonthConflict((int) $data['klien_ar_id'], $data['tanggal'], ignoreInvoiceId: $invoice->id);
+        abort_if($conflict !== null, 422, $conflict['message'] ?? 'Tanggal Opening Balance bentrok dengan data yang sudah ada');
 
         $saldoAwal = ! empty($data['details'])
             ? collect($data['details'])->sum(fn ($d) => (float) ($d['sisa_tagihan_asal'] ?? 0))

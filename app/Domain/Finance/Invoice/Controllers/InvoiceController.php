@@ -197,6 +197,18 @@ class InvoiceController extends Controller
 
         $this->authorizeKlienArOwnership((int) $validated['klien_ar_id']);
 
+        // Cegah "Muat Data" memuat/menyembunyikan invoice bulan lalu begitu tanggal OB yang
+        // diketik bentrok dengan Invoice reguler atau OB lain yang sudah ada bulan yang sama
+        // — notice ini muncul di FE SEBELUM submit, persistOpeningBalance() jadi gerbang
+        // terakhir (lihat findOpeningBalanceMonthConflict()).
+        $conflict = !empty($validated['tanggal'])
+            ? $this->service->findOpeningBalanceMonthConflict((int) $validated['klien_ar_id'], $validated['tanggal'])
+            : null;
+
+        if ($conflict) {
+            return $this->successResponse(['conflict' => $conflict, 'invoices' => []]);
+        }
+
         $query = \App\Models\Invoice::with(['items.barang', 'resto', 'klienAr.resto'])
             ->where('klien_ar_id', $validated['klien_ar_id'])
             ->whereIn('status', ['TERKIRIM', 'SEBAGIAN'])
@@ -227,7 +239,7 @@ class InvoiceController extends Controller
 
         $invoices = $invoices->map(fn($inv) => $this->mapOutstandingInvoice($inv, $barangByKode));
 
-        return $this->successResponse($invoices);
+        return $this->successResponse(['conflict' => null, 'invoices' => $invoices]);
     }
 
     /**
@@ -252,8 +264,17 @@ class InvoiceController extends Controller
         $acuan = !empty($validated['tanggal']) ? Carbon::parse($validated['tanggal']) : Carbon::now();
         $bulanLalu = $acuan->copy()->subMonthNoOverflow();
 
-        $invoices = \App\Models\Invoice::with(['items.barang', 'resto', 'klienAr.resto'])
-            ->whereIn('klien_ar_id', $validated['klien_ar_ids'])
+        // Klien yang cutover-nya bentrok (tanggal acuan yang sama untuk semua klien di
+        // request bulk ini — lihat findOpeningBalanceMonthConflict()) tidak ikut di-query
+        // invoice-nya sama sekali, supaya invoice bulan lalu mereka tidak ikut termuat.
+        $conflicts = collect($validated['klien_ar_ids'])
+            ->mapWithKeys(fn ($klienArId) => [$klienArId => $this->service->findOpeningBalanceMonthConflict((int) $klienArId, $acuan)])
+            ->filter();
+
+        $klienArIdsBersih = collect($validated['klien_ar_ids'])->diff($conflicts->keys())->values();
+
+        $invoices = $klienArIdsBersih->isEmpty() ? collect() : \App\Models\Invoice::with(['items.barang', 'resto', 'klienAr.resto'])
+            ->whereIn('klien_ar_id', $klienArIdsBersih)
             ->whereIn('status', ['TERKIRIM', 'SEBAGIAN'])
             ->where('is_opening_balance', false)
             ->whereBetween('tanggal_invoice', [
@@ -275,12 +296,19 @@ class InvoiceController extends Controller
             ? \App\Models\Barang::whereIn('kode_barang', $kodeBarangTanpaId)->get()->keyBy('kode_barang')
             : collect();
 
-        $grouped = $invoices
+        $groupedInvoices = $invoices
             ->map(fn($inv) => $this->mapOutstandingInvoice($inv, $barangByKode))
             ->groupBy('klien_ar_id')
             ->map(fn($group) => $group->values());
 
-        return $this->successResponse($grouped);
+        $result = collect($validated['klien_ar_ids'])->mapWithKeys(fn ($klienArId) => [
+            $klienArId => [
+                'conflict' => $conflicts->get($klienArId),
+                'invoices' => $groupedInvoices->get($klienArId, collect())->values(),
+            ],
+        ]);
+
+        return $this->successResponse($result);
     }
 
     private function mapOutstandingInvoice(\App\Models\Invoice $inv, \Illuminate\Support\Collection $barangByKode): array
