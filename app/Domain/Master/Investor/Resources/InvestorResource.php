@@ -18,8 +18,6 @@ class InvestorResource extends JsonResource
             'pengelola'       => $this->pengelola,
             'no_hp_pengelola' => $this->no_hp_pengelola,
             'email'           => $this->email,
-            'kode_cabang'     => $this->kode_cabang,
-            'id_cabang'       => $this->id_cabang,
             'status'          => $this->status,
             'created_by'      => $this->created_by,
             'created_by_name' => $this->whenLoaded('createdBy', fn() => $this->createdBy?->username),

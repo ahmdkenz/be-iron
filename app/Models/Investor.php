@@ -20,8 +20,6 @@ class Investor extends Model
         'pengelola',
         'no_hp_pengelola',
         'email',
-        'kode_cabang',
-        'id_cabang',
         'status',
         'created_by',
         'updated_by',

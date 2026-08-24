@@ -305,28 +305,26 @@ class UnifiedMasterController extends Controller
             'E'  => ['pengelola',       24],
             'F'  => ['no_hp_pengelola', 20],
             'G'  => ['email',           26],
-            'H'  => ['kode_cabang',     18],
-            'I'  => ['id_cabang',       18],
-            'J'  => ['kode_resto (*)',      18],
-            'K'  => ['nama_cabang (*)',     30],
-            'L'  => ['nama_entitas (*)',    26],
-            'M'  => ['nama_brand',      20],
-            'N'  => ['nama_pic (*)',        24],
-            'O'  => ['supervisor',      24],
-            'P'  => ['no_hp_supervisor',18],
-            'Q'  => ['stokis',          22],
-            'R'  => ['area',            18],
-            'S'  => ['kota',            16],
-            'T'  => ['alamat',          30],
-            'U'  => ['no_telp',         16],
-            'V'  => ['tgl_aktif',       14],
-            'W'  => ['keterangan',      26],
-            'X'  => ['pic_ar (*)',          26],
-            'Y'  => ['tipe_klien (*)',      18],
-            'Z'  => ['status',          10],
+            'H'  => ['kode_resto (*)',      18],
+            'I'  => ['nama_cabang (*)',     30],
+            'J'  => ['nama_entitas (*)',    26],
+            'K'  => ['nama_brand',      20],
+            'L'  => ['nama_pic (*)',        24],
+            'M'  => ['supervisor',      24],
+            'N'  => ['no_hp_supervisor',18],
+            'O'  => ['stokis',          22],
+            'P'  => ['area',            18],
+            'Q'  => ['kota',            16],
+            'R'  => ['alamat',          30],
+            'S'  => ['no_telp',         16],
+            'T'  => ['tgl_aktif',       14],
+            'U'  => ['keterangan',      26],
+            'V'  => ['pic_ar (*)',          26],
+            'W'  => ['tipe_klien (*)',      18],
+            'X'  => ['status',          10],
         ];
 
-        $lastCol = 'Z';
+        $lastCol = 'X';
 
         // Row 1 — Title
         $sheet->mergeCells("A1:{$lastCol}1");
@@ -373,25 +371,23 @@ class UnifiedMasterController extends Controller
             'E'  => 'Nama Pengelola',
             'F'  => '08198765432',
             'G'  => 'budi@email.com',
-            'H'  => 'CB-001',
-            'I'  => 'ID-CB-001',
-            'J'  => 'KD-001',
-            'K'  => 'Nama Cabang / Resto',
-            'L'  => 'Nama Entitas PT',
-            'M'  => 'Nama Brand',
-            'N'  => 'Nama PIC Resto',
-            'O'  => 'Nama Supervisor',
-            'P'  => '08111222333',
-            'Q'  => 'Nama Stokis',
-            'R'  => 'Jakarta Pusat',
-            'S'  => 'Jakarta',
-            'T'  => 'Jl. Contoh No. 1',
-            'U'  => '02112345678',
-            'V'  => '01-01-2026',
-            'W'  => 'Keterangan opsional',
-            'X'  => 'Nama Karyawan AR',
-            'Y'  => 'RESTO/B2C',
-            'Z'  => '1',
+            'H'  => 'KD-001',
+            'I'  => 'Nama Cabang / Resto',
+            'J'  => 'Nama Entitas PT',
+            'K'  => 'Nama Brand',
+            'L'  => 'Nama PIC Resto',
+            'M'  => 'Nama Supervisor',
+            'N'  => '08111222333',
+            'O'  => 'Nama Stokis',
+            'P'  => 'Jakarta Pusat',
+            'Q'  => 'Jakarta',
+            'R'  => 'Jl. Contoh No. 1',
+            'S'  => '02112345678',
+            'T'  => '01-01-2026',
+            'U'  => 'Keterangan opsional',
+            'V'  => 'Nama Karyawan AR',
+            'W'  => 'RESTO/B2C',
+            'X'  => '1',
         ];
         foreach ($example as $col => $val) {
             $sheet->getCell("{$col}5")->setValueExplicit($val, DataType::TYPE_STRING);
@@ -412,7 +408,7 @@ class UnifiedMasterController extends Controller
                 'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_HAIR, 'color' => ['argb' => 'FFE0E0E0']]],
             ]);
             // Format as text: kolom-kolom nomor yang mungkin diawali 0
-            foreach (['B', 'C', 'D', 'F', 'P', 'U', 'V'] as $col) {
+            foreach (['B', 'C', 'D', 'F', 'N', 'S', 'T'] as $col) {
                 $sheet->getStyle("{$col}{$row}")->getNumberFormat()->setFormatCode(NumberFormat::FORMAT_TEXT);
             }
             $sheet->getRowDimension($row)->setRowHeight(18);
@@ -588,15 +584,13 @@ class UnifiedMasterController extends Controller
         $row++;
 
         $masterDataCols = [
-            ['nama_investor',   'Nama investor (upsert key bersama kode+id_cabang). Opsional untuk tipe_klien=RESTO/B2C — jika kosong, Investor TIDAK dibuat & Client AR pakai nama fallback "kode_resto (nama_cabang)".', 'Ya (Opsional utk RESTO/B2C)', 'Budi Santoso'],
+            ['nama_investor',   'Nama investor (satu-satunya acuan upsert Investor — nama yang sama di re-import akan MEMPERBARUI baris ini, bukan membuat duplikat). Opsional untuk tipe_klien=RESTO/B2C — jika kosong, Investor TIDAK dibuat & Client AR pakai nama fallback "kode_resto (nama_cabang)".', 'Ya (Opsional utk RESTO/B2C)', 'Budi Santoso'],
             ['ktp',             'Nomor KTP investor (boleh sama antar cabang)',                    'Opsional',               '3273012345678901'],
             ['npwp',            'Nomor NPWP investor (boleh sama antar cabang)',                   'Opsional',               '12.345.678.9-012.000'],
             ['no_hp',           'Nomor HP investor',                                               'Opsional',               '08123456789'],
             ['pengelola',       'Nama pengelola investor',                                         'Opsional',               'Ahmad'],
             ['no_hp_pengelola', 'Nomor HP pengelola investor',                                     'Opsional',               '08198765432'],
             ['email',           'Email investor — SATU investor selalu pakai email yang SAMA di semua baris (walau banyak resto/outlet beda baris). Baris kosong, format tidak valid, atau berbeda dari email yang sudah tercatat TIDAK akan menimpa — email pertama yang valid tetap dipakai, baris lainnya cuma dicatat sebagai info di hasil import (bukan error).', 'Opsional', 'budi@email.com'],
-            ['kode_cabang',     'Kode cabang investor',                                            'Opsional',               'CB-001'],
-            ['id_cabang',       'ID cabang investor',                                              'Opsional',               'ID-CB-001'],
             ['kode_resto',      'Kode resto — identitas unik outlet. Wajib untuk Resto baru; untuk edit resto lama boleh dikosongkan (fallback ke nama_cabang), tapi disarankan selalu diisi.', 'Ya', 'KD-001'],
             ['nama_cabang',     'Nama cabang/resto (upsert key Resto)',                            'Ya', 'Warung Makan Enak'],
             ['nama_entitas',    'Nama perusahaan/singkatan (lookup) — WAJIB jika tipe_klien=PT/B2B',  'Ya (PT/B2B)',                'PT Maju Bersama'],

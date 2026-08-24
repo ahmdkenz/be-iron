@@ -39,8 +39,6 @@ class InvestorService
             'pengelola'       => $dto->pengelola,
             'no_hp_pengelola' => $dto->no_hp_pengelola,
             'email'           => $dto->email,
-            'kode_cabang'     => $dto->kode_cabang,
-            'id_cabang'       => $dto->id_cabang,
             'status'          => $dto->status,
         ], $eagerLoad);
     }
@@ -55,8 +53,6 @@ class InvestorService
             'pengelola'       => $dto->pengelola,
             'no_hp_pengelola' => $dto->no_hp_pengelola,
             'email'           => $dto->email,
-            'kode_cabang'     => $dto->kode_cabang,
-            'id_cabang'       => $dto->id_cabang,
             'status'          => $dto->status,
         ], $eagerLoad);
     }

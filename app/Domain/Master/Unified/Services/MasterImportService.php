@@ -81,8 +81,8 @@ class MasterImportService
      */
     private const CHANGE_LOG_FLUSH_SIZE = 500;
 
-    /** Field yang disnapshot ke data_sebelum/data_baru riwayat import — nama+kode duluan (identitas utama di UI). */
-    private const INVESTOR_SNAPSHOT_FIELDS = ['nama_investor', 'kode_cabang', 'ktp', 'npwp', 'no_hp', 'pengelola', 'no_hp_pengelola', 'email', 'id_cabang', 'status'];
+    /** Field yang disnapshot ke data_sebelum/data_baru riwayat import — nama duluan (identitas utama di UI). */
+    private const INVESTOR_SNAPSHOT_FIELDS = ['nama_investor', 'ktp', 'npwp', 'no_hp', 'pengelola', 'no_hp_pengelola', 'email', 'status'];
 
     private const RESTO_SNAPSHOT_FIELDS = ['nama_resto', 'kode_resto', 'supervisor', 'no_hp_supervisor', 'stokis', 'area', 'kota', 'alamat', 'no_telp', 'tgl_aktif', 'keterangan', 'status'];
 
@@ -107,8 +107,6 @@ class MasterImportService
         'pengelola'       => 'Pengelola',
         'no_hp_pengelola' => 'No. HP Pengelola',
         'email'           => 'Email',
-        'kode_cabang'     => 'Kode Cabang',
-        'id_cabang'       => 'ID Cabang',
         'status'          => 'Status',
     ];
 
@@ -297,7 +295,7 @@ class MasterImportService
         }
 
         $sheet    = $spreadsheet->getSheet($sheetIndex);
-        $detected = $this->detectMasterHeaderStart($sheet, 'nama_investor', 27);
+        $detected = $this->detectMasterHeaderStart($sheet, 'nama_investor', 25);
 
         if (!$detected['found']) {
             $errors[] = ['sheet' => 'MASTER DATA', 'row' => 0, 'message' => 'Header "nama_investor" tidak ditemukan di sheet MASTER DATA.'];
@@ -418,8 +416,6 @@ class MasterImportService
                         'no_hp'           => $this->importValue($col($row, 'no_hp')),
                         'pengelola'       => $this->importValue($col($row, 'pengelola')),
                         'no_hp_pengelola' => $this->importValue($col($row, 'no_hp_pengelola')),
-                        'kode_cabang'     => $this->importValue($col($row, 'kode_cabang')),
-                        'id_cabang'       => $this->importValue($col($row, 'id_cabang')),
                         'status'          => $status,
                     ];
 
@@ -430,8 +426,6 @@ class MasterImportService
                         'no_hp'           => ['nullable', 'string', 'max:20'],
                         'pengelola'       => ['nullable', 'string', 'max:150'],
                         'no_hp_pengelola' => ['nullable', 'string', 'max:20'],
-                        'kode_cabang'     => ['nullable', 'string', 'max:50'],
-                        'id_cabang'       => ['nullable', 'string', 'max:50'],
                         'status'          => ['nullable', 'boolean'],
                     ]);
 
@@ -442,7 +436,7 @@ class MasterImportService
                         $investorFailed = true;
                         $this->recordChange($changeLog, $batch, 'investor', $lineNumber, 'gagal', null, $invData, $errorMessage);
                     } else {
-                        $investorKey = $this->investorDedupKey($invData['nama_investor'], $invData['kode_cabang'], $invData['id_cabang']);
+                        $investorKey = $this->investorDedupKey($invData['nama_investor']);
                         $existing = $investorMap[$investorKey] ?? null;
 
                         // Di luar $validator di atas dengan sengaja: format email salah TIDAK
@@ -1124,20 +1118,13 @@ class MasterImportService
     // ──────────────────────────────────────────────────────────────
 
     /**
-     * kode_cabang/id_cabang diprioritaskan sebagai identitas Investor yang stabil — nama hanya
-     * dipakai untuk mencocokkan baris lama yang belum punya kode cabang sama sekali. Ini supaya
-     * koreksi typo nama_investor di re-import ter-update ke record lama, bukan bikin duplikat.
+     * Kunci dedup Investor saat import — murni berbasis nama_investor (case-insensitive) sejak
+     * kode_cabang/id_cabang dihapus dari entitas Investor. Baris Excel dengan nama_investor yang
+     * sama (walau beda cabang/outlet) dianggap satu Investor yang sama saat re-import.
      */
-    private function investorDedupKey(string $namaInvestor, ?string $kodeCabang, ?string $idCabang): string
+    private function investorDedupKey(string $namaInvestor): string
     {
-        $kodeCabang = trim((string) $kodeCabang);
-        $idCabang   = trim((string) $idCabang);
-
-        if ($kodeCabang !== '' || $idCabang !== '') {
-            return 'cabang:' . strtolower($kodeCabang) . '|' . strtolower($idCabang);
-        }
-
-        return 'nama:' . strtolower($namaInvestor);
+        return strtolower($namaInvestor);
     }
 
     private function restoDedupKeyByKode(string $kodeResto): string
@@ -1232,8 +1219,6 @@ class MasterImportService
         );
 
         $namaInvestorList     = [];
-        $kodeCabangList       = [];
-        $idCabangList         = [];
         $kodeRestoList        = [];
         $namaRestoFallbackList = [];
         $ptPerusahaanIdSet    = [];
@@ -1254,14 +1239,6 @@ class MasterImportService
 
             if ($namaInvestor !== '') {
                 $namaInvestorList[strtolower($namaInvestor)] = $namaInvestor;
-
-                // kode_cabang/id_cabang dipreload terpisah dari nama supaya Investor yang
-                // sudah punya kode bisa ditemukan meski nama_investor di baris ini berbeda
-                // dari yang tersimpan (lihat investorDedupKey()).
-                $kodeCabang = $this->importValue($col($row, 'kode_cabang')) ?? '';
-                $idCabang   = $this->importValue($col($row, 'id_cabang')) ?? '';
-                if ($kodeCabang !== '') $kodeCabangList[strtolower($kodeCabang)] = $kodeCabang;
-                if ($idCabang !== '') $idCabangList[strtolower($idCabang)] = $idCabang;
             }
 
             $parsedRows[] = [
@@ -1286,16 +1263,12 @@ class MasterImportService
         }
 
         $investorMap = [];
-        if (! empty($namaInvestorList) || ! empty($kodeCabangList) || ! empty($idCabangList)) {
-            Investor::where(function ($q) use ($namaInvestorList, $kodeCabangList, $idCabangList) {
-                    if (! empty($namaInvestorList)) $q->orWhereIn('nama_investor', array_values($namaInvestorList));
-                    if (! empty($kodeCabangList)) $q->orWhereIn('kode_cabang', array_values($kodeCabangList));
-                    if (! empty($idCabangList)) $q->orWhereIn('id_cabang', array_values($idCabangList));
-                })
+        if (! empty($namaInvestorList)) {
+            Investor::whereIn('nama_investor', array_values($namaInvestorList))
                 ->orderBy('created_at')
                 ->get()
                 ->each(function (Investor $inv) use (&$investorMap) {
-                    $investorMap[$this->investorDedupKey((string) $inv->nama_investor, $inv->kode_cabang, $inv->id_cabang)] = $inv;
+                    $investorMap[$this->investorDedupKey((string) $inv->nama_investor)] = $inv;
                 });
         }
 
@@ -1916,7 +1889,7 @@ class MasterImportService
     private function investorDiff(Investor $existing, array $import): array
     {
         $diff = [];
-        foreach (['nama_investor', 'ktp', 'npwp', 'no_hp', 'pengelola', 'no_hp_pengelola', 'email', 'kode_cabang', 'id_cabang'] as $f) {
+        foreach (['nama_investor', 'ktp', 'npwp', 'no_hp', 'pengelola', 'no_hp_pengelola', 'email'] as $f) {
             $lama = $this->normalizeStr($existing->{$f});
             $baru = $this->normalizeStr($import[$f]);
             if ($lama !== $baru) {

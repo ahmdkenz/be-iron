@@ -107,11 +107,9 @@ class InvestorController extends Controller
             'D' => ['No. HP',              18],
             'E' => ['Nama Pengelola',       28],
             'F' => ['No. HP Pengelola',     20],
-            'G' => ['Kode Cabang',         24],
-            'H' => ['ID Cabang',           24],
-            'I' => ['Status',              14],
+            'G' => ['Status',              14],
         ];
-        $lastCol = 'I';
+        $lastCol = 'G';
 
         // Row 1 — Title
         $sheet->mergeCells("A1:{$lastCol}1");
@@ -161,9 +159,7 @@ class InvestorController extends Controller
                 'D' => [$inv->no_hp ?? '-',      DataType::TYPE_STRING],
                 'E' => [$inv->pengelola ?? '-',  DataType::TYPE_STRING],
                 'F' => [$inv->no_hp_pengelola ?? '-', DataType::TYPE_STRING],
-                'G' => [$inv->kode_cabang ?? '-', DataType::TYPE_STRING],
-                'H' => [$inv->id_cabang ?? '-',  DataType::TYPE_STRING],
-                'I' => [$inv->status ? 'Aktif' : 'Tidak Aktif', DataType::TYPE_STRING],
+                'G' => [$inv->status ? 'Aktif' : 'Tidak Aktif', DataType::TYPE_STRING],
             ];
 
             foreach ($rowData as $col => [$val, $type]) {
@@ -178,10 +174,10 @@ class InvestorController extends Controller
 
             // Status column: color based on value
             $statusColor = $inv->status ? 'FF2E7D32' : 'FFAF2018';
-            $sheet->getStyle("I{$rowNum}")->getFont()->setColor(
+            $sheet->getStyle("G{$rowNum}")->getFont()->setColor(
                 new \PhpOffice\PhpSpreadsheet\Style\Color($statusColor)
             );
-            $sheet->getStyle("I{$rowNum}")->getFont()->setBold(true);
+            $sheet->getStyle("G{$rowNum}")->getFont()->setBold(true);
 
             $sheet->getRowDimension($rowNum)->setRowHeight(18);
             $rowNum++;
