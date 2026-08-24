@@ -10,6 +10,7 @@ use App\Domain\Notification\Services\FinanceNotificationService;
 use App\Http\Controllers\Controller;
 use App\Models\KlienAr;
 use App\Models\PembayaranAr;
+use App\Models\PembayaranArItem;
 use App\Models\PendapatanDiMuka;
 use App\Support\Helpers\RoleHelper;
 use App\Support\Traits\ApiResponse;
@@ -88,13 +89,6 @@ class PembayaranArController extends Controller
             ? collect([$pembayaran->invoice])
             : $pembayaran->items->map(fn($item) => $item->invoice)->filter()->unique('id')->values();
 
-        if (!RoleHelper::hasGlobalArAccess($user) && $user->karyawan) {
-            $luarEntitas = $invoices->contains(
-                fn($inv) => (int) $inv->perusahaan_id !== (int) $user->karyawan->perusahaan_id
-            );
-            abort_if($luarEntitas, 403, 'Anda tidak memiliki akses untuk menghapus pembayaran ini.');
-        }
-
         $picArKaryawanId = RoleHelper::picArKaryawanIdFor($user);
         if ($picArKaryawanId === null) {
             return;
@@ -118,6 +112,58 @@ class PembayaranArController extends Controller
             $ownerKaryawanArId === null || (int) $ownerKaryawanArId !== $picArKaryawanId,
             403,
             'Anda tidak memiliki akses untuk menghapus pembayaran ini.'
+        );
+    }
+
+    /**
+     * Hapus SATU alokasi (item) dari header Multi Payment, tanpa menghapus
+     * seluruh header — beda dari destroy() di atas yang selalu menghapus
+     * semuanya. Otorisasi discope ke SATU invoice target saja (meniru pola
+     * BankStatementService::applyKelebihan()), BUKAN ke semua invoice di
+     * header seperti authorizeDeleteOwnership() — itu yang sebelumnya membuat
+     * PIC AR sering ditolak 403 walau cuma ingin menghapus alokasi miliknya
+     * sendiri.
+     */
+    public function destroyItem(Request $request, int $pembayaranId, int $itemId): JsonResponse
+    {
+        $pembayaran = PembayaranAr::find($pembayaranId);
+        abort_if(!$pembayaran, 404, 'Data pembayaran tidak ditemukan');
+
+        $item = PembayaranArItem::with('invoice.klienAr')->find($itemId);
+        abort_if(!$item, 404, 'Item alokasi pembayaran tidak ditemukan');
+        abort_if($item->pembayaran_ar_id !== $pembayaran->id, 422, 'Item pembayaran tidak sesuai dengan header Multi Payment ini.');
+
+        $this->authorizeDeleteItemOwnership($item, $request->user()->loadMissing('karyawan'));
+
+        $noInvoice = $item->invoice?->no_invoice;
+        $klienArId = $item->invoice?->klien_ar_id;
+
+        $this->service->deleteItem($pembayaran, $item);
+
+        $this->financeNotificationService->bankReconciliationAction(
+            'batal_pembayaran_ar_item',
+            'Alokasi Multi Payment dibatalkan',
+            sprintf('%s membatalkan alokasi Multi Payment untuk invoice %s.', auth()->user()?->name ?? '-', $noInvoice ?? '-'),
+            klienArId: $klienArId,
+        );
+
+        return $this->successResponse(null, 'Alokasi pembayaran berhasil dihapus');
+    }
+
+    private function authorizeDeleteItemOwnership(PembayaranArItem $item, $user): void
+    {
+        $invoice = $item->invoice;
+        abort_if(!$invoice, 404, 'Invoice terkait item pembayaran ini tidak ditemukan.');
+
+        $picArKaryawanId = RoleHelper::picArKaryawanIdFor($user);
+        if ($picArKaryawanId === null) {
+            return;
+        }
+
+        abort_if(
+            (int) ($invoice->klienAr?->karyawan_ar_id ?? 0) !== $picArKaryawanId,
+            403,
+            'Anda tidak memiliki akses untuk menghapus pembayaran klien ini.'
         );
     }
 

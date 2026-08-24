@@ -15,12 +15,20 @@ class PendapatanDiMukaService
         BankStatementDetail $detail,
         float $jumlah,
         ?string $keterangan,
-        string $tanggalPencatatan
+        string $tanggalPencatatan,
+        ?Invoice $invoiceContext = null,
     ): PendapatanDiMuka {
         $pembayaran = $detail->pembayaranAr;
         abort_if(!$pembayaran, 422, 'Transaksi belum memiliki pembayaran yang dicocokkan.');
 
-        $inv = $pembayaran->invoice;
+        // $pembayaran->invoice (via invoice_id) selalu null untuk header Multi
+        // Payment — pemanggil yang sudah tahu invoice mana yang relevan (mis.
+        // InvoiceService::handleExcessPaymentAfterUpdate() yang mengiterasi tiap
+        // invoice yang dialokasikan lewat tb_pembayaran_ar_items) wajib mengirim
+        // $invoiceContext eksplisit. Pemanggil lama (PendapatanDiMukaController,
+        // selalu single-invoice) tidak berubah perilakunya karena parameter ini
+        // opsional dan fallback ke $pembayaran->invoice seperti sebelumnya.
+        $inv = $invoiceContext ?? $pembayaran->invoice;
         abort_if(!$inv, 422, 'Pembayaran tidak memiliki invoice.');
 
         // Hitung sisa kelebihan — selaras dengan BankStatementService::computeKelebihanTotal().

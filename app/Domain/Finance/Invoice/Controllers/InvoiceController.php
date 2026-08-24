@@ -638,6 +638,7 @@ class InvoiceController extends Controller
                 : null,
             'is_multi_payment'            => false,
             'multi_payment_invoice_count' => null,
+            'item_id'                     => null,
         ]);
 
         // Sumber B: alokasi Multi Payment (header pembayaran_ar.invoice_id NULL,
@@ -675,6 +676,7 @@ class InvoiceController extends Controller
                         : null,
                     'is_multi_payment'            => true,
                     'multi_payment_invoice_count' => $otherCount,
+                    'item_id'                     => $item->id,
                 ];
             });
 

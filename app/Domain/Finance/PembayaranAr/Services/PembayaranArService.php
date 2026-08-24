@@ -12,6 +12,7 @@ use App\Models\EndingBalanceKoreksi;
 use App\Models\Invoice;
 use App\Models\KlienAr;
 use App\Models\PembayaranAr;
+use App\Models\PembayaranArItem;
 use App\Models\PembayaranArLog;
 use App\Models\PendapatanDiMuka;
 use Illuminate\Http\UploadedFile;
@@ -492,6 +493,80 @@ class PembayaranArService
                 foreach ($multiInvoices as $invoice) {
                     $this->invoiceService->recalculate($invoice);
                 }
+            });
+        });
+    }
+
+    /**
+     * Hapus SATU alokasi (PembayaranArItem) dari header Multi Payment, tanpa
+     * menyentuh header/alokasi invoice lain — beda dari delete() yang selalu
+     * menghapus seluruh header. Dipakai dari "Riwayat Pembayaran" di halaman
+     * detail Invoice (PembayaranArController::destroyItem()); delete() tetap
+     * dipakai apa adanya oleh BankStatementService::unmatch() (membatalkan
+     * cocok transaksi bank sepenuhnya).
+     */
+    public function deleteItem(PembayaranAr $pembayaran, PembayaranArItem $item): void
+    {
+        abort_if($pembayaran->invoice_id !== null, 422, 'Pembayaran ini bukan Multi Payment.');
+        abort_if($item->pembayaran_ar_id !== $pembayaran->id, 422, 'Item pembayaran tidak sesuai dengan header Multi Payment ini.');
+
+        EndingBalanceSyncBatcher::run(function () use ($pembayaran, $item) {
+            DB::transaction(function () use ($pembayaran, $item) {
+                $pembayaran = PembayaranAr::whereKey($pembayaran->id)->lockForUpdate()->firstOrFail();
+                $itemCount  = $pembayaran->items()->lockForUpdate()->count();
+
+                if ($itemCount <= 1) {
+                    // Item terakhir di header ini -> effectively sudah jadi
+                    // pembayaran 1 invoice. Reuse delete() yang sudah lengkap
+                    // (guard PDM TERPAKAI, unlink bank statement detail, refresh
+                    // counter, dst) alih-alih menduplikasi logic itu di sini.
+                    $this->delete($pembayaran);
+
+                    return;
+                }
+
+                $item    = PembayaranArItem::whereKey($item->id)->lockForUpdate()->firstOrFail();
+                $invoice = Invoice::with('klienAr')->lockForUpdate()->find($item->invoice_id);
+                abort_if(!$invoice, 404, 'Invoice terkait item pembayaran ini tidak ditemukan.');
+
+                // Guard CN/DN approved & EB-lock — sama seperti delete(), tapi
+                // discope ke SATU invoice target (bukan semua invoice di header).
+                abort_if(
+                    EndingBalanceKoreksi::where('invoice_id', $invoice->id)->where('status', 'APPROVED')->exists(),
+                    422,
+                    'Tidak dapat menghapus alokasi ini karena invoice terkait sudah memiliki Credit Note/Debit Note yang disetujui.'
+                );
+                if ($invoice->klien_ar_id && $invoice->tanggal_invoice) {
+                    abort_if(
+                        $this->endingBalanceService->isLockedForPeriod($invoice->klien_ar_id, $invoice->tanggal_invoice->toDateString()),
+                        422,
+                        'Tidak dapat menghapus alokasi ini karena periode invoice terkait sudah dikunci di Ending Balance.'
+                    );
+                }
+                // Guard PDM TERPAKAI dari delete() SENGAJA tidak dicek di sini: PDM
+                // dihitung dari (kredit bank - header.jumlah_pembayaran), jadi
+                // menghapus 1 item hanya MENAMBAH kelebihan tersedia, tidak pernah
+                // membuat PDM yang sudah TERPAKAI jadi tidak valid.
+
+                PembayaranArLog::create([
+                    'pembayaran_ar_id' => $pembayaran->id,
+                    'aksi'             => 'DIHAPUS',
+                    'actor_id'         => auth()->id(),
+                    'keterangan'       => "Alokasi ke invoice {$invoice->no_invoice} sebesar "
+                        . number_format((float) $item->jumlah_dialokasikan, 2, '.', '')
+                        . ' dihapus (item Multi Payment, header & alokasi invoice lain tetap ada).',
+                    'data_sebelum'     => $item->toArray(),
+                ]);
+
+                // Kurangi jumlah_pembayaran header sebesar alokasi yang dihapus,
+                // supaya dana yang dibebaskan langsung dikenali sebagai kelebihan
+                // tersedia oleh BankStatementService::computeKelebihanTotal()/applyKelebihan().
+                $pembayaran->jumlah_pembayaran = max(0, (float) $pembayaran->jumlah_pembayaran - (float) $item->jumlah_dialokasikan);
+                $pembayaran->save();
+
+                $item->delete();
+
+                $this->invoiceService->recalculate($invoice->fresh());
             });
         });
     }

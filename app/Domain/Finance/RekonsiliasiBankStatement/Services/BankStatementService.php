@@ -380,6 +380,14 @@ class BankStatementService
 
     public function manualMatch(BankStatementDetail $detail, int $pembayaranArId): BankStatementDetail
     {
+        // Titik akhir bersama SEMUA alur match-creation (matchWithNewPayment/
+        // matchWithNewMultiPayment/matchAsPdm/matchDetail) — lock + re-cek
+        // status_cocok di sini saja (bukan diduplikasi di tiap pemanggil) supaya
+        // double-submit ke baris yang sama tidak lolos berdua-duanya, tanpa
+        // memaksa pemanggil lain menyentuh DB lebih awal dari yang seharusnya.
+        $detail = BankStatementDetail::whereKey($detail->id)->lockForUpdate()->firstOrFail();
+        abort_if($detail->status_cocok === 'MATCHED', 422, 'Transaksi ini sudah dicocokkan.');
+
         $alreadyUsed = BankStatementDetail::where('bank_statement_id', $detail->bank_statement_id)
             ->where('status_cocok', 'MATCHED')
             ->where('pembayaran_ar_id', $pembayaranArId)
@@ -481,6 +489,12 @@ class BankStatementService
 
     public function markDiabaikan(BankStatementDetail $detail): void
     {
+        abort_if(
+            $detail->status_cocok === 'MATCHED',
+            422,
+            'Baris yang sudah dicocokkan tidak bisa langsung diabaikan — batalkan pencocokan (unmatch) terlebih dahulu.'
+        );
+
         $detail->update([
             'status_cocok'    => 'DIABAIKAN',
             'pembayaran_ar_id'=> null,
@@ -633,59 +647,63 @@ class BankStatementService
             'Jumlah melebihi sisa kelebihan (Rp ' . number_format($sisa, 0, ',', '.') . ').'
         );
 
-        $target = Invoice::with('klienAr.resto')->findOrFail($invoiceId);
+        DB::transaction(function () use ($invoiceId, $jumlah, $pembayaran, $inv, $keterangan) {
+            // Lock invoice tujuan di dalam transaction: fetch, validasi sisa tagihan,
+            // dan penulisan pembayaran anak harus atomic terhadap invoice yang sama —
+            // supaya 2 alokasi kelebihan bersamaan ke invoice yang sama tidak
+            // sama-sama lolos cek sisa_tagihan yang sudah stale.
+            $target = Invoice::with('klienAr.resto')->whereKey($invoiceId)->lockForUpdate()->firstOrFail();
 
-        if ($pembayaran->invoice_id) {
-            $inv->loadMissing('klienAr.resto');
+            if ($pembayaran->invoice_id) {
+                $inv->loadMissing('klienAr.resto');
 
-            // Dibatasi ke klien/resto sumber yang sama (bukan seluruh investor),
-            // selaras dengan pembatasan kandidat di getInvoiceB2CKlien/B2BKlien.
-            abort_if(
-                $target->klien_ar_id !== $inv->klien_ar_id,
-                422,
-                'Invoice tujuan harus milik klien/resto yang sama.'
-            );
-        } else {
-            // Header Multi Payment: dibatasi ke entitas (perusahaan_id) yang sama
-            // dengan invoice-invoice yang sudah dialokasikan di header ini, plus
-            // guard PIC AR eksplisit (scope-nya melebar dari 1 klien ke banyak
-            // klien, jadi tidak lagi otomatis aman seperti kasus 1 klien sumber).
-            abort_if(
-                $target->perusahaan_id !== $this->multiPaymentEntitasId($pembayaran),
-                422,
-                'Invoice tujuan harus berasal dari entitas penagih yang sama.'
-            );
-
-            $karyawanId = RoleHelper::picArKaryawanIdFor(auth()->user());
-            if ($karyawanId !== null) {
-                $klienKaryawanArId = $target->klienAr()->withTrashed()->value('karyawan_ar_id');
-                abort_unless(
-                    $klienKaryawanArId !== null && (int) $klienKaryawanArId === $karyawanId,
-                    403,
-                    'Anda tidak memiliki akses untuk memproses invoice klien ini.'
+                // Dibatasi ke klien/resto sumber yang sama (bukan seluruh investor),
+                // selaras dengan pembatasan kandidat di getInvoiceB2CKlien/B2BKlien.
+                abort_if(
+                    $target->klien_ar_id !== $inv->klien_ar_id,
+                    422,
+                    'Invoice tujuan harus milik klien/resto yang sama.'
                 );
+            } else {
+                // Header Multi Payment: dibatasi ke entitas (perusahaan_id) yang sama
+                // dengan invoice-invoice yang sudah dialokasikan di header ini, plus
+                // guard PIC AR eksplisit (scope-nya melebar dari 1 klien ke banyak
+                // klien, jadi tidak lagi otomatis aman seperti kasus 1 klien sumber).
+                abort_if(
+                    $target->perusahaan_id !== $this->multiPaymentEntitasId($pembayaran),
+                    422,
+                    'Invoice tujuan harus berasal dari entitas penagih yang sama.'
+                );
+
+                $karyawanId = RoleHelper::picArKaryawanIdFor(auth()->user());
+                if ($karyawanId !== null) {
+                    $klienKaryawanArId = $target->klienAr()->withTrashed()->value('karyawan_ar_id');
+                    abort_unless(
+                        $klienKaryawanArId !== null && (int) $klienKaryawanArId === $karyawanId,
+                        403,
+                        'Anda tidak memiliki akses untuk memproses invoice klien ini.'
+                    );
+                }
             }
-        }
 
-        abort_if($target->status === 'LUNAS', 422, 'Invoice ini sudah LUNAS.');
-        abort_if(
-            $target->requiresApproval() && !$target->isApprovedForFinanceFlow(),
-            422,
-            'Opening balance belum disetujui, pembayaran belum dapat diproses'
-        );
+            abort_if($target->status === 'LUNAS', 422, 'Invoice ini sudah LUNAS.');
+            abort_if(
+                $target->requiresApproval() && !$target->isApprovedForFinanceFlow(),
+                422,
+                'Opening balance belum disetujui, pembayaran belum dapat diproses'
+            );
 
-        $targetSubtotal    = (float) $target->subtotal;
-        $targetTotalBayar  = (float) $target->pembayarans()->sum('jumlah_pembayaran');
-        $targetSisaEfektif = $targetSubtotal > 0
-            ? max(0, $targetSubtotal - $targetTotalBayar)
-            : max(0, (float) $target->total_tagihan - $targetTotalBayar);
-        abort_if(
-            $jumlah > $targetSisaEfektif + 0.01,
-            422,
-            'Jumlah melebihi sisa tagihan invoice tujuan (Rp ' . number_format($targetSisaEfektif, 0, ',', '.') . ').'
-        );
+            $targetSubtotal    = (float) $target->subtotal;
+            $targetTotalBayar  = (float) $target->pembayarans()->sum('jumlah_pembayaran');
+            $targetSisaEfektif = $targetSubtotal > 0
+                ? max(0, $targetSubtotal - $targetTotalBayar)
+                : max(0, (float) $target->total_tagihan - $targetTotalBayar);
+            abort_if(
+                $jumlah > $targetSisaEfektif + 0.01,
+                422,
+                'Jumlah melebihi sisa tagihan invoice tujuan (Rp ' . number_format($targetSisaEfektif, 0, ',', '.') . ').'
+            );
 
-        DB::transaction(function () use ($invoiceId, $jumlah, $pembayaran, $inv, $keterangan, $target) {
             PembayaranAr::create([
                 'invoice_id'              => $invoiceId,
                 'tanggal_pembayaran'      => $pembayaran->tanggal_pembayaran,
@@ -861,6 +879,14 @@ class BankStatementService
         abort_if($detail->kredit <= 0, 422, 'Hanya transaksi kredit yang dapat dicatat pembayarannya.');
 
         return DB::transaction(function () use ($detail, $invoice, $settleOriginalInvoiceIds, $buktiBayar) {
+            // Lock invoice di dalam transaction supaya baca sisa_tagihan dan tulis
+            // pembayaran atomic terhadap invoice yang sama (race yang bisa bikin
+            // overpaid). Re-cek status_cocok yang atomic terhadap DETAIL dijaga
+            // di manualMatch() (titik akhir bersama semua alur match-creation),
+            // bukan di sini, supaya validasi jalur ini tetap bisa gagal cepat
+            // tanpa membuka transaction/menyentuh DB untuk kasus yang jelas invalid.
+            $invoice = Invoice::whereKey($invoice->id)->lockForUpdate()->firstOrFail();
+
             $subtotal         = (float) $invoice->subtotal;
             $totalBayar       = (float) $invoice->total_pembayaran;
             $totalPenyesuaian = (float) $invoice->total_penyesuaian;

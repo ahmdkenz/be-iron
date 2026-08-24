@@ -258,21 +258,30 @@ class InvoiceGroupProcessor
     private function updateInvoice(Invoice $existingInvoice, array $items, ?Collection $preloadedCascadeCandidates = null): ProcessGroupResult
     {
         try {
-            InvoiceItem::where('invoice_id', $existingInvoice->id)->delete();
-            $subtotal = $this->insertItems($existingInvoice, $items);
-            $this->recomputeSubtotal($existingInvoice, $subtotal);
+            // insertItems()+recomputeSubtotal()+recalculate() dibungkus 1 transaction:
+            // recomputeSubtotal() menulis sisa_tagihan mentah (belum memperhitungkan
+            // total_pembayaran) sebagai langkah antara sebelum recalculate() memperbaikinya
+            // — kalau proses gagal di tengah tanpa transaction, invoice bisa nyangkut
+            // dengan sisa_tagihan yang mengabaikan pembayaran yang sudah ada.
+            DB::transaction(function () use ($existingInvoice, $items, $preloadedCascadeCandidates) {
+                InvoiceItem::where('invoice_id', $existingInvoice->id)->delete();
+                $subtotal = $this->insertItems($existingInvoice, $items);
+                $this->recomputeSubtotal($existingInvoice, $subtotal);
 
-            // refresh() dihapus: recomputeSubtotal() sudah update() objek ini in-memory;
-            // recalculate() di bawah membaca field yang sama objek ini (subtotal, carryover,
-            // klien_ar_id, tanggal_invoice) — tidak ada yang stale.
-            DB::transaction(fn() => $this->service->recalculate($existingInvoice, $preloadedCascadeCandidates));
-            // refresh() dihapus: recalculate() memutasi $existingInvoice in-place via
-            // update() miliknya sendiri (referensi objek yang sama); cascade di dalamnya
-            // hanya menulis invoice LAIN (ke depan), tidak pernah menulis balik baris ini.
+                // refresh() dihapus: recomputeSubtotal() sudah update() objek ini in-memory;
+                // recalculate() di bawah membaca field yang sama objek ini (subtotal, carryover,
+                // klien_ar_id, tanggal_invoice) — tidak ada yang stale.
+                $this->service->recalculate($existingInvoice, $preloadedCascadeCandidates);
+                // refresh() dihapus: recalculate() memutasi $existingInvoice in-place via
+                // update() miliknya sendiri (referensi objek yang sama); cascade di dalamnya
+                // hanya menulis invoice LAIN (ke depan), tidak pernah menulis balik baris ini.
+            });
 
-            if ((float) $existingInvoice->total_pembayaran > (float) $existingInvoice->subtotal
-                && (float) $existingInvoice->subtotal > 0
-            ) {
+            // subtotal > 0 SENGAJA tidak lagi jadi syarat: invoice yang di-reimport
+            // sampai subtotal-nya persis 0 (mis. semua baris item hilang dari file
+            // sumber) tetap bisa overpaid kalau sudah punya pembayaran besar dari
+            // rekonsiliasi bank — kelebihannya tetap harus dicek untuk dijadikan PDM.
+            if ((float) $existingInvoice->total_pembayaran > (float) $existingInvoice->subtotal) {
                 $this->service->handleExcessPaymentAfterUpdate($existingInvoice);
             }
 

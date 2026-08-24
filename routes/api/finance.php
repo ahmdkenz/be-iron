@@ -105,6 +105,7 @@ Route::prefix('invoices')->group(function () {
 Route::middleware('role:ADMIN|MANAGER|SUPERVISOR|AR')->group(function () {
     Route::get('/pembayaran', [PembayaranArController::class, 'index']);
     Route::delete('/pembayaran/{pembayaran}', [PembayaranArController::class, 'destroy']);
+    Route::delete('/pembayaran/{pembayaran}/items/{item}', [PembayaranArController::class, 'destroyItem']);
 });
 
 // ─── Jurnal per PIC ───────────────────────────────────────────────

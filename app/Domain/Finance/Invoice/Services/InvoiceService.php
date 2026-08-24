@@ -922,41 +922,69 @@ class InvoiceService
      */
     public function handleExcessPaymentAfterUpdate(Invoice $invoice): void
     {
-        $invoice->loadMissing('pembayarans.bankStatementDetail');
+        $invoice->loadMissing(
+            'pembayarans.bankStatementDetail',
+            'pembayaranArItems.pembayaranAr.bankStatementDetail',
+        );
 
         $pdmService = app(PendapatanDiMukaService::class);
 
-        foreach ($invoice->pembayarans->whereNull('sumber_pembayaran_ar_id') as $pembayaran) {
-            $existingPdm = PendapatanDiMuka::where('sumber_pembayaran_ar_id', $pembayaran->id)
-                ->whereNotIn('status', ['DIBATALKAN'])
-                ->first();
+        // Pembayaran single-invoice (invoice_id langsung ke invoice ini) DAN header
+        // Multi Payment (invoice_id null, alokasi ke invoice ini lewat
+        // tb_pembayaran_ar_items) sama-sama bisa jadi sumber kelebihan bayar —
+        // digabung supaya invoice yang HANYA tersentuh Multi Payment tidak
+        // kelewatan (dulu cuma pembayarans() yang dicek, Multi Payment tidak
+        // pernah punya invoice_id jadi tidak pernah masuk situ).
+        $headers = $invoice->pembayarans
+            ->whereNull('sumber_pembayaran_ar_id')
+            ->concat(
+                $invoice->pembayaranArItems
+                    ->pluck('pembayaranAr')
+                    ->filter()
+                    ->filter(fn (PembayaranAr $p) => $p->sumber_pembayaran_ar_id === null)
+            )
+            ->unique('id');
 
-            if ($existingPdm) {
-                $pdmService->recalculate($existingPdm);
+        foreach ($headers as $pembayaran) {
+            $this->applyExcessToPdm($invoice, $pembayaran, $pdmService);
+        }
+    }
 
-                continue;
-            }
+    private function applyExcessToPdm(Invoice $invoice, PembayaranAr $pembayaran, PendapatanDiMukaService $pdmService): void
+    {
+        $existingPdm = PendapatanDiMuka::where('sumber_pembayaran_ar_id', $pembayaran->id)
+            ->whereNotIn('status', ['DIBATALKAN'])
+            ->first();
 
-            $detail = $pembayaran->bankStatementDetail;
-            if (! $detail) {
-                continue;
-            }
+        if ($existingPdm) {
+            $pdmService->recalculate($existingPdm);
 
-            // Hitung kelebihan terbaru setelah invoice diupdate. total_penyesuaian
-            // (CN/DN) ikut ditambahkan karena Credit Note mengurangi outstanding
-            // dengan cara yang sama seperti pembayaran (lihat recalculate()).
-            $kelebihanFromInvoice = max(0, round((float) $invoice->total_pembayaran - (float) $invoice->total_tagihan + (float) $invoice->total_penyesuaian, 2));
-            $kelebihanFromBank = max(0, round((float) $detail->kredit - (float) $pembayaran->jumlah_pembayaran, 2));
-            $totalKelebihan = max($kelebihanFromInvoice, $kelebihanFromBank);
-            $dialokasi = (float) $pembayaran->alokasiKelebihan()->sum('jumlah_pembayaran');
-            $sisa = max(0, round($totalKelebihan - $dialokasi, 2));
+            return;
+        }
 
-            if ($sisa > 0.01) {
-                try {
-                    $pdmService->store($detail, $sisa, null, now()->format('Y-m-d'));
-                } catch (\Throwable) {
-                    // Tidak blokir proses import jika PDM gagal dibuat
-                }
+        $detail = $pembayaran->bankStatementDetail;
+        if (! $detail) {
+            return;
+        }
+
+        // Hitung kelebihan terbaru setelah invoice diupdate. total_penyesuaian
+        // (CN/DN) ikut ditambahkan karena Credit Note mengurangi outstanding
+        // dengan cara yang sama seperti pembayaran (lihat recalculate()).
+        $kelebihanFromInvoice = max(0, round((float) $invoice->total_pembayaran - (float) $invoice->total_tagihan + (float) $invoice->total_penyesuaian, 2));
+        $kelebihanFromBank = max(0, round((float) $detail->kredit - (float) $pembayaran->jumlah_pembayaran, 2));
+        $totalKelebihan = max($kelebihanFromInvoice, $kelebihanFromBank);
+        $dialokasi = (float) $pembayaran->alokasiKelebihan()->sum('jumlah_pembayaran');
+        $sisa = max(0, round($totalKelebihan - $dialokasi, 2));
+
+        if ($sisa > 0.01) {
+            try {
+                // $invoice dikirim eksplisit (bukan mengandalkan $pembayaran->invoice,
+                // yang selalu null untuk header Multi Payment) supaya store() tahu
+                // invoice mana yang relevan untuk investor_id/klien_ar_id & hitung ulang
+                // kelebihan-nya.
+                $pdmService->store($detail, $sisa, null, now()->format('Y-m-d'), $invoice);
+            } catch (\Throwable) {
+                // Tidak blokir proses import jika PDM gagal dibuat
             }
         }
     }
@@ -1099,68 +1127,75 @@ class InvoiceService
             ->orderBy('id')
             ->get();
 
-        foreach ($regulars as $target) {
+        foreach ($regulars as $candidate) {
             if ($available <= 0.01) {
                 break;
             }
 
-            // Idempoten: jangan buat pelunasan ganda dari pembayaran OB yang sama.
-            $sudahAda = PembayaranAr::where('invoice_id', $target->id)
-                ->where('sumber_pembayaran_ar_id', $obPayment->id)
-                ->exists();
-            if ($sudahAda) {
-                continue;
-            }
+            DB::transaction(function () use ($candidate, $obPayment, $ob, &$available) {
+                // Lock invoice reguler di dalam transaction: baca sisa & tulis
+                // pelunasan harus atomic terhadap invoice yang sama — mencegah
+                // proses ini overlap dengan pembayaran/alokasi lain (mis.
+                // applyKelebihan) yang konkuren menyentuh invoice yang sama.
+                $target = Invoice::whereKey($candidate->id)->lockForUpdate()->firstOrFail();
 
-            $sisa = $this->ownSisa($target);
-            if ($sisa <= 0.01) {
-                continue;
-            }
+                // Idempoten: jangan buat pelunasan ganda dari pembayaran OB yang sama.
+                $sudahAda = PembayaranAr::where('invoice_id', $target->id)
+                    ->where('sumber_pembayaran_ar_id', $obPayment->id)
+                    ->exists();
+                if ($sudahAda) {
+                    return;
+                }
 
-            $jumlah = round(min($sisa, $available), 2);
-            if ($jumlah <= 0) {
-                continue;
-            }
+                $sisa = $this->ownSisa($target);
+                if ($sisa <= 0.01) {
+                    return;
+                }
 
-            $child = PembayaranAr::create([
-                'invoice_id' => $target->id,
-                'tanggal_pembayaran' => $obPayment->tanggal_pembayaran,
-                'jumlah_pembayaran' => $jumlah,
-                'metode_pembayaran' => $obPayment->metode_pembayaran,
-                'no_referensi' => $obPayment->no_referensi
-                                                ? $obPayment->no_referensi.'/OB-'.$this->nextObSettleSuffix($obPayment)
-                                                : null,
-                'keterangan' => 'Pelunasan otomatis dari OB '.$ob->no_invoice,
-                'sumber_pembayaran_ar_id' => $obPayment->id,
-                'created_by' => auth()->id(),
-            ]);
+                $jumlah = round(min($sisa, $available), 2);
+                if ($jumlah <= 0) {
+                    return;
+                }
 
-            PembayaranArLog::create([
-                'pembayaran_ar_id' => $child->id,
-                'aksi' => 'DIBUAT',
-                'actor_id' => auth()->id(),
-                'data_sesudah' => $child->toArray(),
-            ]);
+                $child = PembayaranAr::create([
+                    'invoice_id' => $target->id,
+                    'tanggal_pembayaran' => $obPayment->tanggal_pembayaran,
+                    'jumlah_pembayaran' => $jumlah,
+                    'metode_pembayaran' => $obPayment->metode_pembayaran,
+                    'no_referensi' => $obPayment->no_referensi
+                                                    ? $obPayment->no_referensi.'/OB-'.$this->nextObSettleSuffix($obPayment)
+                                                    : null,
+                    'keterangan' => 'Pelunasan otomatis dari OB '.$ob->no_invoice,
+                    'sumber_pembayaran_ar_id' => $obPayment->id,
+                    'created_by' => auth()->id(),
+                ]);
 
-            // Update invoice reguler langsung tanpa cascade/recalculate (mirror applyKelebihan).
-            $fresh = $target->fresh();
-            $newTotal = (float) $fresh->pembayarans()->sum('jumlah_pembayaran');
-            $subtotal = (float) $fresh->subtotal;
-            $rawSisa = max(0, (float) $fresh->total_tagihan - $newTotal);
-            $isLunas = $subtotal > 0 ? $newTotal >= $subtotal : $rawSisa <= 0;
-            $newStatus = match (true) {
-                $isLunas => 'LUNAS',
-                $newTotal > 0 => 'SEBAGIAN',
-                default => 'TERKIRIM',
-            };
-            $fresh->update([
-                'total_pembayaran' => $newTotal,
-                'sisa_tagihan' => $isLunas ? 0 : $rawSisa,
-                'status' => $newStatus,
-                'updated_by' => auth()->id(),
-            ]);
+                PembayaranArLog::create([
+                    'pembayaran_ar_id' => $child->id,
+                    'aksi' => 'DIBUAT',
+                    'actor_id' => auth()->id(),
+                    'data_sesudah' => $child->toArray(),
+                ]);
 
-            $available = round($available - $jumlah, 2);
+                // Update invoice reguler langsung tanpa cascade/recalculate (mirror applyKelebihan).
+                $newTotal = (float) $target->pembayarans()->sum('jumlah_pembayaran');
+                $subtotal = (float) $target->subtotal;
+                $rawSisa = max(0, (float) $target->total_tagihan - $newTotal);
+                $isLunas = $subtotal > 0 ? $newTotal >= $subtotal : $rawSisa <= 0;
+                $newStatus = match (true) {
+                    $isLunas => 'LUNAS',
+                    $newTotal > 0 => 'SEBAGIAN',
+                    default => 'TERKIRIM',
+                };
+                $target->update([
+                    'total_pembayaran' => $newTotal,
+                    'sisa_tagihan' => $isLunas ? 0 : $rawSisa,
+                    'status' => $newStatus,
+                    'updated_by' => auth()->id(),
+                ]);
+
+                $available = round($available - $jumlah, 2);
+            });
         }
     }
 
