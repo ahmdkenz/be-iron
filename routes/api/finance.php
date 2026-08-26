@@ -215,6 +215,7 @@ Route::prefix('ending-balance')->group(function () {
 Route::prefix('opening-balance')->group(function () {
     Route::get('/', [OpeningBalanceController::class, 'index']);
     Route::get('/summary', [OpeningBalanceController::class, 'summary']);
+    Route::get('/existing-klien-ids', [OpeningBalanceController::class, 'existingKlienIds']);
     // GET /export didaftarkan di api.php (grup throttle:10,1) — jangan didaftarkan ulang di sini,
     // registrasi kedua akan menang & diam-diam menghilangkan throttle yang dimaksud untuk endpoint export.
     Route::get('/export-count', [OpeningBalanceController::class, 'exportRowCount']);

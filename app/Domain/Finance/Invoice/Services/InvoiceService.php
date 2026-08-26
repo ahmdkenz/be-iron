@@ -458,6 +458,28 @@ class InvoiceService
     }
 
     /**
+     * Versi bulk 1-query dari findOpeningBalanceMonthConflict() — dipakai FE untuk
+     * menonaktifkan (grey out) pilihan Client di dropdown Ajukan Opening Balance yang
+     * sudah punya OB bulan yang sama, SEBELUM Client tsb dipilih (bukan loop per klien
+     * seperti outstandingBulk(), karena daftar Client di dropdown bisa ratusan).
+     */
+    public function getKlienIdsWithOpeningBalanceConflict(string|Carbon $tanggal, ?int $ignoreInvoiceId = null): array
+    {
+        $tanggal = $tanggal instanceof Carbon ? $tanggal : Carbon::parse($tanggal);
+        $monthStart = $tanggal->copy()->startOfMonth();
+        $monthEnd = $tanggal->copy()->endOfMonth();
+
+        return Invoice::where('is_opening_balance', true)
+            ->where('approval_status', '!=', 'REJECTED')
+            ->whereBetween('tanggal_invoice', [$monthStart->toDateString(), $monthEnd->toDateString()])
+            ->when($ignoreInvoiceId, fn ($q) => $q->where('id', '!=', $ignoreInvoiceId))
+            ->pluck('klien_ar_id')
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    /**
      * @param  bool  $bypassApproval  true untuk jalur Import Master Opening Balance — akses import
      *                                sudah dibatasi ke ADMIN/MANAGER/SUPERVISOR (role tepercaya) di
      *                                controller, jadi OB hasil import langsung APPROVED, tidak perlu

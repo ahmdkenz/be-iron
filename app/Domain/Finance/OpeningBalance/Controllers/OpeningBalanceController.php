@@ -89,6 +89,29 @@ class OpeningBalanceController extends Controller
         return $this->successResponse($this->service->getSummary($filters));
     }
 
+    /**
+     * Daftar klien_ar_id yang sudah punya Opening Balance di bulan `tanggal` — dipakai FE
+     * untuk grey-out Client di dropdown/dialog "Muat Client" pada form Ajukan Opening
+     * Balance sebelum Client tsb sempat dipilih. `ignore_invoice_id` dipakai saat mode
+     * Edit (Revisi OB) supaya OB yang sedang diedit tidak nge-grey-out Client-nya sendiri.
+     */
+    public function existingKlienIds(Request $request): JsonResponse
+    {
+        $this->authorizeViewOpeningBalance();
+
+        $validated = $request->validate([
+            'tanggal' => ['required', 'date'],
+            'ignore_invoice_id' => ['nullable', 'integer'],
+        ]);
+
+        $klienIds = $this->service->getKlienIdsWithOpeningBalanceConflict(
+            $validated['tanggal'],
+            $validated['ignore_invoice_id'] ?? null
+        );
+
+        return $this->successResponse(['klien_ar_ids' => $klienIds]);
+    }
+
     public function store(StoreOpeningBalanceRequest $request): JsonResponse
     {
         $this->authorizeOperateOpeningBalance();
