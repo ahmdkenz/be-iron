@@ -39,9 +39,6 @@ Route::prefix('tagihan')->group(function () {
     Route::get('/{id}', [TagihanApController::class, 'show']);
     Route::put('/{id}', [TagihanApController::class, 'update']);
     Route::delete('/{id}', [TagihanApController::class, 'destroy']);
-
-    // Pembayaran per Tagihan
-    Route::post('/{id}/pembayaran', [PembayaranApController::class, 'store']);
 });
 
 // ─── Pembayaran AP ──────────────────────────────────────────────

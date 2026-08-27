@@ -2,12 +2,10 @@
 
 namespace App\Domain\Finance\PembayaranAp\Controllers;
 
-use App\Domain\Finance\PembayaranAp\Requests\StorePembayaranApRequest;
 use App\Domain\Finance\PembayaranAp\Requests\StorePembayaranApVoucherRequest;
 use App\Domain\Finance\PembayaranAp\Resources\PembayaranApResource;
 use App\Domain\Finance\PembayaranAp\Services\PembayaranApExportService;
 use App\Domain\Finance\PembayaranAp\Services\PembayaranApService;
-use App\Domain\Finance\TagihanAp\Services\TagihanApService;
 use App\Domain\Notification\Services\FinanceNotificationService;
 use App\Http\Controllers\Controller;
 use App\Models\PembayaranAp;
@@ -33,7 +31,6 @@ class PembayaranApController extends Controller
 
     public function __construct(
         private readonly PembayaranApService $service,
-        private readonly TagihanApService $tagihanApService,
         private readonly PembayaranApExportService $exportService,
         private readonly FinanceNotificationService $financeNotificationService,
     ) {}
@@ -126,44 +123,6 @@ class PembayaranApController extends Controller
         }
 
         return $query;
-    }
-
-    public function store(StorePembayaranApRequest $request, int $tagihanId): JsonResponse
-    {
-        $this->authorizeOperate();
-
-        $tagihan = $this->tagihanApService->findOrFail($tagihanId);
-
-        $user = $request->user()->loadMissing('karyawan');
-        if (!RoleHelper::hasGlobalApAccess($user) && $user->karyawan) {
-            abort_if(
-                $tagihan->perusahaan_id !== $user->karyawan->perusahaan_id,
-                403,
-                'Anda tidak memiliki akses untuk mencatat pembayaran tagihan ini.'
-            );
-        }
-
-        $pembayaran = $this->service->create(
-            $tagihan,
-            $request->validated(),
-            $request->file('bukti_pembayaran'),
-        );
-
-        Log::channel('security')->info('Pembayaran AP dicatat', [
-            'user_id'    => $user->id,
-            'tagihan_id' => $tagihan->id,
-            'no_tagihan' => $tagihan->no_tagihan,
-            'jumlah'     => $request->jumlah_pembayaran,
-            'metode'     => $request->metode_pembayaran,
-            'ip'         => $request->ip(),
-        ]);
-
-        return $this->createdResponse(
-            new PembayaranApResource($pembayaran->load([
-                'items.tagihanAp.vendorAp', 'items.tagihanAp.perusahaan', 'items.tagihanAp.karyawan', 'createdBy.karyawan',
-            ])),
-            'Pembayaran berhasil dicatat'
-        );
     }
 
     public function storeVoucher(StorePembayaranApVoucherRequest $request): JsonResponse

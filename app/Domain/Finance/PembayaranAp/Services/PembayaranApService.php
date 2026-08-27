@@ -175,20 +175,6 @@ class PembayaranApService
         return "{$prefix}-{$tanggal}-{$suffix}";
     }
 
-    /**
-     * Wrapper untuk endpoint lama (POST /tagihan/{id}/pembayaran, 1 tagihan) —
-     * signature & response dipertahankan agar TagihanApPembayaranForm.vue tidak
-     * perlu diubah. Internal-nya delegasi penuh ke createVoucher() dengan 1 item.
-     */
-    public function create(TagihanAp $tagihan, array $data, ?UploadedFile $buktiBayar = null): PembayaranAp
-    {
-        return $this->createVoucher(array_merge($data, [
-            'alokasi' => [
-                ['tagihan_ap_id' => $tagihan->id, 'jumlah' => $data['jumlah_pembayaran']],
-            ],
-        ]), $buktiBayar);
-    }
-
     private function storeBukti(PembayaranAp $pembayaran, UploadedFile $file): void
     {
         $path = $this->buildBuktiPath($pembayaran, $file);
