@@ -64,14 +64,51 @@ class PembayaranApController extends Controller
         ]);
     }
 
-    public function exportExcel(Request $request): BinaryFileResponse|JsonResponse
+    /**
+     * Dispatcher format export. Default 'xlsx' supaya perilaku lama (FE yang belum
+     * kirim query 'format') tidak berubah.
+     */
+    public function exportExcel(Request $request): BinaryFileResponse|StreamedResponse|JsonResponse
     {
         $this->authorizeView();
+
+        $format = strtolower((string) $request->query('format', 'xlsx'));
+
+        if ($format === 'csv') {
+            return $this->streamCsvExport($request);
+        }
 
         if (!class_exists('ZipArchive')) {
             return $this->errorResponse('Ekstensi PHP "zip" tidak aktif. Aktifkan extension=zip pada php.ini lalu restart server.', 500);
         }
 
+        return $this->streamXlsxExport($request);
+    }
+
+    /**
+     * Jumlah baris detail item yang akan dihasilkan export untuk filter yang sama —
+     * dipakai FE untuk peringatan real-time XLSX vs CSV di modal Export Payment Voucher.
+     * Hitung mengikuti logic yang sama dengan detailRowValues() di PembayaranApExportService
+     * (1 baris per item barang, atau 1 baris kosong kalau tagihan tanpa item) supaya angkanya
+     * konsisten dengan file yang sungguhan dihasilkan.
+     */
+    public function exportRowCount(Request $request): JsonResponse
+    {
+        $this->authorizeView();
+
+        $vouchers = $this->scopedQuery($request)
+            ->with(['items.tagihanAp.items'])
+            ->get();
+
+        $rowCount = $vouchers->sum(fn($voucher) => $voucher->items->sum(
+            fn($alokasi) => max(1, $alokasi->tagihanAp?->items?->count() ?? 0)
+        ));
+
+        return $this->successResponse(['row_count' => $rowCount]);
+    }
+
+    private function streamXlsxExport(Request $request): BinaryFileResponse
+    {
         $vouchers = $this->scopedQuery($request)
             ->with([
                 'items.tagihanAp.items',
@@ -94,6 +131,121 @@ class PembayaranApController extends Controller
                 'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             ])
             ->deleteFileAfterSend(true);
+    }
+
+    /**
+     * Export CSV — blok rekap voucher (kiri, plus kolom "Kategori" karena versi XLSX
+     * memisahnya jadi 2 sheet Bahan Baku/Non Bahan Baku, sementara CSV cuma 1 file)
+     * & blok detail item (kanan, dipisah 1 kolom kosong) ditulis berdampingan per
+     * baris item. Pola sama seperti TagihanApController::streamCsvExport().
+     */
+    private function streamCsvExport(Request $request): StreamedResponse
+    {
+        @set_time_limit(300);
+        @ini_set('memory_limit', '512M');
+
+        $vouchers = $this->scopedQuery($request)
+            ->with([
+                'items.tagihanAp.items',
+                'items.tagihanAp.vendorAp',
+                'items.tagihanAp.perusahaan',
+                'items.tagihanAp.karyawan',
+                'items.vendorAp',
+                'createdBy.karyawan',
+            ])
+            ->latest('tanggal_pembayaran')
+            ->get();
+
+        $headerRekap = [
+            'Tanggal Pembayaran', 'No Voucher', 'Kategori', 'Metode', 'Entitas', 'Vendor',
+            'Jumlah Vendor', 'Jumlah Tagihan', 'Total Pembayaran', 'Keterangan', 'Dibuat Oleh', 'Dibuat Pada',
+        ];
+        $headerDetail = [
+            'PIC AP', 'No Tagihan', 'No Invoice Vendor', 'Tanggal Tagihan', 'No PO', 'No Terima Barang',
+            'Kode Barang', 'Nama Barang', 'Qty', 'Qty PO', 'Satuan', 'Harga Satuan', 'PPN', 'Subtotal Item',
+            'Total Tagihan', 'Sisa Sebelum', 'Dibayar', 'Sisa Setelah', 'Keterangan Item',
+        ];
+        $header = array_merge($headerRekap, [''], $headerDetail);
+
+        return response()->streamDownload(function () use ($vouchers, $header) {
+            $handle = fopen('php://output', 'w');
+            fprintf($handle, chr(0xEF) . chr(0xBB) . chr(0xBF)); // UTF-8 BOM
+            fputcsv($handle, $header, ';');
+
+            foreach ($vouchers as $voucher) {
+                $items = $voucher->items;
+
+                $vendorNames = $items
+                    ->map(fn($it) => $it->tagihanAp?->vendorAp?->nama_vendor ?? $it->vendorAp?->nama_vendor)
+                    ->filter()->unique()->values();
+
+                $entitasNames = $items
+                    ->map(fn($it) => $it->tagihanAp?->perusahaan?->nama_singkatan_perusahaan)
+                    ->filter()->unique()->values();
+
+                $rekapRow = [
+                    optional($voucher->tanggal_pembayaran)->format('d-m-Y') ?? '',
+                    $voucher->no_referensi ?? '',
+                    $voucher->kategori_voucher ?? '',
+                    $voucher->metode_pembayaran ?? '',
+                    $entitasNames->implode(', '),
+                    $vendorNames->implode(', '),
+                    $vendorNames->count(),
+                    $items->count(),
+                    (float) $voucher->jumlah_pembayaran,
+                    $voucher->keterangan ?? '',
+                    $voucher->createdBy?->karyawan?->nama_karyawan ?? $voucher->createdBy?->username ?? '',
+                    optional($voucher->created_at)->format('d-m-Y H:i') ?? '',
+                ];
+
+                foreach ($items as $alokasi) {
+                    $tagihan    = $alokasi->tagihanAp;
+                    $barangItems = $tagihan?->items ?? collect();
+
+                    $detailPrefix = [
+                        $tagihan?->karyawan?->nama_karyawan ?? '',
+                        $tagihan?->no_tagihan ?? '',
+                        $tagihan?->no_invoice_vendor ?? '',
+                        optional($tagihan?->tanggal_tagihan)->format('d-m-Y') ?? '',
+                        $tagihan?->no_po ?? '',
+                        $tagihan?->no_terima_barang ?? '',
+                    ];
+                    $detailSuffix = [
+                        (float) ($tagihan?->total_tagihan ?? 0),
+                        (float) $alokasi->sisa_sebelum,
+                        (float) $alokasi->jumlah_dialokasikan,
+                        (float) $alokasi->sisa_sesudah,
+                    ];
+
+                    if ($barangItems->isEmpty()) {
+                        $detailRow = array_merge($detailPrefix, ['', '', '', '', '', '', '', ''], $detailSuffix, ['']);
+                        fputcsv($handle, array_merge($rekapRow, [''], $detailRow), ';');
+
+                        continue;
+                    }
+
+                    foreach ($barangItems as $barang) {
+                        $itemValues = [
+                            $barang->kode_barang ?? '',
+                            $barang->nama_barang ?? '',
+                            (float) $barang->qty,
+                            $barang->qty_po !== null ? (float) $barang->qty_po : '',
+                            $barang->satuan ?? '',
+                            (float) $barang->harga_satuan,
+                            (float) $barang->ppn,
+                            (float) $barang->subtotal,
+                        ];
+                        $detailRow = array_merge($detailPrefix, $itemValues, $detailSuffix, [$barang->keterangan ?? '']);
+
+                        fputcsv($handle, array_merge($rekapRow, [''], $detailRow), ';');
+                    }
+                }
+            }
+
+            fclose($handle);
+        }, 'payment-voucher-ap-' . now()->format('Ymd-His') . '.csv', [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+        ]);
     }
 
     private function scopedQuery(Request $request): Builder

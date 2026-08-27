@@ -31,6 +31,7 @@ Route::prefix('tagihan')->group(function () {
     Route::get('/preview-no', [TagihanApController::class, 'previewNo']);
     Route::get('/outstanding', [TagihanApController::class, 'outstanding']);
     Route::get('/export-excel', [TagihanApController::class, 'exportExcel']);
+    Route::get('/export-count', [TagihanApController::class, 'exportRowCount']);
     Route::post('/', [TagihanApController::class, 'store']);
     Route::delete('/bulk', [TagihanApController::class, 'bulkDestroy']);
     Route::get('/{id}/pembayaran', [TagihanApController::class, 'pembayaran']);
@@ -44,6 +45,7 @@ Route::prefix('tagihan')->group(function () {
 // ─── Pembayaran AP ──────────────────────────────────────────────
 Route::get('/pembayaran', [PembayaranApController::class, 'index']);
 Route::get('/pembayaran/export-excel', [PembayaranApController::class, 'exportExcel']);
+Route::get('/pembayaran/export-count', [PembayaranApController::class, 'exportRowCount']);
 Route::get('/pembayaran/cek-referensi', [PembayaranApController::class, 'cekReferensi']);
 Route::post('/pembayaran/voucher', [PembayaranApController::class, 'storeVoucher']);
 Route::get('/pembayaran/{id}/print', [PembayaranApController::class, 'print']);

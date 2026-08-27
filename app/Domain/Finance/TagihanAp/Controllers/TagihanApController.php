@@ -11,6 +11,7 @@ use App\Domain\Finance\TagihanAp\Services\TagihanApExportService;
 use App\Domain\Finance\TagihanAp\Services\TagihanApService;
 use App\Http\Controllers\Controller;
 use App\Models\TagihanAp;
+use App\Models\TagihanApItem;
 use App\Support\Helpers\ApFilterScope;
 use App\Support\Helpers\RoleHelper;
 use App\Support\Helpers\SignatureBarcodeHelper;
@@ -22,6 +23,7 @@ use Illuminate\Http\Response;
 use Illuminate\Support\Facades\DB;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx as XlsxWriter;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class TagihanApController extends Controller
 {
@@ -186,21 +188,61 @@ class TagihanApController extends Controller
         return $this->successResponse($tagihanList);
     }
 
-    public function exportExcel(Request $request): BinaryFileResponse|JsonResponse
+    /**
+     * Filter export Tagihan AP, dipakai bersama oleh streamXlsxExport(),
+     * streamCsvExport(), dan exportRowCount() supaya definisi filter tidak terduplikasi.
+     */
+    private function resolveExportFilters(Request $request): array
     {
-        $this->authorizeView();
-
-        if (!class_exists('ZipArchive')) {
-            return $this->errorResponse('Ekstensi PHP "zip" tidak aktif. Aktifkan extension=zip pada php.ini lalu restart server.', 500);
-        }
-
-        $user    = auth()->user();
         $filters = $request->only([
             'search', 'status', 'approval_status', 'vendor_ap_id', 'karyawan_id',
             'tanggal_dari', 'tanggal_sampai',
         ]);
         $filters['is_opening_balance'] = false;
-        ApFilterScope::apply($filters, $user);
+        ApFilterScope::apply($filters, auth()->user());
+
+        return $filters;
+    }
+
+    /**
+     * Dispatcher format export. Default 'xlsx' supaya perilaku lama (FE yang belum
+     * kirim query 'format') tidak berubah.
+     */
+    public function exportExcel(Request $request): BinaryFileResponse|StreamedResponse|JsonResponse
+    {
+        $this->authorizeView();
+
+        $format = strtolower((string) $request->query('format', 'xlsx'));
+
+        if ($format === 'csv') {
+            return $this->streamCsvExport($request);
+        }
+
+        if (!class_exists('ZipArchive')) {
+            return $this->errorResponse('Ekstensi PHP "zip" tidak aktif. Aktifkan extension=zip pada php.ini lalu restart server.', 500);
+        }
+
+        return $this->streamXlsxExport($request);
+    }
+
+    /**
+     * Jumlah baris detail item yang akan dihasilkan export untuk filter yang sama —
+     * dipakai FE untuk peringatan real-time XLSX vs CSV di modal Export Tagihan AP.
+     */
+    public function exportRowCount(Request $request): JsonResponse
+    {
+        $this->authorizeView();
+
+        $filters    = $this->resolveExportFilters($request);
+        $tagihanIds = $this->service->getExportIds($filters);
+        $rowCount   = TagihanApItem::whereIn('tagihan_ap_id', $tagihanIds)->count();
+
+        return $this->successResponse(['row_count' => $rowCount]);
+    }
+
+    private function streamXlsxExport(Request $request): BinaryFileResponse
+    {
+        $filters = $this->resolveExportFilters($request);
 
         $tagihanList = $this->service->getAll($filters, [
             'items.barang',
@@ -220,6 +262,103 @@ class TagihanApController extends Controller
                 'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             ])
             ->deleteFileAfterSend(true);
+    }
+
+    /**
+     * Export CSV — blok rekap tagihan (kiri) & blok detail item (kanan, dipisah 1
+     * kolom kosong) ditulis berdampingan pada baris yang sama, meniru tampilan
+     * 1-sheet versi XLSX (lihat TagihanApExportService). Pola sama seperti
+     * OpeningBalanceApController::streamCsvExport().
+     */
+    private function streamCsvExport(Request $request): StreamedResponse
+    {
+        @set_time_limit(300);
+        @ini_set('memory_limit', '512M');
+
+        $filters = $this->resolveExportFilters($request);
+
+        $tagihanList = $this->service->getAll($filters, [
+            'items.barang',
+            'vendorAp.karyawanAp',
+            'perusahaan',
+            'karyawan',
+            'createdBy.karyawan',
+        ]);
+
+        $headerRekap = [
+            'No Tagihan', 'No Invoice Vendor', 'Vendor', 'Kode Vendor', 'Entitas', 'PIC AP',
+            'Tanggal Tagihan', 'Tanggal Jatuh Tempo', 'No PO', 'No Terima Barang',
+            'Subtotal', 'PPN Masukan', 'PPH23', 'Total Tagihan', 'Total Pembayaran', 'Sisa Tagihan',
+            'Status', 'Approval', 'Keterangan', 'Dibuat Oleh', 'Dibuat Pada',
+        ];
+        $headerDetail = [
+            'Kode Barang', 'Nama Barang', 'Qty', 'Qty PO', 'Satuan', 'Harga Satuan', 'PPN',
+            'Subtotal Item', 'Status Terima PO', 'Qty Tolak', 'Keterangan Tolak', 'Keterangan Item',
+        ];
+        $header = array_merge($headerRekap, [''], $headerDetail);
+
+        $detailBlank = array_fill(0, count($headerDetail), '');
+
+        return response()->streamDownload(function () use ($tagihanList, $header, $detailBlank) {
+            $handle = fopen('php://output', 'w');
+            fprintf($handle, chr(0xEF) . chr(0xBB) . chr(0xBF)); // UTF-8 BOM
+            fputcsv($handle, $header, ';');
+
+            foreach ($tagihanList as $tagihan) {
+                $rekapRow = [
+                    $tagihan->no_tagihan ?? '',
+                    $tagihan->no_invoice_vendor ?? '',
+                    $tagihan->vendorAp?->nama_vendor ?? '',
+                    $tagihan->vendorAp?->kode_vendor ?? '',
+                    $tagihan->perusahaan?->nama_singkatan_perusahaan ?? '',
+                    $tagihan->karyawan?->nama_karyawan ?? '',
+                    optional($tagihan->tanggal_tagihan)->format('d-m-Y') ?? '',
+                    optional($tagihan->tanggal_jatuh_tempo)->format('d-m-Y') ?? '',
+                    $tagihan->no_po ?? '',
+                    $tagihan->no_terima_barang ?? '',
+                    (float) $tagihan->subtotal,
+                    (float) $tagihan->ppn_masukan,
+                    (float) $tagihan->pph23,
+                    (float) $tagihan->total_tagihan,
+                    (float) $tagihan->total_pembayaran,
+                    (float) $tagihan->sisa_tagihan,
+                    $tagihan->status ?? '',
+                    $tagihan->approval_status ?? '',
+                    $tagihan->keterangan ?? '',
+                    $tagihan->createdBy?->karyawan?->nama_karyawan ?? $tagihan->createdBy?->username ?? '',
+                    optional($tagihan->created_at)->format('d-m-Y H:i') ?? '',
+                ];
+
+                if ($tagihan->items->isEmpty()) {
+                    fputcsv($handle, array_merge($rekapRow, [''], $detailBlank), ';');
+
+                    continue;
+                }
+
+                foreach ($tagihan->items as $item) {
+                    $detailRow = [
+                        $item->kode_barang ?? '',
+                        $item->nama_barang ?? '',
+                        (float) $item->qty,
+                        $item->qty_po !== null ? (float) $item->qty_po : '',
+                        $item->satuan ?? '',
+                        (float) $item->harga_satuan,
+                        (float) $item->ppn,
+                        (float) $item->subtotal,
+                        $item->status_detail_terima_po ?? '',
+                        $item->qty_tolak !== null ? (float) $item->qty_tolak : '',
+                        $item->keterangan_tolak ?? '',
+                        $item->keterangan ?? '',
+                    ];
+
+                    fputcsv($handle, array_merge($rekapRow, [''], $detailRow), ';');
+                }
+            }
+
+            fclose($handle);
+        }, 'tagihan-ap-' . now()->format('Ymd-His') . '.csv', [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+        ]);
     }
 
     public function store(StoreTagihanApRequest $request): JsonResponse
